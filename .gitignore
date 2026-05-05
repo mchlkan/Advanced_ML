@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
+.venv/
+venv/
+env/
+.env
+*.env
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ML checkpoints and model weights
+models/checkpoints/
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.gguf
+wandb/
+runs/
+lightning_logs/
+
+# Data files
+data/*.parquet
+data/*.csv
+data/*.json
+data/*.arrow
+data/*.feather
+data/splits/
+!data/splits/.gitkeep
+*.cache/
+*.h5
+*.hdf5
+embeddings/
+
+# Node / frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/dist/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# Eval results (large; commit selectively)
+eval/results/
