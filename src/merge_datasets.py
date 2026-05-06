@@ -60,9 +60,6 @@ def _print_structure(df: pd.DataFrame) -> None:
     print("\n-- price summary --")
     print(df["price"].describe().round(2).to_string())
 
-    print("\n-- state --")
-    print(df["state"].value_counts(dropna=False).to_string())
-
     print(f"\n-- sample row (index 0) --")
     row = df.iloc[0].drop(labels=["image"], errors="ignore")
     for col, val in row.items():
@@ -72,7 +69,7 @@ def _print_structure(df: pd.DataFrame) -> None:
 
 def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent
-    vinted_path = repo_root / "data" / "vinted_clothing_v2.parquet"
+    vinted_path = repo_root / "data" / "vinted_clothing_v2_en.parquet"
     ka_path = repo_root / "data" / "kleinanzeigen_clothing_v1_en.parquet"
 
     print("Loading parquets...")

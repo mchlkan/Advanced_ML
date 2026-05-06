@@ -37,7 +37,8 @@ data/*.csv
 data/*.json
 data/*.arrow
 data/*.feather
-data/splits/
+data/splits/*.parquet
+data/translations/
 !data/splits/.gitkeep
 *.cache/
 *.h5

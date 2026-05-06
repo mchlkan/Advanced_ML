@@ -141,7 +141,7 @@ def train_test_split_by_id(
 
 def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent
-    vinted_path = repo_root / "data" / "vinted_clothing_v1_5_full.parquet"
+    vinted_path = repo_root / "data" / "vinted_clothing_v2.parquet"
     ka_path = repo_root / "data" / "kleinanzeigen_clothing_v1.parquet"
 
     print("Loading parquets...")

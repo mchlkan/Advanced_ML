@@ -63,8 +63,8 @@ DEFAULT_OUT = REPO_ROOT / "models" / "checkpoints" / "qwen3vl4b-resell-v1"
 
 _REQUIRED_COLS = (
     "id", "platform", "image",
-    "title_canon", "description_canon", "category_canon",
-    "condition_canon", "color_canon", "brand_canon",
+    "title_en", "description_en", "category_en",
+    "condition_en", "color_en", "brand_canon",
     "size", "price",
 )
 
@@ -96,12 +96,12 @@ def _build_target_json(row: pd.Series) -> str:
         size = None
     obj = {
         "brand": brand,
-        "category": row["category_canon"],
-        "condition": row["condition_canon"],
-        "color": row["color_canon"],
+        "category": row["category_en"],
+        "condition": row["condition_en"],
+        "color": row["color_en"],
         "size": size,
-        "title": row["title_canon"],
-        "description": row["description_canon"],
+        "title": row["title_en"],
+        "description": row["description_en"],
         "price_eur": float(row["price"]),
     }
     return json.dumps(obj, ensure_ascii=False, indent=2)
