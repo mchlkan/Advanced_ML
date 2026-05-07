@@ -30,7 +30,8 @@ DEFAULT_KA = REPO_ROOT / "data" / "kleinanzeigen_clothing_combined.parquet"
 DEFAULT_SPLITS = REPO_ROOT / "data" / "splits"
 DEFAULT_OUTPUT = REPO_ROOT / "data" / "features" / "tag_visible_combined.parquet"
 TAG_PROMPT = (
-    "Is a clothing tag, label, or price tag visible in this image? "
+    "Is a retail hang tag or price tag visibly attached to the clothing item? "
+    "Do not count sewn-in brand labels, neck labels, size labels, or logos printed on the clothing. "
     "Answer only with 'yes' or 'no'."
 )
 
