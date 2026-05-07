@@ -37,6 +37,7 @@ data/*.csv
 data/*.json
 data/*.arrow
 data/*.feather
+data/features/
 data/splits/*.parquet
 data/translations/
 !data/splits/.gitkeep
