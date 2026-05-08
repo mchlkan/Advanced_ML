@@ -560,6 +560,19 @@ def is_configured() -> bool:
     return Path(path).expanduser().exists()
 
 
+def is_session_ready() -> bool:
+    """True if the persisted session loads cleanly and hasn't expired.
+    Single source of truth for "is Vinted usable right now" — both onboarding
+    /status and the inventory routes consult this."""
+    if not is_configured():
+        return False
+    try:
+        session = load_session(_session_path())
+    except Exception:
+        return False
+    return session is not None and session.expires_at > time.time()
+
+
 def seed_from_env() -> dict | None:
     """Read the four phone-extracted seed values from env vars.
     Returns None if any are missing — used by /onboarding/login."""

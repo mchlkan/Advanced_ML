@@ -7,7 +7,7 @@ output (see `src.prompts.get_prompt`) so frontend and pipeline don't drift.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -174,11 +174,17 @@ class KleinanzeigenOnboardingResponse(BaseModel):
 
 
 class PredictionSummary(BaseModel):
-    english_fields: dict
-    vinted: PriceBand
-    vinted_sell_probability: float
-    kleinanzeigen: PriceBand
-    visual_wear_probability: float
+    english_fields: dict[str, Any]
+    # None means we have no per-platform price quantiles for this listing
+    # (the prediction row exists but the bands weren't populated). The FE
+    # should render "no estimate" rather than €0.
+    vinted: PriceBand | None = None
+    vinted_sell_probability: float = 0.0
+    kleinanzeigen: PriceBand | None = None
+    visual_wear_probability: float = 0.0
+
+
+PricingStatus = Literal["underpriced", "ok", "overpriced", "unknown"]
 
 
 class VintedLiveSnapshot(BaseModel):
@@ -189,6 +195,14 @@ class VintedLiveSnapshot(BaseModel):
     favourites: int | None = None
     primary_photo_url: str | None = None
     is_sold_or_removed: bool
+    # Pricing-drift overlay: live price vs the model's recommended band.
+    # Frontend-facing enum so the UI can switch over named cases instead of
+    # recomputing thresholds. "unknown" means we lack data (no live price or
+    # no prediction); always present so the UI doesn't need a null branch.
+    pricing_status: PricingStatus = "unknown"
+    # Signed % delta against q50 (negative = below recommendation). None when
+    # we can't compute it. Lets the UI render a tag like "−18%" without math.
+    delta_vs_q50_pct: float | None = None
 
 
 class PlatformPublishState(BaseModel):
@@ -218,3 +232,31 @@ class SyncResponse(BaseModel):
     platform: Literal["vinted"]
     item_count: int
     fetched_at: int
+
+
+InventoryBucket = Literal[
+    "posted", "sold_or_removed", "pending", "failed", "unpublished"
+]
+
+
+class InventoryStatusCounts(BaseModel):
+    """Per-listing buckets, mutually exclusive — they sum to `total`. Priority
+    when a listing has multiple platform states: posted > sold_or_removed >
+    pending > failed > unpublished. The frontend can render one badge per
+    card without recomputing."""
+    total: int = 0
+    unpublished: int = 0
+    pending: int = 0
+    posted: int = 0
+    sold_or_removed: int = 0
+    failed: int = 0
+
+
+class InventorySummary(BaseModel):
+    counts: InventoryStatusCounts
+    # Σ vinted q50 across actively-posted items with a prediction. EUR.
+    estimated_value_eur: float = 0.0
+    # Σ across live wardrobe snapshots of actively-posted vinted items.
+    live_views: int = 0
+    live_favourites: int = 0
+    last_synced_at: int | None = None
