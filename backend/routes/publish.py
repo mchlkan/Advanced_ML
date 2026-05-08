@@ -1,30 +1,37 @@
-"""POST /publish — log the user's publish intent and return the platform's
-new-listing URL.
+"""POST /publish — try direct platform posting, fall back to a new-listing URL.
 
-v1 limitation: neither Vinted nor Kleinanzeigen accepts URL-based field
-prefill on their public listing forms, and their listing-creation APIs
-require OAuth or aren't public. ``prefill_url`` therefore returns the
-platform's new-listing *page* — the frontend handles the actual prefill
-UX (copy-to-clipboard buttons next to each field) using the data it
-already has from /upload or /verify.
+Direct publish path (Phase 6a, Vinted only):
+  - If `VINTED_SESSION_PATH` is set and the file exists, attempt a real
+    publish via the mobile draft-mode flow (see backend/integrations/vinted.py).
+  - On success, the response includes `platform_listing_url` pointing at
+    the live listing.
+  - On any failure (DataDome 429, session expired, network), the response
+    falls back to the new-listing page URL with `posted=false` and a
+    machine-readable `error` string. Never 5xx.
 
-The ``publishes`` row captures whatever the user actually chose to publish
-(possibly different from the latest /verify if they edited freely in the
-UI), which is the analytics signal we want.
+Kleinanzeigen always falls back to the URL path for now (Phase 6c).
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 
 # backend/__init__.py adds repo/src to sys.path.
-from listing_mappings import NEW_LISTING_URLS
+from listing_mappings import NEW_LISTING_URLS, to_vinted
 
-from backend import db
+from backend import db, integrations
+from backend.integrations import vinted as vinted_integration
 from backend.schemas import PublishRequest, PublishResponse
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+PUBLISH_TIMEOUT_S = 60
 
 
 @router.post("/publish", response_model=PublishResponse)
@@ -33,12 +40,48 @@ async def publish(body: PublishRequest) -> PublishResponse:
     if rec is None:
         raise HTTPException(status_code=404, detail=f"listing {body.listing_id} not found")
 
-    url = NEW_LISTING_URLS[body.platform]
+    fallback_url = NEW_LISTING_URLS[body.platform]
     canon_fields = body.final_fields.model_dump()
-    await db.log_publish(body.listing_id, body.platform, canon_fields, url)
+
+    posted = False
+    platform_listing_id: str | None = None
+    platform_listing_url: str | None = None
+    error: str | None = None
+
+    if body.platform == "vinted" and integrations.is_configured("vinted"):
+        try:
+            payload = to_vinted(canon_fields)
+            if "catalog_id" not in payload:
+                error = f"category {canon_fields.get('category')!r} has no Vinted catalog mapping"
+            elif not payload.get("title") or not payload.get("description") or not payload.get("price"):
+                error = "title, description, and price are required for Vinted"
+            else:
+                item_id, url = await asyncio.wait_for(
+                    vinted_integration.publish(rec["image_path"], payload),
+                    timeout=PUBLISH_TIMEOUT_S,
+                )
+                posted = True
+                platform_listing_id = str(item_id)
+                platform_listing_url = url
+        except asyncio.TimeoutError:
+            error = f"Vinted publish timed out after {PUBLISH_TIMEOUT_S}s"
+        except vinted_integration.VintedError as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        except Exception as exc:
+            logger.exception("unexpected Vinted publish failure")
+            error = f"unexpected error: {type(exc).__name__}: {exc}"
+    elif body.platform == "kleinanzeigen":
+        error = "Kleinanzeigen direct publishing not implemented (Phase 6c)"
+
+    final_url = platform_listing_url or fallback_url
+    await db.log_publish(body.listing_id, body.platform, canon_fields, final_url)
 
     return PublishResponse(
         listing_id=body.listing_id,
         platform=body.platform,
-        prefill_url=url,
+        prefill_url=final_url,
+        posted=posted,
+        platform_listing_id=platform_listing_id,
+        platform_listing_url=platform_listing_url,
+        error=error,
     )

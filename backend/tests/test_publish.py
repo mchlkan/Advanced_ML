@@ -103,3 +103,113 @@ def test_publish_preserves_null_fields_in_log(app_client, jpeg_bytes):
     assert stored["brand"] is None
     assert stored["color"] is None
     assert stored["title"] == "Tee"
+
+
+def test_publish_vinted_not_configured_falls_back(app_client, jpeg_bytes):
+    """Without VINTED_SESSION_PATH set, /publish returns the new-listing URL
+    with posted=false and no error (it's not a failure, just not set up)."""
+    listing_id = _upload(app_client, jpeg_bytes)
+    status, body = _publish(app_client, listing_id, "vinted", {
+        "brand": "Zara", "title": "Tee", "description": "..."
+    })
+    assert status == 200
+    assert body["posted"] is False
+    assert body["platform_listing_url"] is None
+    assert body["error"] is None
+    assert body["prefill_url"] == "https://www.vinted.de/items/new"
+
+
+def test_publish_kleinanzeigen_reports_not_implemented(app_client, jpeg_bytes):
+    """KA always falls back in 6a but the response's error field says why."""
+    listing_id = _upload(app_client, jpeg_bytes)
+    status, body = _publish(app_client, listing_id, "kleinanzeigen", {
+        "brand": "Zara", "title": "Tee", "description": "..."
+    })
+    assert status == 200
+    assert body["posted"] is False
+    assert body["error"] is not None
+    assert "phase 6c" in body["error"].lower() or "not implemented" in body["error"].lower()
+
+
+def test_publish_vinted_real_success(app_client, jpeg_bytes, monkeypatch, tmp_path):
+    """When VINTED_SESSION_PATH is set and the integration succeeds, the
+    response includes the live listing URL and posted=true."""
+    session_file = tmp_path / "vinted.json"
+    session_file.write_text("{}")  # is_configured only checks existence
+    monkeypatch.setenv("VINTED_SESSION_PATH", str(session_file))
+
+    async def fake_publish(image_path, payload):
+        assert payload["catalog_id"] == 221  # tshirts → Damen T-Shirts
+        assert payload["condition_id"] == 2  # Very good
+        return 1234567890, "https://www.vinted.fr/items/1234567890"
+
+    monkeypatch.setattr("backend.routes.publish.vinted_integration.publish", fake_publish)
+
+    listing_id = _upload(app_client, jpeg_bytes)
+    status, body = _publish(app_client, listing_id, "vinted", {
+        "category": "tshirts",
+        "condition": "Very good",
+        "brand": "Zara",
+        "title": "Zara T-shirt",
+        "description": "A nice tee.",
+        "price_eur": 10.0,
+    })
+    assert status == 200
+    assert body["posted"] is True
+    assert body["platform_listing_id"] == "1234567890"
+    assert body["platform_listing_url"] == "https://www.vinted.fr/items/1234567890"
+    assert body["prefill_url"] == "https://www.vinted.fr/items/1234567890"
+    assert body["error"] is None
+
+
+def test_publish_vinted_real_failure_falls_back(app_client, jpeg_bytes, monkeypatch, tmp_path):
+    """When the Vinted integration raises, /publish falls back to the URL
+    with posted=false and a populated error string. Never 5xx."""
+    from backend.integrations.vinted import VintedBlocked
+
+    session_file = tmp_path / "vinted.json"
+    session_file.write_text("{}")
+    monkeypatch.setenv("VINTED_SESSION_PATH", str(session_file))
+
+    async def fake_publish(image_path, payload):
+        raise VintedBlocked("draft create: DataDome blocked at status 429")
+
+    monkeypatch.setattr("backend.routes.publish.vinted_integration.publish", fake_publish)
+
+    listing_id = _upload(app_client, jpeg_bytes)
+    status, body = _publish(app_client, listing_id, "vinted", {
+        "category": "tshirts",
+        "condition": "Very good",
+        "title": "Zara T-shirt",
+        "description": "A nice tee.",
+        "price_eur": 10.0,
+    })
+    assert status == 200
+    assert body["posted"] is False
+    assert body["platform_listing_url"] is None
+    assert body["error"] is not None
+    assert "datadome" in body["error"].lower()
+    assert body["prefill_url"] == "https://www.vinted.de/items/new"
+
+
+def test_publish_vinted_unmapped_category_falls_back(app_client, jpeg_bytes, monkeypatch, tmp_path):
+    """When the canon category has no Vinted catalog mapping, surface a clear
+    error rather than calling the API with a missing catalog_id."""
+    session_file = tmp_path / "vinted.json"
+    session_file.write_text("{}")
+    monkeypatch.setenv("VINTED_SESSION_PATH", str(session_file))
+
+    async def fake_publish(image_path, payload):
+        raise AssertionError("integration should not be called when catalog_id is missing")
+
+    monkeypatch.setattr("backend.routes.publish.vinted_integration.publish", fake_publish)
+
+    listing_id = _upload(app_client, jpeg_bytes)
+    status, body = _publish(app_client, listing_id, "vinted", {
+        "category": "scarves",  # not in VINTED_CATEGORY_TO_CATALOG_ID
+        "title": "x", "description": "y", "price_eur": 5.0,
+    })
+    assert status == 200
+    assert body["posted"] is False
+    assert body["error"] is not None
+    assert "catalog" in body["error"].lower()

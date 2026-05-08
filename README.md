@@ -58,6 +58,9 @@ HF_TOKEN=hf_...
 
 # Optional, for the LLM-as-judge eval baselines:
 OPENAI_API_KEY=sk-...
+
+# Optional, for direct Vinted publishing via /publish (Phase 6a):
+VINTED_SESSION_PATH=/path/to/.vinted-session.json
 ```
 
 Run the backend:
@@ -107,6 +110,48 @@ docker buildx build --platform linux/amd64 \
 ```
 
 Then on RunPod dashboard: Serverless → Endpoints → Create New Endpoint, point at the GHCR image, and set the env vars. The container expects `HF_TOKEN` (gated-repo access) and the same `BASE_MODEL` / `ADAPTER_ID` / `MAX_NEW_TOKENS` overrides used during training.
+
+## Direct publishing — Vinted (Phase 6a)
+
+`/publish` can post listings directly to Vinted via the mobile draft-mode
+flow (which bypasses DataDome on the protected submission endpoint).
+
+**One-off bootstrap** (uses the sister project at
+`~/Projekte/Vinted/vinted-lister`):
+
+```bash
+cd ~/Projekte/Vinted/vinted-lister
+python -m src.main login --mode password
+# writes .vinted-session.json with refresh_token + datadome cookie
+```
+
+Then in resell-copilot's `.env`:
+
+```bash
+VINTED_SESSION_PATH=/path/to/.vinted-session.json
+```
+
+The backend reads the session at request time, refreshes the access
+token transparently when near expiry, and persists the rotated DataDome
+cookie back to the file after each publish.
+
+**Behaviour:**
+- If `VINTED_SESSION_PATH` is unset → `/publish` returns the new-listing
+  page URL with `posted: false` and `error: null` (graceful fallback).
+- If the session is configured but the publish fails (DataDome 429,
+  refresh expired, network) → response falls back to the URL with
+  `posted: false` and a populated `error` string. Never 5xx.
+- On success → response includes `platform_listing_url` pointing at
+  the live listing.
+
+**Out of scope for 6a (deferred to 6b):** queue + retry, polling status
+endpoint, password login on the backend.
+
+**Out of scope for 6a (deferred to 6c):** Kleinanzeigen direct publishing.
+KA always falls back to the URL with `error: "Phase 6c"` until the
+mobile listing-create flow is captured + implemented in vinted-lister.
+
+---
 
 ### Current production settings (verified working)
 

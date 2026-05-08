@@ -86,6 +86,10 @@ class PublishResponse(BaseModel):
     listing_id: str
     platform: Platform
     prefill_url: str
+    posted: bool = False
+    platform_listing_id: str | None = None
+    platform_listing_url: str | None = None
+    error: str | None = None
 
 
 class HealthzResponse(BaseModel):
