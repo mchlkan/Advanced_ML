@@ -179,6 +179,20 @@ endpoint for in-flight publishes.
 KA always falls back to the URL with `error: "Phase 6c"` until the
 mobile listing-create flow is captured and implemented.
 
+### Known publish-side gaps
+
+- **Sneaker sizes are unmapped.** Sneakers (catalog 2632) use Vinted's
+  `size_group=7` whose IDs aren't recoverable without creating throwaway
+  live listings. The mapper drops `size_id` for sneakers and the user
+  picks the size on Vinted's confirmation page before going live.
+- **Material is free-text.** Vinted has no public materials endpoint;
+  `to_vinted` passes through `material` as-is (Vinted treats it as a
+  hint string, not an enum).
+- **Brand_id resolves dynamically.** First publish per unique brand
+  hits `/api/v2/item_upload/brands?keyword=...` and caches the top-hit
+  ID per process. Unknown brands fall back to free-text `brand`, which
+  Vinted accepts but doesn't link to a brand page.
+
 ---
 
 ### Current production settings (verified working)

@@ -81,39 +81,22 @@ VINTED_COLOR_TO_ID: dict[str, int] = {
     "clear": 32,
 }
 
-# Vinted size IDs — partial best-guess mapping per category. size_id=2 is
-# verified working against catalog 221 (T-Shirts) per our day-6 smoke test.
-# Other entries are extrapolated from the standard XS/S/M/L/XL pattern of
-# size_group 4 and may need correction if Vinted rejects a draft completion.
-# Keyed by (canonical category, normalized size label) tuples.
+# Vinted size IDs by (category, normalized size label). All four of our canon
+# categories report `multiple_size_group_ids: [4]` in the catalogs response
+# *except* sneakers which uses size_group 7. Size_group 4 follows the
+# XS/S/M/L/XL/XXL pattern with size_id 1..6 (size_id=2 verified empirically
+# against catalog 221). Size_group 7's IDs aren't recoverable without
+# creating throwaway live listings, so sneaker sizes are intentionally
+# unmapped here — the integration drops the key and the user picks the
+# size on the Vinted UI before publishing on-platform.
 VINTED_SIZE_TO_ID: dict[tuple[str, str], int] = {
-    # Tops — size_group 4 (XS/S/M/L/XL/XXL)
-    ("tshirts", "xs"): 1,
-    ("tshirts", "s"): 2,
-    ("tshirts", "m"): 3,
-    ("tshirts", "l"): 4,
-    ("tshirts", "xl"): 5,
-    ("tshirts", "xxl"): 6,
-    ("jackets", "xs"): 1,
-    ("jackets", "s"): 2,
-    ("jackets", "m"): 3,
-    ("jackets", "l"): 4,
-    ("jackets", "xl"): 5,
-    ("jackets", "xxl"): 6,
-    # Sneakers — EU sizes 35-44 (rough guesses; needs empirical verification)
-    ("sneakers", "35"): 100,
-    ("sneakers", "36"): 101,
-    ("sneakers", "37"): 102,
-    ("sneakers", "38"): 103,
-    ("sneakers", "39"): 104,
-    ("sneakers", "40"): 105,
-    ("sneakers", "41"): 106,
-    ("sneakers", "42"): 107,
-    # Jeans — waist sizes (rough guesses)
-    ("jeans", "w26"): 200, ("jeans", "26"): 200,
-    ("jeans", "w28"): 201, ("jeans", "28"): 201,
-    ("jeans", "w30"): 202, ("jeans", "30"): 202,
-    ("jeans", "w32"): 203, ("jeans", "32"): 203,
+    ("tshirts", "xs"): 1, ("tshirts", "s"): 2, ("tshirts", "m"): 3,
+    ("tshirts", "l"): 4, ("tshirts", "xl"): 5, ("tshirts", "xxl"): 6,
+    ("jackets", "xs"): 1, ("jackets", "s"): 2, ("jackets", "m"): 3,
+    ("jackets", "l"): 4, ("jackets", "xl"): 5, ("jackets", "xxl"): 6,
+    ("jeans", "xs"): 1, ("jeans", "s"): 2, ("jeans", "m"): 3,
+    ("jeans", "l"): 4, ("jeans", "xl"): 5, ("jeans", "xxl"): 6,
+    # sneakers (size_group 7): unmapped — see note above
 }
 
 

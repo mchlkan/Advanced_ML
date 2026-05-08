@@ -111,6 +111,66 @@ def test_build_item_payload_handles_missing_optional_fields():
     assert material_attr["ids"] == []
 
 
+def test_resolve_brand_id_caches_per_process(monkeypatch, tmp_path: Path):
+    """resolve_brand_id should hit /api/v2/item_upload/brands?keyword=... once
+    per unique brand and cache the result for subsequent calls."""
+    import respx
+    import httpx as httpx_real
+
+    # Reset module-level cache between tests
+    vinted._BRAND_ID_CACHE.clear()
+
+    session = vinted.VintedSession(**_session_dict())
+    client = vinted.VintedClient(session)
+
+    with respx.mock(assert_all_called=False) as mock:
+        # Avoid hitting refresh: pretend session is fresh
+        monkeypatch.setattr(client, "_ensure_fresh", lambda *a, **kw: None)
+        route = mock.get("https://www.vinted.fr/api/v2/item_upload/brands").mock(
+            return_value=httpx_real.Response(200, json={"brands": [
+                {"id": 14, "title": "adidas"},
+                {"id": 194976, "title": "adidas Originals"},
+            ]})
+        )
+
+        # Two lookups for the same brand → only one network call
+        assert client.resolve_brand_id("Adidas") == 14
+        assert client.resolve_brand_id("adidas") == 14
+        assert route.call_count == 1
+        # Lookup for a different brand → another network call
+        mock.get("https://www.vinted.fr/api/v2/item_upload/brands").mock(
+            return_value=httpx_real.Response(200, json={"brands": [{"id": 12, "title": "Zara"}]})
+        )
+        assert client.resolve_brand_id("Zara") == 12
+
+
+def test_resolve_brand_id_returns_none_on_no_match(monkeypatch):
+    """Empty brands list → None, callers fall back to free-text brand."""
+    import respx
+    import httpx as httpx_real
+
+    vinted._BRAND_ID_CACHE.clear()
+    session = vinted.VintedSession(**_session_dict())
+    client = vinted.VintedClient(session)
+
+    with respx.mock(assert_all_called=False) as mock:
+        monkeypatch.setattr(client, "_ensure_fresh", lambda *a, **kw: None)
+        mock.get("https://www.vinted.fr/api/v2/item_upload/brands").mock(
+            return_value=httpx_real.Response(200, json={"brands": []})
+        )
+        assert client.resolve_brand_id("NoSuchBrand") is None
+
+
+def test_resolve_brand_id_handles_blank_input():
+    """Empty / whitespace-only input → None without any HTTP call."""
+    vinted._BRAND_ID_CACHE.clear()
+    session = vinted.VintedSession(**_session_dict())
+    client = vinted.VintedClient(session)
+    assert client.resolve_brand_id("") is None
+    assert client.resolve_brand_id("   ") is None
+    assert client.resolve_brand_id(None) is None  # type: ignore
+
+
 def test_publish_raises_not_configured_when_env_missing(monkeypatch, tmp_path: Path):
     """The public publish() helper raises VintedNotConfigured when the env
     var is unset, so the route's try/except can map it cleanly."""

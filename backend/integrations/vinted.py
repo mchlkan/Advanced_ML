@@ -32,6 +32,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+_BRAND_ID_CACHE: dict[str, int | None] = {}
+
 DATADOME_SDK_URL = "https://api-sdk.datadome.co/sdk/"
 DATADOME_KEY = "E6EAF460AA2A8322D66B42C85B62F9"
 DEFAULT_DOMAIN = "www.vinted.fr"
@@ -359,6 +361,32 @@ class VintedClient:
         self.session.datadome_cookie = _extract_dd(resp, self.session.datadome_cookie)
         return resp
 
+    def resolve_brand_id(self, brand: str) -> int | None:
+        """Top hit from /api/v2/item_upload/brands?keyword=, cached per process.
+        Returns None for blank input or no match — callers fall back to free-text
+        brand, which Vinted accepts but doesn't link to the brand page."""
+        if not brand or not brand.strip():
+            return None
+        key = brand.strip().lower()
+        if key in _BRAND_ID_CACHE:
+            return _BRAND_ID_CACHE[key]
+        self._ensure_fresh()
+        from urllib.parse import quote
+        resp = self._get(f"/api/v2/item_upload/brands?keyword={quote(brand.strip())}")
+        if resp.status_code != 200:
+            return None
+        brands = resp.json().get("brands", [])
+        # Prefer an exact case-insensitive title match, otherwise top hit.
+        for b in brands:
+            if b.get("title", "").strip().lower() == key:
+                _BRAND_ID_CACHE[key] = int(b["id"])
+                return _BRAND_ID_CACHE[key]
+        if brands:
+            _BRAND_ID_CACHE[key] = int(brands[0]["id"])
+            return _BRAND_ID_CACHE[key]
+        _BRAND_ID_CACHE[key] = None
+        return None
+
     def upload_photo(self, file_path: str | Path) -> int:
         self._ensure_fresh()
         path = Path(file_path)
@@ -551,6 +579,12 @@ def _publish_sync(image_path: str | Path, payload: dict) -> tuple[int, str]:
     if session is None:
         raise VintedNotConfigured(f"no session file at {path}")
     client = VintedClient(session)
+    # Resolve free-text brand → brand_id so the listing links to the brand
+    # page. If the lookup misses, free-text brand still goes through.
+    if payload.get("brand") and not payload.get("brand_id"):
+        bid = client.resolve_brand_id(payload["brand"])
+        if bid is not None:
+            payload = {**payload, "brand_id": bid}
     photo_id = client.upload_photo(image_path)
     item_id, url = client.submit_listing_via_draft(payload, [photo_id])
     save_session(client.session, path)
