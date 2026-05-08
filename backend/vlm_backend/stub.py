@@ -44,6 +44,9 @@ def _seeded_rng(image: Image.Image, platform: str, hints: str | None) -> np.rand
 class StubVLM:
     name = "stub"
 
+    async def warmup(self) -> None:
+        pass
+
     async def predict(self, image: Image.Image, platform: str, hints: str | None = None) -> VLMOutput:
         rng = _seeded_rng(image, platform, hints)
         cats = VINTED_CATEGORIES_EN if platform == "vinted" else KLEINANZEIGEN_CATEGORIES_EN

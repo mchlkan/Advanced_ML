@@ -24,6 +24,7 @@ class VLMOutput:
 class VLMBackend(Protocol):
     name: str
 
+    async def warmup(self) -> None: ...
     async def predict(self, image: Image.Image, platform: str, hints: str | None = None) -> VLMOutput: ...
 
 
@@ -33,7 +34,12 @@ def get_backend() -> VLMBackend:
         from .stub import StubVLM
         return StubVLM()
     if name == "local_mps":
-        raise NotImplementedError("local_mps backend ships in Phase 2")
+        from .local_mps import DEFAULT_ADAPTER, DEFAULT_BASE_MODEL, LocalMPSVLM
+        return LocalMPSVLM(
+            base_model=os.environ.get("VLM_BASE_MODEL", DEFAULT_BASE_MODEL),
+            adapter_id=os.environ.get("VLM_ADAPTER_ID", DEFAULT_ADAPTER),
+            device_pref=os.environ.get("DEVICE", "auto"),
+        )
     if name == "runpod_http":
         raise NotImplementedError("runpod_http backend ships in Phase 3")
     raise ValueError(f"Unknown VLM_BACKEND: {name!r}")

@@ -16,9 +16,19 @@ from backend.vlm_backend import get_backend
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
+
     device_pref = os.environ.get("DEVICE", "auto")
-    app.state.models = load_models(device_pref)
     app.state.vlm = get_backend()
+
+    # load_models (DINOv2 + 3 heads) and vlm.warmup (Qwen3-VL + LoRA) are independent;
+    # run concurrently so cold start isn't the sum of both.
+    models, _ = await asyncio.gather(
+        asyncio.to_thread(load_models, device_pref),
+        app.state.vlm.warmup(),
+    )
+    app.state.models = models
+
     await db.init_db()
     yield
 

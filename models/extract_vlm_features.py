@@ -124,13 +124,18 @@ def model_device(model) -> torch.device:
     return next(model.parameters()).device
 
 
-def build_inputs(processor, image, platform: str, device: torch.device):
+def build_inputs(processor, image, platform: str, device: torch.device, prompt: str | None = None):
+    """Build the VLM chat-template inputs. ``prompt`` overrides ``get_prompt(platform)``
+    so callers (e.g. backend with seller hints) can append text without bypassing the
+    canonical prompt prefix."""
+    if prompt is None:
+        prompt = get_prompt(platform)
     messages = [
         {
             "role": "user",
             "content": [
                 {"type": "image", "image": image},
-                {"type": "text", "text": get_prompt(platform)},
+                {"type": "text", "text": prompt},
             ],
         }
     ]
