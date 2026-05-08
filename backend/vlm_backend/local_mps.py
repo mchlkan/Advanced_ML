@@ -18,8 +18,6 @@ we're on 5.8), downgrade with: ``uv pip install --no-deps 'transformers>=4.57,<5
 from __future__ import annotations
 
 import asyncio
-import json
-import re
 
 import torch
 from huggingface_hub.errors import GatedRepoError, HfHubHTTPError
@@ -33,30 +31,11 @@ from extract_vlm_features import DEFAULT_ADAPTER, DEFAULT_BASE_MODEL, build_inpu
 from prompts import get_prompt
 
 from . import VLMOutput
+from .util import parse_json_lenient
 
 
 MAX_NEW_TOKENS = 256
 RECOMMENDED_MIN_MEMORY_GB = 12
-
-
-def _parse_json_lenient(text: str) -> dict:
-    if not text:
-        return {}
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-    start, end = cleaned.find("{"), cleaned.rfind("}")
-    if 0 <= start < end:
-        try:
-            return json.loads(cleaned[start : end + 1])
-        except json.JSONDecodeError:
-            pass
-    return {}
 
 
 def _check_memory(device: torch.device) -> None:
@@ -143,7 +122,7 @@ class LocalMPSVLM:
 
         return VLMOutput(
             hidden_state=hidden,
-            fields=_parse_json_lenient(raw_text),
+            fields=parse_json_lenient(raw_text),
             raw_text=raw_text,
         )
 

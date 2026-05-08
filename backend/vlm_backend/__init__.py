@@ -41,5 +41,6 @@ def get_backend() -> VLMBackend:
             device_pref=os.environ.get("DEVICE", "auto"),
         )
     if name == "runpod_http":
-        raise NotImplementedError("runpod_http backend ships in Phase 3")
+        from .runpod_http import RunpodHTTPVLM
+        return RunpodHTTPVLM()
     raise ValueError(f"Unknown VLM_BACKEND: {name!r}")

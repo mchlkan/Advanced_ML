@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 
-from backend import db
-from backend.bootstrap import load_models
-from backend.routes import publish, upload, verify
-from backend.schemas import HealthzResponse
-from backend.vlm_backend import get_backend
+# Load .env at import time so any module reading os.environ (e.g.
+# vlm_backend factory) sees the values regardless of import order.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+from backend import db  # noqa: E402
+from backend.bootstrap import load_models  # noqa: E402
+from backend.routes import publish, upload, verify  # noqa: E402
+from backend.schemas import HealthzResponse  # noqa: E402
+from backend.vlm_backend import get_backend  # noqa: E402
 
 
 @asynccontextmanager
