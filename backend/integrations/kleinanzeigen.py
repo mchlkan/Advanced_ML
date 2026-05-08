@@ -1,24 +1,412 @@
-"""Kleinanzeigen publish — stubbed for Phase 6a.
+"""Kleinanzeigen mobile-API publish client.
 
-The mobile listing-create flow needs a mitmproxy capture session against the
-KA Android app's "Anzeige aufgeben" path before it can be implemented (see
-RESEARCH-ka.md in the vinted-lister repo). Until that lands, /publish for
-Kleinanzeigen falls back to returning the new-listing page URL with
-posted=false.
+Mirrors the structure of backend/integrations/vinted.py: load a session
+from disk, refresh tokens transparently when near expiry, post a JAXB-XML
+listing body to api.kleinanzeigen.de.
+
+Auth is dual-layered (per docs/ka_endpoints.md):
+- Tier-1 ``Authorization: Basic android:TaR60pEttY`` is the foundation
+  (same for every install of the KA app)
+- Tier-2 ``x-ecg-authorization-user: email=<email>,access=<JWT>`` layered
+  on top for user-owned writes
+
+The Tier-2 JWT comes from POST login.kleinanzeigen.de/oauth/token with
+grant_type=refresh_token. Refresh tokens are single-use — we persist the
+rotated token immediately on each refresh.
+
+Login itself (Auth0 + Akamai BMP + MFA SMS) is intentionally NOT
+implemented here; per docs/ka_endpoints.md it's only viable as
+"capture once, refresh forever". The maintainer captures the initial
+refresh_token via mitmproxy on a real Android device and seeds it into
+the backend via /onboarding/kleinanzeigen.
 """
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import json
+import logging
+import os
+import re
+import secrets
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
-class KleinanzeigenNotConfigured(RuntimeError):
-    pass
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
+TIER1_AUTH = "Basic YW5kcm9pZDpUYVI2MHBFdHRZ"   # android:TaR60pEttY
+USER_AGENT = "Kleinanzeigen/2026.19.1 (Android 8.0.0; samsung SM-A320FL)"
+ECG_USER_AGENT = "ebayk-android-app-2026.19.1"
+ECG_USER_VERSION = "2026.19.1"
+
+OAUTH_TOKEN_URL = "https://login.kleinanzeigen.de/oauth/token"
+OAUTH_CLIENT_ID = "uV5j90myVPc2XzEOFuWUD2At17OACEGQ"
+AUTH0_CLIENT_HEADER = (
+    # Same blob the Android app sends; opaque to the server but required
+    # ("auth0-client" header).
+    "eyJuYW1lIjoiQXV0aDAuQW5kcm9pZCIsImVudiI6eyJhbmRyb2lkIjoiMjYifSwidmVyc2lvbiI6IjMuMTUuMCJ9"
+)
+
+API_BASE = "https://api.kleinanzeigen.de"
+
+
+class KAError(RuntimeError):
+    """Base for all KA integration failures."""
+
+
+class KANotConfigured(KAError):
+    """Session file missing or unreadable."""
+
+
+class KAAuthExpired(KAError):
+    """Refresh token rejected — maintainer must re-seed via mitmproxy capture."""
+
+
+@dataclass
+class KASession:
+    """Persisted KA session. ``imprint`` is required for COMMERCIAL accounts;
+    omitted for PRIVATE. ``home_location_id`` is the numeric KA location id
+    (e.g. 7615 = "85051 Ingolstadt") shown on every listing."""
+    access_token: str
+    refresh_token: str
+    expires_at: float
+    user_id: int
+    email: str
+    poster_type: str = "PRIVATE"           # or "COMMERCIAL"
+    imprint: str = ""
+    contact_name: str = ""
+    home_location_id: int | None = None
+
+
+def load_session(path: str | Path) -> KASession | None:
+    p = Path(path).expanduser()
+    if not p.exists():
+        return None
+    with p.open() as f:
+        data = json.load(f)
+    return KASession(
+        access_token=data["access_token"],
+        refresh_token=data["refresh_token"],
+        expires_at=float(data["expires_at"]),
+        user_id=int(data["user_id"]),
+        email=data["email"],
+        poster_type=data.get("poster_type", "PRIVATE"),
+        imprint=data.get("imprint", ""),
+        contact_name=data.get("contact_name", ""),
+        home_location_id=data.get("home_location_id"),
+    )
+
+
+def save_session(session: KASession, path: str | Path) -> None:
+    p = Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("w") as f:
+        json.dump(asdict(session), f, indent=2)
 
 
 def is_configured() -> bool:
-    return False
+    path = os.environ.get("KA_SESSION_PATH")
+    if not path:
+        return False
+    return Path(path).expanduser().exists()
 
 
-async def publish(image_path, payload):
-    raise KleinanzeigenNotConfigured(
-        "Kleinanzeigen direct publishing not implemented (Phase 6c)"
+def _session_path() -> Path:
+    path = os.environ.get("KA_SESSION_PATH")
+    if not path:
+        raise KANotConfigured("KA_SESSION_PATH is not set")
+    return Path(path).expanduser()
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    parts = token.split(".")
+    if len(parts) != 3:
+        return {}
+    return json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (4 - len(parts[1]) % 4)))
+
+
+def refresh_access_token(session: KASession) -> KASession:
+    """Mint a fresh access_token via the refresh grant. Returns a new
+    session with the rotated refresh_token; **callers must persist immediately**
+    because refresh tokens are single-use on KA's Auth0 tenant."""
+    headers = {
+        "user-agent": "Kleinanzeigen Android 2026.19.1",
+        "accept-language": "de_DE",
+        "auth0-client": AUTH0_CLIENT_HEADER,
+        "content-type": "application/json; charset=utf-8",
+    }
+    body = {
+        "client_id": OAUTH_CLIENT_ID,
+        "grant_type": "refresh_token",
+        "refresh_token": session.refresh_token,
+    }
+    resp = httpx.post(OAUTH_TOKEN_URL, json=body, headers=headers, timeout=30)
+    if resp.status_code != 200:
+        raise KAAuthExpired(f"refresh failed: {resp.status_code} — {resp.text[:200]}")
+    data = resp.json()
+    payload = _decode_jwt_payload(data["access_token"])
+    return KASession(
+        access_token=data["access_token"],
+        refresh_token=data.get("refresh_token", session.refresh_token),
+        expires_at=float(payload.get("exp", time.time() + 3599)),
+        user_id=session.user_id,
+        email=session.email,
+        poster_type=session.poster_type,
+        imprint=session.imprint,
+        contact_name=session.contact_name,
+        home_location_id=session.home_location_id,
     )
+
+
+def login_with_refresh(
+    *,
+    refresh_token: str,
+    email: str,
+    poster_type: str = "PRIVATE",
+    imprint: str = "",
+    contact_name: str = "",
+    home_location_id: int | None = None,
+) -> KASession:
+    """Bootstrap a KASession from a captured refresh_token. Performs an
+    initial refresh round-trip to mint an access_token and decode user_id
+    from its payload. Used by /onboarding/kleinanzeigen."""
+    seed = KASession(
+        access_token="",
+        refresh_token=refresh_token,
+        expires_at=0.0,
+        user_id=0,
+        email=email,
+        poster_type=poster_type,
+        imprint=imprint,
+        contact_name=contact_name,
+        home_location_id=home_location_id,
+    )
+    refreshed = refresh_access_token(seed)
+    payload = _decode_jwt_payload(refreshed.access_token)
+    user_id = payload.get("https://www.kleinanzeigen.de/user_id")
+    if not user_id:
+        raise KAError(f"could not extract user_id from access_token: {payload}")
+    refreshed.user_id = int(user_id)
+    return refreshed
+
+
+# --- XML body construction ---
+
+
+def _xml_escape(text: str) -> str:
+    """Escape & < > " ' for XML element text + attributes."""
+    return (text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;"))
+
+
+_XML_NS = (
+    'xmlns:types="http://www.ebayclassifiedsgroup.com/schema/types/v1" '
+    'xmlns:cat="http://www.ebayclassifiedsgroup.com/schema/category/v1" '
+    'xmlns:ad="http://www.ebayclassifiedsgroup.com/schema/ad/v1" '
+    'xmlns:loc="http://www.ebayclassifiedsgroup.com/schema/location/v1" '
+    'xmlns:attr="http://www.ebayclassifiedsgroup.com/schema/attribute/v1" '
+    'xmlns:pic="http://www.ebayclassifiedsgroup.com/schema/picture/v1" '
+    'xmlns:medias="http://www.ebayclassifiedsgroup.com/schema/media/v1"'
+)
+
+
+def build_ad_xml(payload: dict, picture_links: list[dict]) -> str:
+    """Build the JAXB-XML body for POST /api/users/{user_id}/ads.json.
+
+    `payload` keys (all required unless noted):
+      title, description, category_id, location_id, price_eur,
+      poster_type ("PRIVATE"|"COMMERCIAL"), contact_name, email,
+      imprint (optional, COMMERCIAL only)
+
+    `picture_links` is the list of {href, rel} dicts returned from
+    upload_photo() — they're injected verbatim as <pic:link> blocks.
+    """
+    title = _xml_escape(payload["title"])
+    description = _xml_escape(payload["description"])
+    contact_name = _xml_escape(payload.get("contact_name", ""))
+    email = _xml_escape(payload["email"])
+    imprint = _xml_escape(payload.get("imprint", ""))
+    poster_type = _xml_escape(payload.get("poster_type", "PRIVATE"))
+    category_id = int(payload["category_id"])
+    location_id = int(payload["location_id"])
+    price = payload["price_eur"]
+
+    pictures_xml = ""
+    if picture_links:
+        link_xml = "".join(
+            f'<pic:link rel="{_xml_escape(lk.get("rel",""))}" href="{_xml_escape(lk.get("href",""))}" />'
+            for lk in picture_links
+        )
+        pictures_xml = f"<pic:pictures><pic:picture>{link_xml}</pic:picture></pic:pictures>"
+
+    imprint_block = f"<ad:imprint>{imprint}</ad:imprint>" if imprint else ""
+    contact_block = f"<ad:contact-name>{contact_name}</ad:contact-name>" if contact_name else ""
+
+    return (
+        "<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>"
+        f"<ad:ad {_XML_NS} locale=\"en_US\" id=\"0\">"
+        f"<ad:title>{title}</ad:title>"
+        f"<ad:description>{description}</ad:description>"
+        f"{contact_block}"
+        f"{imprint_block}"
+        f"<ad:email>{email}</ad:email>"
+        f"<ad:poster-type><ad:value>{poster_type}</ad:value></ad:poster-type>"
+        f"<ad:ad-type><ad:value>OFFERED</ad:value></ad:ad-type>"
+        f'<cat:category id="{category_id}" />'
+        f"<loc:locations><loc:location id=\"{location_id}\" /></loc:locations>"
+        f"<ad:ad-address />"
+        f"<ad:price>"
+        f"<types:price-type><types:value>SPECIFIED_AMOUNT</types:value></types:price-type>"
+        f"<types:amount>{price}</types:amount>"
+        f"</ad:price>"
+        f"<medias:medias />"
+        f"{pictures_xml}"
+        f"</ad:ad>"
+    )
+
+
+# --- HTTP client ---
+
+
+_LOCATION_ID_RE = re.compile(r'/s-anzeige/[^/]+/(\d+)')
+
+
+class KAClient:
+    """Synchronous client for photo upload + listing submit."""
+
+    def __init__(self, session: KASession):
+        self.session = session
+        self.http = httpx.Client(timeout=30)
+
+    def _ensure_fresh(self, margin_s: int = 300) -> None:
+        if time.time() < self.session.expires_at - margin_s:
+            return
+        logger.info("refreshing KA access token (near expiry)")
+        self.session = refresh_access_token(self.session)
+        try:
+            save_session(self.session, _session_path())
+        except KANotConfigured:
+            pass  # in-memory only path (tests)
+
+    def _tier1_headers(self) -> dict:
+        return {
+            "user-agent": USER_AGENT,
+            "x-ecg-user-agent": ECG_USER_AGENT,
+            "x-ecg-user-version": ECG_USER_VERSION,
+            "authorization": TIER1_AUTH,
+            "accept-encoding": "gzip",
+        }
+
+    def _tier2_headers(self) -> dict:
+        # Tier 2 = Tier 1 + the user JWT in x-ecg-authorization-user.
+        h = self._tier1_headers()
+        h["x-ecg-authorization-user"] = f"email={self.session.email},access={self.session.access_token}"
+        return h
+
+    def upload_photo(self, file_path: str | Path) -> list[dict]:
+        """Returns a list of {href, rel} dicts for every size variant the
+        server emitted. The full list goes back into the listing-submit XML."""
+        self._ensure_fresh()
+        path = Path(file_path)
+        with path.open("rb") as f:
+            data = f.read()
+        suffix = path.suffix.lower().lstrip(".")
+        content_type = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(suffix, "image/jpeg")
+        boundary = "0x" + secrets.token_hex(6) + "-" * 32 + "dEaDfA11aC132"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="IMAGE_{secrets.token_hex(8)}.jpg"\r\n'
+            f"Content-Type: {content_type}\r\n"
+            f"Content-Transfer-Encoding: binary\r\n\r\n"
+        ).encode() + data + f"\r\n--{boundary}--\r\n".encode()
+        headers = self._tier2_headers() | {"content-type": f"multipart/form-data; boundary={boundary}"}
+        resp = self.http.post(f"{API_BASE}/api/pictures.json", content=body, headers=headers, timeout=60)
+        if resp.status_code not in (200, 201):
+            raise _classify_error(resp, "photo upload")
+        body = resp.json()
+        # JAXB-JSON envelope: top-level key is the namespaced "picture"
+        picture = body.get("{http://www.ebayclassifiedsgroup.com/schema/picture/v1}picture", {}).get("value", {})
+        links = picture.get("link", []) or []
+        return [{"href": lk.get("href", ""), "rel": lk.get("rel", "")} for lk in links if lk.get("href")]
+
+    def submit_listing(self, ad_xml: str) -> tuple[int, str]:
+        self._ensure_fresh()
+        headers = self._tier2_headers() | {"content-type": "application/json; charset=utf-8"}
+        url = f"{API_BASE}/api/users/{self.session.user_id}/ads.json"
+        resp = self.http.post(url, content=ad_xml.encode("utf-8"), headers=headers, timeout=60)
+        if resp.status_code not in (200, 201):
+            raise _classify_error(resp, "listing submit")
+
+        # Try the Location header first (canonical place for created-resource ID)
+        loc = resp.headers.get("location") or resp.headers.get("Location") or ""
+        m = _LOCATION_ID_RE.search(loc)
+        if m:
+            listing_id = int(m.group(1))
+        else:
+            # Fall back to scraping the JAXB-JSON response for the listing id
+            data = resp.json()
+            ad = data.get("{http://www.ebayclassifiedsgroup.com/schema/ad/v1}ad", {}).get("value", {})
+            raw_id = ad.get("id") or ad.get("@id") or ""
+            try:
+                listing_id = int(raw_id)
+            except (TypeError, ValueError):
+                listing_id = 0
+        url_out = (
+            f"https://www.kleinanzeigen.de/s-anzeige/{listing_id}"
+            if listing_id
+            else "https://www.kleinanzeigen.de/m-meine-anzeigen.html"
+        )
+        return listing_id, url_out
+
+
+def _classify_error(resp: httpx.Response, step: str) -> KAError:
+    text = resp.text[:300]
+    if resp.status_code == 401:
+        return KAAuthExpired(f"{step}: 401 Unauthorized — session likely expired")
+    return KAError(f"{step}: HTTP {resp.status_code} — {text}")
+
+
+# --- public async API for the runner ---
+
+
+async def publish(image_path: str | Path, payload: dict) -> tuple[int, str]:
+    """Publish one listing to Kleinanzeigen. Sync HTTP wrapped in
+    asyncio.to_thread so the runner stays async."""
+    return await asyncio.to_thread(_publish_sync, image_path, payload)
+
+
+def _publish_sync(image_path: str | Path, payload: dict) -> tuple[int, str]:
+    path = _session_path()
+    session = load_session(path)
+    if session is None:
+        raise KANotConfigured(f"no session file at {path}")
+
+    # Layer session-derived defaults onto the payload so to_kleinanzeigen
+    # only has to populate the variable bits (title/description/etc.).
+    full_payload = dict(payload)
+    full_payload.setdefault("email", session.email)
+    full_payload.setdefault("poster_type", session.poster_type)
+    if session.imprint and not full_payload.get("imprint"):
+        full_payload["imprint"] = session.imprint
+    if session.contact_name and not full_payload.get("contact_name"):
+        full_payload["contact_name"] = session.contact_name
+    if session.home_location_id and not full_payload.get("location_id"):
+        full_payload["location_id"] = session.home_location_id
+
+    client = KAClient(session)
+    picture_links = client.upload_photo(image_path)
+    if not picture_links:
+        raise KAError("photo upload returned no link blocks")
+    ad_xml = build_ad_xml(full_payload, picture_links)
+    listing_id, url = client.submit_listing(ad_xml)
+    save_session(client.session, path)
+    return listing_id, url

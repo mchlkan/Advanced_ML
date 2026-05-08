@@ -79,16 +79,70 @@ def test_runner_marks_unconfigured_failed(app_client, jpeg_bytes, drain_publish_
     assert "configured" in (job["error"] or "").lower()
 
 
-def test_runner_marks_kleinanzeigen_failed_phase_6c(app_client, jpeg_bytes, drain_publish_jobs):
+def test_runner_marks_kleinanzeigen_unconfigured_failed(app_client, jpeg_bytes, drain_publish_jobs):
+    """No KA_SESSION_PATH → runner fails the job with a clear setup-hint error."""
     listing_id = _upload(app_client, jpeg_bytes)
     _, body = _enqueue(app_client, listing_id, "kleinanzeigen", {
-        "title": "Tee", "description": "..."
+        "category": "tshirts", "title": "Tee", "description": "...", "price_eur": 5.0
     })
     drain_publish_jobs()
 
     job = _status(app_client, body["job_id"])
     assert job["status"] == "failed"
-    assert "phase 6c" in (job["error"] or "").lower() or "not implemented" in (job["error"] or "").lower()
+    assert "ka_session_path" in (job["error"] or "").lower()
+
+
+def test_runner_posts_kleinanzeigen_successfully(app_client, jpeg_bytes, drain_publish_jobs, monkeypatch, tmp_path):
+    """Configured KA + integration succeeds → terminal status='posted'
+    with platform_listing_id and platform_listing_url populated."""
+    session_file = tmp_path / "ka.json"
+    session_file.write_text("{}")
+    monkeypatch.setenv("KA_SESSION_PATH", str(session_file))
+
+    async def fake_publish(image_path, payload):
+        assert payload["category_id"] == 160       # tshirts → Kleidung_Herren
+        assert payload["title"] == "Olive You T-Shirt"
+        assert payload["price_eur"] == 8.0
+        return 2929292929, "https://www.kleinanzeigen.de/s-anzeige/2929292929"
+
+    monkeypatch.setattr("backend.queue.runner.ka_integration.publish", fake_publish)
+
+    listing_id = _upload(app_client, jpeg_bytes)
+    _, body = _enqueue(app_client, listing_id, "kleinanzeigen", {
+        "category": "tshirts", "condition": "Very good",
+        "title": "Olive You T-Shirt", "description": "Cotton tee, size M.",
+        "price_eur": 8.0,
+    })
+    drain_publish_jobs()
+
+    job = _status(app_client, body["job_id"])
+    assert job["status"] == "posted"
+    assert job["platform_listing_id"] == "2929292929"
+    assert job["platform_listing_url"] == "https://www.kleinanzeigen.de/s-anzeige/2929292929"
+
+
+def test_runner_kleinanzeigen_unmapped_category_falls_back(app_client, jpeg_bytes, drain_publish_jobs, monkeypatch, tmp_path):
+    """sneakers has no KA category mapping → runner short-circuits without
+    calling the integration."""
+    session_file = tmp_path / "ka.json"
+    session_file.write_text("{}")
+    monkeypatch.setenv("KA_SESSION_PATH", str(session_file))
+
+    async def fake_publish(image_path, payload):
+        raise AssertionError("integration should not be called when category_id is missing")
+
+    monkeypatch.setattr("backend.queue.runner.ka_integration.publish", fake_publish)
+
+    listing_id = _upload(app_client, jpeg_bytes)
+    _, body = _enqueue(app_client, listing_id, "kleinanzeigen", {
+        "category": "sneakers",  # not mapped for KA
+        "title": "x", "description": "y", "price_eur": 5.0,
+    })
+    drain_publish_jobs()
+
+    job = _status(app_client, body["job_id"])
+    assert job["status"] == "failed"
+    assert "category" in (job["error"] or "").lower()
 
 
 def test_runner_marks_unmapped_category_failed(app_client, jpeg_bytes, drain_publish_jobs, monkeypatch, tmp_path):

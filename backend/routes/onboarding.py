@@ -15,12 +15,16 @@ until the mobile listing-create flow lands (Phase 6c).
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 from fastapi import APIRouter, HTTPException
 
+from backend.integrations import kleinanzeigen as ka_integration
 from backend.integrations import vinted as vinted_integration
 from backend.schemas import (
+    KleinanzeigenOnboardingRequest,
+    KleinanzeigenOnboardingResponse,
     OnboardingLoginRequest,
     OnboardingLoginResponse,
     OnboardingStatusResponse,
@@ -59,11 +63,69 @@ async def login(body: OnboardingLoginRequest) -> OnboardingLoginResponse:
     )
 
 
+@router.post("/kleinanzeigen", response_model=KleinanzeigenOnboardingResponse)
+async def kleinanzeigen_onboarding(
+    body: KleinanzeigenOnboardingRequest,
+) -> KleinanzeigenOnboardingResponse:
+    """Seed a KA session from a captured refresh_token. Persists the result
+    to KA_SESSION_PATH so the runner picks it up on the next publish."""
+    import asyncio
+
+    if not os.environ.get("KA_SESSION_PATH"):
+        raise HTTPException(
+            status_code=503,
+            detail="KA_SESSION_PATH is not set in the backend env",
+        )
+
+    def _login_blocking() -> ka_integration.KASession:
+        return ka_integration.login_with_refresh(
+            refresh_token=body.refresh_token,
+            email=body.email,
+            poster_type=body.poster_type,
+            imprint=body.imprint,
+            contact_name=body.contact_name,
+            home_location_id=body.home_location_id,
+        )
+
+    try:
+        session = await asyncio.to_thread(_login_blocking)
+    except ka_integration.KAAuthExpired as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ka_integration.KAError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    ka_integration.save_session(
+        session, ka_integration._session_path()
+    )
+    return KleinanzeigenOnboardingResponse(
+        status="ready",
+        user_id=session.user_id,
+        expires_at=session.expires_at,
+    )
+
+
 @router.get("/status", response_model=OnboardingStatusResponse)
 async def status() -> OnboardingStatusResponse:
     return OnboardingStatusResponse(
         vinted=_vinted_status(),
-        kleinanzeigen=PlatformStatus(state="not_implemented"),
+        kleinanzeigen=_kleinanzeigen_status(),
+    )
+
+
+def _kleinanzeigen_status() -> PlatformStatus:
+    if not ka_integration.is_configured():
+        return PlatformStatus(state="not_configured")
+    try:
+        session = ka_integration.load_session(ka_integration._session_path())
+    except Exception:
+        return PlatformStatus(state="not_configured")
+    if session is None:
+        return PlatformStatus(state="not_configured")
+    state = "ready" if session.expires_at > time.time() else "expired"
+    return PlatformStatus(
+        state=state,
+        expires_at=session.expires_at,
+        user_id=str(session.user_id) if session.user_id else None,
     )
 
 

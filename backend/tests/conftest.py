@@ -14,6 +14,13 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+# Import backend.main at conftest module load so its top-level load_dotenv()
+# call runs ONCE, before any fixture begins. Otherwise the first fixture's
+# `from backend.main import app` line triggers load_dotenv AFTER the
+# preceding monkeypatch.delenv calls, silently re-populating env vars like
+# VINTED_SESSION_PATH from the project .env and breaking "unconfigured" tests.
+import backend.main  # noqa: F401 — side effect: load_dotenv
+
 
 @pytest.fixture(scope="session")
 def loaded_models():
@@ -38,6 +45,7 @@ def app_client(tmp_path, monkeypatch, loaded_models):
     for var in (
         "VINTED_SESSION_PATH", "VINTED_DATADOME_SEED",
         "VINTED_ANON_ID", "VINTED_DEVICE_UUID", "VINTED_DEVICE_TOKEN",
+        "KA_SESSION_PATH",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr("backend.db.DEFAULT_DB_PATH", db_path)

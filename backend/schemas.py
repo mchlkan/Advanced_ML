@@ -147,3 +147,74 @@ class PlatformStatus(BaseModel):
 class OnboardingStatusResponse(BaseModel):
     vinted: PlatformStatus
     kleinanzeigen: PlatformStatus
+
+
+class KleinanzeigenOnboardingRequest(BaseModel):
+    """Bootstrap a KA session from a captured refresh_token. The maintainer
+    extracts the refresh_token once via mitmproxy on a real device (Auth0 +
+    Akamai BMP + MFA SMS make programmatic login impractical) and posts it
+    here; backend refreshes the access_token forever after.
+
+    `imprint` is the legally-required Impressum block for COMMERCIAL
+    accounts. PRIVATE sellers leave it blank.
+    """
+    refresh_token: str
+    email: str
+    poster_type: Literal["PRIVATE", "COMMERCIAL"] = "PRIVATE"
+    imprint: str = ""
+    contact_name: str = ""
+    home_location_id: int | None = None
+
+
+class KleinanzeigenOnboardingResponse(BaseModel):
+    platform: Literal["kleinanzeigen"] = "kleinanzeigen"
+    status: Literal["ready"]
+    user_id: int
+    expires_at: float
+
+
+class PredictionSummary(BaseModel):
+    english_fields: dict
+    vinted: PriceBand
+    vinted_sell_probability: float
+    kleinanzeigen: PriceBand
+    visual_wear_probability: float
+
+
+class VintedLiveSnapshot(BaseModel):
+    fetched_at: int
+    title: str | None = None
+    price_eur: float | None = None
+    views: int | None = None
+    favourites: int | None = None
+    primary_photo_url: str | None = None
+    is_sold_or_removed: bool
+
+
+class PlatformPublishState(BaseModel):
+    publish_id: int
+    status: JobStatus
+    platform_listing_id: str | None = None
+    platform_listing_url: str | None = None
+    error: str | None = None
+    live: VintedLiveSnapshot | None = None
+
+
+class InventoryItem(BaseModel):
+    listing_id: str
+    created_at: int
+    thumbnail_url: str
+    prediction: PredictionSummary | None = None
+    vinted: PlatformPublishState | None = None
+    kleinanzeigen: PlatformPublishState | None = None
+
+
+class InventoryResponse(BaseModel):
+    items: list[InventoryItem]
+    last_synced_at: int | None = None
+
+
+class SyncResponse(BaseModel):
+    platform: Literal["vinted"]
+    item_count: int
+    fetched_at: int

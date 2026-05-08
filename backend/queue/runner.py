@@ -25,9 +25,10 @@ from pathlib import Path
 from typing import Literal
 
 # backend/__init__.py adds repo/shared to sys.path.
-from listing_mappings import to_vinted
+from listing_mappings import to_kleinanzeigen, to_vinted
 
 from backend import db, integrations
+from backend.integrations import kleinanzeigen as ka_integration
 from backend.integrations import vinted as vinted_integration
 
 
@@ -58,18 +59,18 @@ def _parse_backoff() -> tuple[float, ...]:
 def classify_error(exc: BaseException) -> Literal["retryable", "permanent"]:
     """Determines whether the runner schedules another attempt or marks
     the job failed."""
-    if isinstance(exc, vinted_integration.VintedAuthExpired):
+    # Permanent — needs human intervention (re-login, fix config, fix payload)
+    if isinstance(exc, (vinted_integration.VintedAuthExpired, ka_integration.KAAuthExpired)):
         return "permanent"
-    if isinstance(exc, vinted_integration.VintedNotConfigured):
+    if isinstance(exc, (vinted_integration.VintedNotConfigured, ka_integration.KANotConfigured)):
         return "permanent"
+    # DataDome challenge clears within minutes — retry
     if isinstance(exc, vinted_integration.VintedBlocked):
-        return "retryable"  # DataDome 429/captcha clears within minutes
+        return "retryable"
     if isinstance(exc, asyncio.TimeoutError):
         return "retryable"
-    if isinstance(exc, vinted_integration.VintedError):
-        # Generic VintedError covers HTTP 4xx (validation, etc.) — those are
-        # bad payload, retry won't help. The retryable HTTP statuses (429,
-        # 5xx) get raised as VintedBlocked or come via TimeoutError.
+    # Generic platform errors: HTTP 5xx → retryable transient, HTTP 4xx → permanent
+    if isinstance(exc, (vinted_integration.VintedError, ka_integration.KAError)):
         msg = str(exc).lower()
         if "http 5" in msg or "timeout" in msg:
             return "retryable"
@@ -120,40 +121,32 @@ class PublishRunner:
 
     async def _dispatch(self, job: dict) -> None:
         platform = job["platform"]
-        if platform != "vinted":
-            await self._mark_failed(
-                job["id"],
-                f"direct publishing on {platform!r} not implemented (Phase 6c)",
-            )
-            return
-        if not integrations.is_configured("vinted"):
-            await self._mark_failed(
-                job["id"],
-                "Vinted integration not configured (set VINTED_SESSION_PATH)",
-            )
-            return
 
         rec = await db.get_listing(job["listing_id"], db_path=self.db_path)
         if rec is None:
             await self._mark_failed(job["id"], f"listing {job['listing_id']} not found")
             return
 
-        final_fields = job["final_fields"]
-        payload = to_vinted(final_fields)
-        if "catalog_id" not in payload:
+        if platform == "vinted":
+            err = self._validate_vinted(job["final_fields"])
+            if err:
+                await self._mark_failed(job["id"], err)
+                return
+            payload = to_vinted(job["final_fields"])
+            item_id, url = await vinted_integration.publish(rec["image_path"], payload)
+        elif platform == "kleinanzeigen":
+            err = self._validate_kleinanzeigen(job["final_fields"])
+            if err:
+                await self._mark_failed(job["id"], err)
+                return
+            payload = to_kleinanzeigen(job["final_fields"])
+            item_id, url = await ka_integration.publish(rec["image_path"], payload)
+        else:
             await self._mark_failed(
-                job["id"],
-                f"category {final_fields.get('category')!r} has no Vinted catalog mapping",
-            )
-            return
-        if not payload.get("title") or not payload.get("description") or not payload.get("price"):
-            await self._mark_failed(
-                job["id"],
-                "title, description, and price are required for Vinted",
+                job["id"], f"direct publishing on {platform!r} not implemented",
             )
             return
 
-        item_id, url = await vinted_integration.publish(rec["image_path"], payload)
         await db.update_publish_job(
             job["id"], db_path=self.db_path,
             status=STATUS_POSTED,
@@ -161,6 +154,28 @@ class PublishRunner:
             platform_listing_url=url,
             error=None,
         )
+
+    @staticmethod
+    def _validate_vinted(fields: dict) -> str | None:
+        if not integrations.is_configured("vinted"):
+            return "Vinted integration not configured (set VINTED_SESSION_PATH)"
+        payload = to_vinted(fields)
+        if "catalog_id" not in payload:
+            return f"category {fields.get('category')!r} has no Vinted catalog mapping"
+        if not payload.get("title") or not payload.get("description") or not payload.get("price"):
+            return "title, description, and price are required for Vinted"
+        return None
+
+    @staticmethod
+    def _validate_kleinanzeigen(fields: dict) -> str | None:
+        if not integrations.is_configured("kleinanzeigen"):
+            return "Kleinanzeigen integration not configured (set KA_SESSION_PATH)"
+        payload = to_kleinanzeigen(fields)
+        if "category_id" not in payload:
+            return f"category {fields.get('category')!r} has no Kleinanzeigen category mapping"
+        if not payload.get("title") or not payload.get("description") or payload.get("price_eur") is None:
+            return "title, description, and price are required for Kleinanzeigen"
+        return None
 
     async def _record_failure(self, job: dict, exc: Exception) -> None:
         kind = classify_error(exc)

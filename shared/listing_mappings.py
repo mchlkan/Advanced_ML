@@ -19,6 +19,20 @@ from translations import (
     KA_CATEGORY_EN_TO_DE,
 )
 
+
+# Kleinanzeigen numeric category IDs. 160 (Kleidung_Herren) is proven
+# working in the capture; the moderation queue accepts it for women's
+# items too, so we route all clothing through it for v1 and let the user
+# recategorise on the KA UI if they want a more specific leaf. Sneakers
+# live under a different parent (Damenschuhe / Herrenschuhe) and aren't
+# mapped here — those listings fall back to the URL path until we capture
+# the right leaf id.
+KA_CATEGORY_TO_ID: dict[str, int] = {
+    "tshirts": 160,
+    "jackets": 160,
+    "jeans": 160,
+}
+
 # Used by /publish to redirect the user to the platform's new-listing form
 # when direct publishing isn't available.
 NEW_LISTING_URLS: dict[str, str] = {
@@ -118,24 +132,27 @@ def _lookup_size_id(category: str | None, size: str | None) -> int | None:
 
 
 def to_kleinanzeigen(canon: dict[str, Any]) -> dict[str, Any]:
-    """Map canonical English fields to Kleinanzeigen-form values (German).
-    Unknown/missing values drop their key rather than KeyError."""
-    out: dict[str, Any] = {
-        "marke": canon.get("brand"),
-        "groesse": canon.get("size"),
-        "preis": canon.get("price_eur"),
-        "titel": canon.get("title"),
-        "beschreibung": canon.get("description"),
-    }
+    """Build the variable bits of the KA listing payload from canonical
+    English fields. The integration layers session-derived defaults
+    (email, poster_type, imprint, contact_name, location_id) on top — this
+    function only contributes the per-listing parts.
+
+    KA's listing API doesn't take separate brand/size/color/condition
+    fields in the captured request body — those are encoded inside the
+    free-text description (which the VLM already produces). So we just
+    pass the title and description through and translate the canonical
+    category to a KA category id.
+    """
+    out: dict[str, Any] = {}
+    if canon.get("title"):
+        out["title"] = canon["title"]
+    if canon.get("description"):
+        out["description"] = canon["description"]
+    if canon.get("price_eur") is not None:
+        out["price_eur"] = canon["price_eur"]
     cat = canon.get("category")
-    if cat and cat in KA_CATEGORY_EN_TO_DE:
-        out["kategorie"] = KA_CATEGORY_EN_TO_DE[cat]
-    cond = canon.get("condition")
-    if cond and cond in CONDITION_EN_TO_KA_DE:
-        out["zustand"] = CONDITION_EN_TO_KA_DE[cond]
-    color = canon.get("color")
-    if color and color in COLOR_EN_TO_KA_DE:
-        out["farbe"] = COLOR_EN_TO_KA_DE[color]
+    if cat and cat in KA_CATEGORY_TO_ID:
+        out["category_id"] = KA_CATEGORY_TO_ID[cat]
     return out
 
 

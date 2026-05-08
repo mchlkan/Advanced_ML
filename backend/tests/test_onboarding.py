@@ -17,12 +17,17 @@ def _set_seed(monkeypatch):
     monkeypatch.setenv("VINTED_DEVICE_TOKEN", "device-token")
 
 
-def _fake_jwt(exp: float) -> str:
+def _fake_jwt(exp: float, ka: bool = False) -> str:
     """Build a deterministic JWT payload with the given exp timestamp.
-    Header and signature are placeholders — vinted.py only decodes payload."""
+    Header and signature are placeholders — both integrations only decode
+    the payload. Pass ka=True to include the KA-specific user_id claim."""
     import base64
 
-    payload = json.dumps({"sub": "12345", "sid": "session-1", "exp": exp}).encode()
+    claims: dict = {"sub": "12345", "sid": "session-1", "exp": exp}
+    if ka:
+        claims["https://www.kleinanzeigen.de/user_id"] = 45852425
+        claims["https://www.kleinanzeigen.de/user_uuid"] = "3fd1d48b-660f-4080-9da1-10989bb49e6b"
+    payload = json.dumps(claims).encode()
     b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
     return f"header.{b64}.signature"
 
@@ -30,11 +35,12 @@ def _fake_jwt(exp: float) -> str:
 def test_status_all_not_configured(app_client, monkeypatch):
     """No env vars set → both platforms report their default unconfigured state."""
     monkeypatch.delenv("VINTED_SESSION_PATH", raising=False)
+    monkeypatch.delenv("KA_SESSION_PATH", raising=False)
     r = app_client.get("/onboarding/status")
     assert r.status_code == 200
     body = r.json()
     assert body["vinted"]["state"] == "not_configured"
-    assert body["kleinanzeigen"]["state"] == "not_implemented"
+    assert body["kleinanzeigen"]["state"] == "not_configured"
 
 
 def test_status_vinted_ready_with_session(app_client, monkeypatch, tmp_path):
@@ -77,11 +83,77 @@ def test_status_vinted_expired(app_client, monkeypatch, tmp_path):
     assert r.json()["vinted"]["state"] == "expired"
 
 
-def test_login_kleinanzeigen_returns_501(app_client):
+def test_login_kleinanzeigen_password_returns_501(app_client):
+    """Email+password login isn't viable for KA (Akamai BMP + MFA SMS).
+    The /onboarding/login route still 501s for that platform; users go
+    through /onboarding/kleinanzeigen with a captured refresh_token."""
     r = app_client.post("/onboarding/login", json={
         "platform": "kleinanzeigen", "email": "a@b.com", "password": "x",
     })
     assert r.status_code == 501
+
+
+@respx.mock
+def test_onboarding_kleinanzeigen_happy_path(app_client, monkeypatch, tmp_path):
+    """POST /onboarding/kleinanzeigen with a valid refresh_token → 200,
+    session persisted to KA_SESSION_PATH, /status reports ready."""
+    session_path = tmp_path / "ka-session.json"
+    monkeypatch.setenv("KA_SESSION_PATH", str(session_path))
+
+    respx.post("https://login.kleinanzeigen.de/oauth/token").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "access_token": _fake_jwt(time.time() + 3600, ka=True),
+                "refresh_token": "rotated-refresh",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+                "scope": "openid profile email offline_access urn:ebay-kleinanzeigen:user",
+            },
+        )
+    )
+
+    r = app_client.post("/onboarding/kleinanzeigen", json={
+        "refresh_token": "captured-from-mitmproxy",
+        "email": "demo@example.com",
+        "poster_type": "PRIVATE",
+        "home_location_id": 7615,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "ready"
+    assert body["user_id"] == 45852425
+    assert body["platform"] == "kleinanzeigen"
+
+    saved = json.loads(session_path.read_text())
+    assert saved["refresh_token"] == "rotated-refresh"
+    assert saved["email"] == "demo@example.com"
+    assert saved["home_location_id"] == 7615
+
+    r = app_client.get("/onboarding/status")
+    assert r.json()["kleinanzeigen"]["state"] == "ready"
+
+
+def test_onboarding_kleinanzeigen_missing_session_path(app_client, monkeypatch):
+    """No KA_SESSION_PATH set → 503 with a clear hint."""
+    monkeypatch.delenv("KA_SESSION_PATH", raising=False)
+    r = app_client.post("/onboarding/kleinanzeigen", json={
+        "refresh_token": "x", "email": "a@b.com",
+    })
+    assert r.status_code == 503
+
+
+@respx.mock
+def test_onboarding_kleinanzeigen_bad_refresh_token(app_client, monkeypatch, tmp_path):
+    """Auth0 returns 401 → /onboarding/kleinanzeigen returns 401."""
+    monkeypatch.setenv("KA_SESSION_PATH", str(tmp_path / "ka.json"))
+    respx.post("https://login.kleinanzeigen.de/oauth/token").mock(
+        return_value=httpx.Response(401, json={"error": "invalid_grant"}),
+    )
+    r = app_client.post("/onboarding/kleinanzeigen", json={
+        "refresh_token": "stale", "email": "a@b.com",
+    })
+    assert r.status_code == 401
 
 
 def test_login_without_seed_returns_503(app_client, monkeypatch):
