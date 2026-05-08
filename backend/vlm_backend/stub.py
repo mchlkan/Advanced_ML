@@ -16,9 +16,9 @@ from PIL import Image
 
 from . import VLMOutput
 
-_SRC_DIR = Path(__file__).resolve().parent.parent.parent / "src"
-if str(_SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(_SRC_DIR))
+_SHARED_DIR = Path(__file__).resolve().parent.parent.parent / "shared"
+if str(_SHARED_DIR) not in sys.path:
+    sys.path.insert(0, str(_SHARED_DIR))
 from prompts import (  # noqa: E402
     CONDITION_VALUES_EN,
     KLEINANZEIGEN_CATEGORIES_EN,

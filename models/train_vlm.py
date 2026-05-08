@@ -47,7 +47,7 @@ from transformers import (
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "shared"))
 from prompts import get_prompt  # noqa: E402  same prompt as inference
 
 

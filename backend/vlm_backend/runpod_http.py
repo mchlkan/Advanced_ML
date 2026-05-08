@@ -22,7 +22,7 @@ import httpx
 import numpy as np
 from PIL import Image
 
-# backend/__init__.py adds repo/src to sys.path.
+# backend/__init__.py adds repo/shared to sys.path.
 from prompts import EXPECTED_HIDDEN_DIM
 
 from . import VLMOutput

@@ -13,7 +13,7 @@ import torch
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel
 
-# backend/__init__.py adds repo/models and repo/src to sys.path.
+# backend/__init__.py adds repo/models and repo/shared to sys.path.
 from train_flaw_head import FlawHead
 from train_price_head import PriceHead
 from train_sell_head import SellHead

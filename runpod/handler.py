@@ -6,7 +6,7 @@ greedy generate for the JSON output. Returns both — the backend parses the
 JSON with its own lenient parser so we don't couple the handler to the
 schema.
 
-Self-contained: only depends on prompts.py from src/. The chat-template
+Self-contained: only depends on prompts.py from shared/. The chat-template
 input construction is inlined here (originally in
 models/extract_vlm_features.py) so worker boot is independent of the
 training module's churn.
@@ -29,8 +29,8 @@ from transformers import (
     BitsAndBytesConfig,
 )
 
-# /workspace/src is COPY'd by the Dockerfile.
-sys.path.insert(0, "/workspace/src")
+# /workspace/shared is COPY'd by the Dockerfile.
+sys.path.insert(0, "/workspace/shared")
 from prompts import EXPECTED_HIDDEN_DIM, SUPPORTED_PLATFORMS, get_prompt  # noqa: E402
 
 

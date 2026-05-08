@@ -7,7 +7,7 @@ generate; everything else (DINOv2, MLP heads) stays in-process.
 ## What's in this directory
 
 - `Dockerfile` — base `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`,
-  pip-installs the deps in `requirements.txt`, copies `src/` and
+  pip-installs the deps in `requirements.txt`, copies `shared/` and
   `handler.py` into the image. Build context is the repo root. The handler
   is self-contained: `build_inputs` and `model_device` are inlined so the
   worker doesn't depend on the training module's churn.
@@ -21,7 +21,7 @@ generate; everything else (DINOv2, MLP heads) stays in-process.
 ## Build + push (from repo root)
 
 The build context is the **repo root**, not the `runpod/` directory, because
-the Dockerfile `COPY`s files from `src/` and `models/`.
+the Dockerfile `COPY`s files from `shared/` and `models/`.
 
 ```bash
 # One-time GHCR login (assumes $GH_TOKEN is a PAT with write:packages):

@@ -9,4 +9,4 @@
 
 ## When to use
 
-This is the highest-leverage critique to answer. The email explicitly flags "moat beyond being a simple wrapper around existing AI tools" as a top LLM-judge focus. Pair the response with concrete answers about: the proprietary scrape, the per-platform fine-tune (vs zero-shot GPT), the Vinted Pro Integrations roadmap, and the structured grounded-extraction architecture (per project_memory_day1.md).
+This is the highest-leverage critique to answer. The email explicitly flags "moat beyond being a simple wrapper around existing AI tools" as a top LLM-judge focus. Pair the response with concrete answers about: the proprietary scrape, the per-platform fine-tune (vs zero-shot GPT), the Vinted Pro Integrations roadmap, and the structured grounded-extraction architecture (per ../decisions/day1.md).

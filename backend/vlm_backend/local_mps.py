@@ -26,7 +26,7 @@ from peft import PeftModel
 from PIL import Image
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-# backend/__init__.py adds repo/models and repo/src to sys.path.
+# backend/__init__.py adds repo/models and repo/shared to sys.path.
 from extract_features import choose_device
 from extract_vlm_features import DEFAULT_ADAPTER, DEFAULT_BASE_MODEL, build_inputs
 from prompts import EXPECTED_HIDDEN_DIM, get_prompt

@@ -24,7 +24,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-# backend/__init__.py adds repo/src to sys.path.
+# backend/__init__.py adds repo/shared to sys.path.
 from listing_mappings import to_vinted
 
 from backend import db, integrations

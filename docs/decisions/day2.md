@@ -1,6 +1,6 @@
 # Project Status Update — Day 2
 
-Handoff doc. Assumes you've read `resell_copilot_tech_brief_v2.md` and `project_memory_day1.md`. This file only captures what changed since Day 1 and what the next agent should do.
+Handoff doc. Assumes you've read `../../resell_copilot_tech_brief_v2.md` and `day1.md`. This file only captures what changed since Day 1 and what the next agent should do.
 
 ---
 
@@ -187,7 +187,7 @@ Model #3 decision:
 
 ## Things still NOT decided
 
-Everything in `project_memory_day1.md` § "Things deliberately NOT decided yet" still applies, except:
+Everything in `day1.md` § "Things deliberately NOT decided yet" still applies, except:
 - ~~Sold-status time window~~ → **locked at ~8 days (effective scrape window)**
 - ~~Whether Model #5 ships in v1~~ → **yes, Vinted-only**
 

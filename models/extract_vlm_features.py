@@ -36,9 +36,9 @@ from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndByte
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SRC_DIR = REPO_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+SHARED_DIR = REPO_ROOT / "shared"
+if str(SHARED_DIR) not in sys.path:
+    sys.path.insert(0, str(SHARED_DIR))
 
 from prompts import get_prompt  # noqa: E402
 

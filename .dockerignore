@@ -15,7 +15,6 @@ eval/results
 backend
 frontend
 docs
-review_prompts
 *.parquet
 *.npy
 *.pt

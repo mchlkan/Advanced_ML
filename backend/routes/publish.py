@@ -20,7 +20,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-# backend/__init__.py adds repo/src to sys.path.
+# backend/__init__.py adds repo/shared to sys.path.
 from listing_mappings import NEW_LISTING_URLS
 
 from backend import db, integrations

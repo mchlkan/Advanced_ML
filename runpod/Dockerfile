@@ -9,7 +9,7 @@ COPY runpod/requirements.txt /workspace/runpod-requirements.txt
 RUN pip install --no-cache-dir -r /workspace/runpod-requirements.txt
 
 # Source files needed at runtime — keep this minimal so rebuilds are fast.
-COPY src /workspace/src
+COPY shared /workspace/shared
 COPY runpod/handler.py /workspace/handler.py
 
 CMD ["python", "-u", "/workspace/handler.py"]

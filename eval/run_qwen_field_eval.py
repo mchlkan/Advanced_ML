@@ -33,9 +33,9 @@ from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndByte
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = REPO_ROOT / "models"
-SRC_DIR = REPO_ROOT / "src"
+SHARED_DIR = REPO_ROOT / "shared"
 BACKEND_DIR = REPO_ROOT / "backend"
-for path in (MODELS_DIR, SRC_DIR, BACKEND_DIR):
+for path in (MODELS_DIR, SHARED_DIR, BACKEND_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 

@@ -16,7 +16,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-# backend/__init__.py adds repo/models and repo/src to sys.path.
+# backend/__init__.py adds repo/models and repo/shared to sys.path.
 from build_price_dataset import canon_brand
 
 from .bootstrap import LoadedModels, dinov2_embed

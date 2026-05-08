@@ -9,9 +9,16 @@ Pure functions, no I/O. The orchestrator notebook handles persistence.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pandas as pd
 
-from translations import (
+# When run as ``python data_prep/build_targets.py`` from the repo root,
+# add ../shared so the bare ``from translations import ...`` resolves.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "shared"))
+
+from translations import (  # noqa: E402
     COLOR_DE_TO_EN,
     CONDITION_DE_TO_EN,
     KA_CATEGORY_DE_TO_EN,

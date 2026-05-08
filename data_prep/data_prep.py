@@ -1,10 +1,10 @@
 """Data prep for the Resell Copilot Day 1 spike.
 
 Loads Vinted + Kleinanzeigen parquets, applies the filters from the tech
-brief §4.4 and project_memory_day1.md, and produces a stratified train/test
+brief §4.4 and docs/decisions/day1.md, and produces a stratified train/test
 split for zero-shot model evaluation.
 
-Run ``python src/data_prep.py`` from the repo root for a sanity-check pass.
+Run ``python data_prep/data_prep.py`` from the repo root for a sanity-check pass.
 """
 
 from __future__ import annotations
