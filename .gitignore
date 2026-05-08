@@ -38,6 +38,9 @@ data/*.json
 data/*.arrow
 data/*.feather
 data/features/
+data/uploads/
+data/embeddings/
+data/*.db
 data/splits/*.parquet
 data/translations/
 !data/splits/.gitkeep
