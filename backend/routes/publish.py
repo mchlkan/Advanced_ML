@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 
 # backend/__init__.py adds repo/src to sys.path.
 from listing_mappings import NEW_LISTING_URLS
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.post("/publish", response_model=PublishCreatedResponse, status_code=202)
-async def publish(body: PublishRequest) -> PublishCreatedResponse:
+async def publish(request: Request, body: PublishRequest) -> PublishCreatedResponse:
     rec = await db.get_listing(body.listing_id)
     if rec is None:
         raise HTTPException(status_code=404, detail=f"listing {body.listing_id} not found")
@@ -52,6 +52,9 @@ async def publish(body: PublishRequest) -> PublishCreatedResponse:
         final_fields=canon_fields,
         prefill_url=fallback_url,
     )
+    runner = getattr(request.app.state, "publish_runner", None)
+    if runner is not None:
+        runner.notify()  # pull the new job into the runner without waiting for the idle poll
     return PublishCreatedResponse(
         job_id=job_id,
         status="pending",

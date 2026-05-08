@@ -72,9 +72,38 @@ CREATE TABLE IF NOT EXISTS publishes (
   updated_at           INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS wardrobe_snapshots (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  fetched_at          INTEGER NOT NULL,
+  platform            TEXT NOT NULL,
+  platform_listing_id TEXT NOT NULL,
+  title               TEXT,
+  price_eur           REAL,
+  currency            TEXT,
+  views               INTEGER,
+  favourites          INTEGER,
+  url                 TEXT,
+  primary_photo_url   TEXT,
+  raw_json            TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wardrobe_syncs (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  platform     TEXT NOT NULL,
+  started_at   INTEGER NOT NULL,
+  finished_at  INTEGER,
+  status       TEXT NOT NULL,
+  item_count   INTEGER,
+  error        TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_predictions_listing ON predictions(listing_id);
 CREATE INDEX IF NOT EXISTS idx_edits_listing       ON edits(listing_id);
 CREATE INDEX IF NOT EXISTS idx_publishes_listing   ON publishes(listing_id);
+CREATE INDEX IF NOT EXISTS idx_wardrobe_lookup
+  ON wardrobe_snapshots(platform, platform_listing_id, fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wardrobe_syncs_recent
+  ON wardrobe_syncs(platform, started_at DESC);
 """
 
 # Columns that need ALTER TABLE on existing databases. Each runs idempotently
@@ -104,15 +133,20 @@ async def init_db(db_path: Path | None = None) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(db_path) as conn:
         await conn.executescript(SCHEMA)
+        # PRAGMA table_info tells us which columns already exist, so we only
+        # run ALTER TABLE for missing ones — no exception-driven control flow,
+        # zero overhead on the common (already-migrated) path.
+        existing = {
+            row[1]
+            for row in await (await conn.execute("PRAGMA table_info(publishes)")).fetchall()
+        }
         for stmt in _PUBLISH_MIGRATIONS:
-            try:
+            col = stmt.split("ADD COLUMN ", 1)[1].split()[0]
+            if col not in existing:
                 await conn.execute(stmt)
-            except aiosqlite.OperationalError as exc:
-                if "duplicate column" not in str(exc).lower():
-                    raise
-        # The pending-job index references columns added by the migrations
-        # above, so it must run *after* the ALTER TABLE block. (Fresh DBs
-        # already have those columns from the SCHEMA's CREATE TABLE.)
+        # Created after the migrations above so existing DBs that lack the
+        # `status` column at SCHEMA-eval time don't fail. (Fresh DBs already
+        # have the column from CREATE TABLE.)
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_publishes_pending ON publishes(status, next_attempt_at)"
         )
@@ -263,14 +297,26 @@ async def claim_next_pending_job(db_path: Path | None = None) -> dict | None:
         return d
 
 
+# Whitelisted to prevent f-string SQL surprises if a future caller passes
+# a typo'd or hostile column name. Add to the set as the schema evolves.
+_PUBLISH_UPDATABLE_COLUMNS = frozenset({
+    "status", "retry_count", "next_attempt_at",
+    "platform_listing_id", "platform_listing_url", "error",
+})
+
+
 async def update_publish_job(
     job_id: int,
     db_path: Path | None = None,
     **fields,
 ) -> None:
-    """Set arbitrary columns on a publishes row. Auto-stamps updated_at."""
+    """Set columns on a publishes row. Only fields in _PUBLISH_UPDATABLE_COLUMNS
+    are accepted; auto-stamps updated_at."""
     if not fields:
         return
+    bad = set(fields) - _PUBLISH_UPDATABLE_COLUMNS
+    if bad:
+        raise ValueError(f"update_publish_job: disallowed columns {sorted(bad)}")
     fields["updated_at"] = now_ms()
     cols = ", ".join(f"{k} = ?" for k in fields)
     async with aiosqlite.connect(_resolve(db_path)) as conn:
@@ -292,3 +338,133 @@ async def get_publish_job(job_id: int, db_path: Path | None = None) -> dict | No
         d = dict(row)
         d["final_fields"] = json.loads(d["final_fields"])
         return d
+
+
+# ---------- wardrobe sync ----------
+
+
+async def insert_wardrobe_snapshots(
+    platform: str,
+    items: list[dict],
+    fetched_at: int,
+    db_path: Path | None = None,
+) -> None:
+    """Bulk insert one snapshot row per item. `items` are dicts shaped by
+    integrations.vinted.normalize_wardrobe_item — they MUST contain the raw
+    API blob under the key 'raw' (so we don't lose fields we don't model)."""
+    if not items:
+        return
+    rows = [
+        (
+            fetched_at, platform, item["platform_listing_id"],
+            item.get("title"), item.get("price_eur"), item.get("currency"),
+            item.get("views"), item.get("favourites"),
+            item.get("url"), item.get("primary_photo_url"),
+            json.dumps(item.get("raw", {})),
+        )
+        for item in items
+    ]
+    async with aiosqlite.connect(_resolve(db_path)) as conn:
+        await conn.executemany(
+            """INSERT INTO wardrobe_snapshots(
+                fetched_at, platform, platform_listing_id,
+                title, price_eur, currency, views, favourites,
+                url, primary_photo_url, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+        await conn.commit()
+
+
+async def record_wardrobe_sync(
+    platform: str,
+    started_at: int,
+    *,
+    status: str,
+    item_count: int | None = None,
+    error: str | None = None,
+    db_path: Path | None = None,
+) -> int:
+    """Insert a wardrobe_syncs row stamped with `finished_at = now`. Returns
+    the row id."""
+    async with aiosqlite.connect(_resolve(db_path)) as conn:
+        cur = await conn.execute(
+            """INSERT INTO wardrobe_syncs(
+                platform, started_at, finished_at, status, item_count, error
+            ) VALUES (?, ?, ?, ?, ?, ?)""",
+            (platform, started_at, now_ms(), status, item_count, error),
+        )
+        await conn.commit()
+        return int(cur.lastrowid)
+
+
+async def get_last_wardrobe_sync(
+    platform: str,
+    db_path: Path | None = None,
+) -> dict | None:
+    """Most recent wardrobe_syncs row for the platform, or None if never run."""
+    async with aiosqlite.connect(_resolve(db_path)) as conn:
+        conn.row_factory = aiosqlite.Row
+        row = await (await conn.execute(
+            "SELECT * FROM wardrobe_syncs WHERE platform = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (platform,),
+        )).fetchone()
+        return dict(row) if row else None
+
+
+_INVENTORY_QUERY = """
+WITH latest_prediction AS (
+  SELECT p.* FROM predictions p
+  JOIN (SELECT listing_id, MAX(id) AS max_id FROM predictions GROUP BY listing_id) m
+    ON p.id = m.max_id
+),
+latest_publish AS (
+  SELECT pb.* FROM publishes pb
+  JOIN (SELECT listing_id, platform, MAX(id) AS max_id
+        FROM publishes GROUP BY listing_id, platform) m
+    ON pb.id = m.max_id
+),
+latest_wardrobe AS (
+  SELECT w.* FROM wardrobe_snapshots w
+  JOIN (SELECT platform, platform_listing_id, MAX(id) AS max_id
+        FROM wardrobe_snapshots GROUP BY platform, platform_listing_id) m
+    ON w.id = m.max_id
+)
+SELECT
+  l.id              AS listing_id,
+  l.created_at      AS listing_created_at,
+  lp.english_fields AS english_fields,
+  lp.vinted_q10, lp.vinted_q50, lp.vinted_q90, lp.vinted_sell_prob,
+  lp.ka_q10, lp.ka_q50, lp.ka_q90, lp.visual_wear_probability,
+  lpb.platform             AS publish_platform,
+  lpb.id                   AS publish_id,
+  lpb.status               AS publish_status,
+  lpb.platform_listing_id  AS publish_platform_listing_id,
+  lpb.platform_listing_url AS publish_platform_listing_url,
+  lpb.error                AS publish_error,
+  lpb.updated_at           AS publish_updated_at,
+  lw.fetched_at            AS wardrobe_fetched_at,
+  lw.title                 AS wardrobe_title,
+  lw.price_eur             AS wardrobe_price_eur,
+  lw.views                 AS wardrobe_views,
+  lw.favourites            AS wardrobe_favourites,
+  lw.primary_photo_url     AS wardrobe_primary_photo_url
+FROM listings l
+LEFT JOIN latest_prediction lp ON lp.listing_id = l.id
+LEFT JOIN latest_publish lpb ON lpb.listing_id = l.id
+LEFT JOIN latest_wardrobe lw
+  ON lw.platform = lpb.platform
+  AND lw.platform_listing_id = lpb.platform_listing_id
+ORDER BY l.created_at DESC, l.id, lpb.platform
+"""
+
+
+async def get_inventory_rows(db_path: Path | None = None) -> list[dict]:
+    """Return one row per (listing, publish-platform) — listings without any
+    publish appear once with null publish_* fields. Caller folds platforms
+    into per-listing dicts."""
+    async with aiosqlite.connect(_resolve(db_path)) as conn:
+        conn.row_factory = aiosqlite.Row
+        rows = await (await conn.execute(_INVENTORY_QUERY)).fetchall()
+        return [dict(r) for r in rows]

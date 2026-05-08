@@ -53,12 +53,12 @@ def app_client(tmp_path, monkeypatch, loaded_models):
 @pytest.fixture
 def drain_publish_jobs():
     """Run the publish runner over all currently-pending jobs synchronously.
-    Backoff schedule is collapsed to zero so retry tests don't sleep."""
+    Backoff is collapsed to zero so retry tests don't sleep."""
     import asyncio
+    from backend.queue.runner import PublishRunner
 
-    def _drain(retry_schedule: tuple[float, ...] = (0.0, 0.0, 0.0)) -> None:
-        from backend.queue.runner import PublishRunner
-        runner = PublishRunner(backoff_schedule=retry_schedule)
+    def _drain() -> None:
+        runner = PublishRunner(backoff_schedule=(0.0, 0.0, 0.0))
 
         async def _go() -> None:
             while await runner.process_one_job():

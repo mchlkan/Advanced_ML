@@ -12,8 +12,8 @@ The runner FSM:
 
 Tests drive `process_one_job()` directly, which does a single
 claim → integration call → status update cycle. The `run()` method is the
-asyncio loop wrapper that keeps calling process_one_job and sleeping when
-nothing is ready.
+asyncio loop wrapper that calls process_one_job and waits on `notify()`
+when nothing is ready.
 """
 
 from __future__ import annotations
@@ -22,10 +22,10 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Literal
 
 # backend/__init__.py adds repo/src to sys.path.
-from listing_mappings import NEW_LISTING_URLS, to_vinted
+from listing_mappings import to_vinted
 
 from backend import db, integrations
 from backend.integrations import vinted as vinted_integration
@@ -34,19 +34,32 @@ from backend.integrations import vinted as vinted_integration
 logger = logging.getLogger(__name__)
 
 
+# Single source of truth for publish-job status strings; keep aligned with
+# `JobStatus` Literal in backend/schemas.py.
+STATUS_PENDING = "pending"
+STATUS_RUNNING = "running"
+STATUS_POSTED = "posted"
+STATUS_FAILED = "failed"
+
+
 def _parse_backoff() -> tuple[float, ...]:
     raw = os.environ.get("PUBLISH_RETRY_BACKOFF", "5,30,120")
     try:
         return tuple(float(x.strip()) for x in raw.split(",") if x.strip())
     except ValueError:
+        logger.warning(
+            "PUBLISH_RETRY_BACKOFF=%r could not be parsed as comma-separated floats; "
+            "falling back to default (5, 30, 120)",
+            raw,
+        )
         return (5.0, 30.0, 120.0)
 
 
-def classify_error(exc: BaseException) -> str:
-    """retryable | permanent. Determines whether the runner schedules another
-    attempt or marks the job failed."""
+def classify_error(exc: BaseException) -> Literal["retryable", "permanent"]:
+    """Determines whether the runner schedules another attempt or marks
+    the job failed."""
     if isinstance(exc, vinted_integration.VintedAuthExpired):
-        return "permanent"  # needs /onboarding/login, runner can't fix
+        return "permanent"
     if isinstance(exc, vinted_integration.VintedNotConfigured):
         return "permanent"
     if isinstance(exc, vinted_integration.VintedBlocked):
@@ -61,7 +74,7 @@ def classify_error(exc: BaseException) -> str:
         if "http 5" in msg or "timeout" in msg:
             return "retryable"
         return "permanent"
-    return "retryable"  # unknown → conservative: retry once or twice then fail
+    return "retryable"
 
 
 class PublishRunner:
@@ -75,89 +88,81 @@ class PublishRunner:
         self.backoff_schedule = backoff_schedule if backoff_schedule is not None else _parse_backoff()
         self.idle_sleep = idle_sleep
         self._stop = asyncio.Event()
+        self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
 
     @property
     def max_retries(self) -> int:
         return len(self.backoff_schedule)
 
+    def notify(self) -> None:
+        """Wake the runner if it's waiting on the idle-sleep. Called by the
+        route after enqueueing a job so the runner picks it up immediately
+        instead of waiting for the next poll tick."""
+        self._wake.set()
+
     async def process_one_job(self) -> bool:
         """Claim and process the next ready job. Returns True if a job was
-        processed (even if it failed), False if the queue is empty.
-        Synchronously useful in tests."""
+        processed (success or failure), False if the queue is empty."""
         job = await db.claim_next_pending_job(self.db_path)
         if job is None:
             return False
-
-        platform = job["platform"]
-        listing_id = job["listing_id"]
-        final_fields = job["final_fields"]
-
-        # Re-do the publish path the route used to do synchronously: look up
-        # the listing's image, build the platform-native payload, dispatch
-        # to the right integration.
         try:
-            await self._dispatch(platform, job, listing_id, final_fields)
-        except BaseException as exc:  # noqa: BLE001
+            await self._dispatch(job)
+        except Exception as exc:
             await self._record_failure(job, exc)
-            return True
         return True
 
-    async def _dispatch(self, platform: str, job: dict, listing_id: str, final_fields: dict) -> None:
+    async def _mark_failed(self, job_id: int, error: str) -> None:
+        await db.update_publish_job(
+            job_id, db_path=self.db_path, status=STATUS_FAILED, error=error,
+        )
+
+    async def _dispatch(self, job: dict) -> None:
+        platform = job["platform"]
         if platform != "vinted":
-            await db.update_publish_job(
-                job["id"], db_path=self.db_path,
-                status="failed",
-                error=f"direct publishing on {platform!r} not implemented (Phase 6c)",
+            await self._mark_failed(
+                job["id"],
+                f"direct publishing on {platform!r} not implemented (Phase 6c)",
             )
             return
-
         if not integrations.is_configured("vinted"):
-            await db.update_publish_job(
-                job["id"], db_path=self.db_path,
-                status="failed",
-                error="Vinted integration not configured (set VINTED_SESSION_PATH)",
+            await self._mark_failed(
+                job["id"],
+                "Vinted integration not configured (set VINTED_SESSION_PATH)",
             )
             return
 
-        # Look up the listing's image_path on disk.
-        rec = await db.get_listing(listing_id, db_path=self.db_path)
+        rec = await db.get_listing(job["listing_id"], db_path=self.db_path)
         if rec is None:
-            await db.update_publish_job(
-                job["id"], db_path=self.db_path,
-                status="failed",
-                error=f"listing {listing_id} not found",
-            )
+            await self._mark_failed(job["id"], f"listing {job['listing_id']} not found")
             return
 
+        final_fields = job["final_fields"]
         payload = to_vinted(final_fields)
         if "catalog_id" not in payload:
-            await db.update_publish_job(
-                job["id"], db_path=self.db_path,
-                status="failed",
-                error=f"category {final_fields.get('category')!r} has no Vinted catalog mapping",
+            await self._mark_failed(
+                job["id"],
+                f"category {final_fields.get('category')!r} has no Vinted catalog mapping",
             )
             return
         if not payload.get("title") or not payload.get("description") or not payload.get("price"):
-            await db.update_publish_job(
-                job["id"], db_path=self.db_path,
-                status="failed",
-                error="title, description, and price are required for Vinted",
+            await self._mark_failed(
+                job["id"],
+                "title, description, and price are required for Vinted",
             )
             return
 
         item_id, url = await vinted_integration.publish(rec["image_path"], payload)
         await db.update_publish_job(
             job["id"], db_path=self.db_path,
-            status="posted",
+            status=STATUS_POSTED,
             platform_listing_id=str(item_id),
             platform_listing_url=url,
             error=None,
         )
 
-    async def _record_failure(self, job: dict, exc: BaseException) -> None:
-        """Either schedule a retry with backoff or mark the job failed,
-        based on classify_error and the current retry_count."""
+    async def _record_failure(self, job: dict, exc: Exception) -> None:
         kind = classify_error(exc)
         msg = f"{type(exc).__name__}: {exc}"
         retry_count = int(job["retry_count"])
@@ -166,7 +171,7 @@ class PublishRunner:
             next_at = db.now_ms() + int(backoff_s * 1000)
             await db.update_publish_job(
                 job["id"], db_path=self.db_path,
-                status="pending",
+                status=STATUS_PENDING,
                 retry_count=retry_count + 1,
                 next_attempt_at=next_at,
                 error=msg,
@@ -176,12 +181,7 @@ class PublishRunner:
                 job["id"], retry_count + 1, self.max_retries, backoff_s, msg,
             )
             return
-
-        await db.update_publish_job(
-            job["id"], db_path=self.db_path,
-            status="failed",
-            error=msg,
-        )
+        await self._mark_failed(job["id"], msg)
         logger.warning("publish job %d failed (%s): %s", job["id"], kind, msg)
 
     async def run(self) -> None:
@@ -195,20 +195,30 @@ class PublishRunner:
                     logger.exception("PublishRunner: unhandled exception in process_one_job")
                     did_work = False
                 if not did_work:
-                    try:
-                        await asyncio.wait_for(self._stop.wait(), timeout=self.idle_sleep)
-                    except asyncio.TimeoutError:
-                        pass
+                    self._wake.clear()
+                    # Wake on either an explicit notify() or the idle timeout —
+                    # whichever comes first. Stop event also cancels the wait.
+                    awakened = asyncio.create_task(self._wake.wait())
+                    stopped = asyncio.create_task(self._stop.wait())
+                    done, pending = await asyncio.wait(
+                        {awakened, stopped},
+                        timeout=self.idle_sleep,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for t in pending:
+                        t.cancel()
         finally:
             logger.info("PublishRunner stopped")
 
     def start(self) -> None:
         if self._task is None or self._task.done():
             self._stop.clear()
+            self._wake.clear()
             self._task = asyncio.create_task(self.run())
 
     async def stop(self) -> None:
         self._stop.set()
+        self._wake.set()  # unblock the wait() if idle
         if self._task is not None:
             try:
                 await asyncio.wait_for(self._task, timeout=5)
