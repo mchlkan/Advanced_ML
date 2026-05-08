@@ -19,6 +19,15 @@ from translations import (
     KA_CATEGORY_EN_TO_DE,
 )
 
+# Used by /publish to redirect the user to the platform's new-listing form.
+# Neither platform supports URL-based field prefill on these forms, so this
+# is just the page URL — the frontend handles the prefill UX (copy buttons).
+NEW_LISTING_URLS: dict[str, str] = {
+    "vinted": "https://www.vinted.de/items/new",
+    "kleinanzeigen": "https://www.kleinanzeigen.de/p-anzeige-aufgeben.html",
+}
+
+
 # TODO(day4): populate from a cached GetOntologies response.
 # Keys are canonical English; values are Vinted ontology IDs.
 VINTED_CATEGORY_TO_CATALOG_ID: dict[str, int | None] = {

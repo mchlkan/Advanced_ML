@@ -23,23 +23,26 @@ from backend.schemas import VerifyRequest, VerifyResponse
 router = APIRouter()
 
 
-def _format_hints(hint_dict: dict) -> str:
+def _format_hints(hint_dict: dict) -> str | None:
     """`{brand: "Zara", size: "M"}` → `"[Hint: brand is Zara, size is M]"`.
-    Empty dict → "" so the VLM prompt is unchanged."""
+    Empty dict → None so the VLM prompt is unchanged."""
     if not hint_dict:
-        return ""
+        return None
     parts = [f"{k} is {v}" for k, v in hint_dict.items()]
     return f"[Hint: {', '.join(parts)}]"
 
 
 def _diff_fields(old: dict, new: dict) -> list[tuple[str, str | None, str]]:
-    """One tuple per (field, old_value, new_value) where new_value is set
-    and differs from old. Used to populate the `edits` table."""
+    """One tuple per (field, old_value, new_value) where new_value differs
+    from the previously-stored value. Stringifies only on storage so that
+    int 0 vs str "0" don't false-match."""
     changes: list[tuple[str, str | None, str]] = []
     for field, new_val in new.items():
         old_val = old.get(field)
-        if str(old_val) != str(new_val):
-            changes.append((field, None if old_val is None else str(old_val), str(new_val)))
+        if old_val == new_val:
+            continue
+        old_str = None if old_val is None else str(old_val)
+        changes.append((field, old_str, str(new_val)))
     return changes
 
 
@@ -48,21 +51,20 @@ async def verify(request: Request, body: VerifyRequest) -> VerifyResponse:
     state = request.app.state
     rec = await db.get_listing(body.listing_id)
     if rec is None:
-        raise HTTPException(status_code=404, detail=f"listing {body.listing_id!r} not found")
+        raise HTTPException(status_code=404, detail=f"listing {body.listing_id} not found")
     image_path = Path(rec["image_path"])
     if not image_path.exists():
-        raise HTTPException(status_code=410, detail=f"image for {body.listing_id!r} no longer on disk")
+        raise HTTPException(status_code=410, detail=f"image for {body.listing_id} no longer on disk")
     try:
         image = Image.open(image_path).convert("RGB")
     except UnidentifiedImageError as exc:
         raise HTTPException(status_code=410, detail="Stored image could not be decoded") from exc
 
     hint_dict = body.hints.model_dump(exclude_none=True)
-    hints_str = _format_hints(hint_dict) or None
 
     result = await run_pipeline(
         image, state.models, state.vlm,
-        hints=hints_str,
+        hints=_format_hints(hint_dict),
         field_overrides=hint_dict or None,
     )
 

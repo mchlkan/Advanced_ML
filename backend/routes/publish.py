@@ -17,23 +17,21 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+# backend/__init__.py adds repo/src to sys.path.
+from listing_mappings import NEW_LISTING_URLS
+
 from backend import db
 from backend.schemas import PublishRequest, PublishResponse
 
 
 router = APIRouter()
 
-NEW_LISTING_URLS = {
-    "vinted": "https://www.vinted.de/items/new",
-    "kleinanzeigen": "https://www.kleinanzeigen.de/p-anzeige-aufgeben.html",
-}
-
 
 @router.post("/publish", response_model=PublishResponse)
 async def publish(body: PublishRequest) -> PublishResponse:
     rec = await db.get_listing(body.listing_id)
     if rec is None:
-        raise HTTPException(status_code=404, detail=f"listing {body.listing_id!r} not found")
+        raise HTTPException(status_code=404, detail=f"listing {body.listing_id} not found")
 
     url = NEW_LISTING_URLS[body.platform]
     canon_fields = body.final_fields.model_dump()
