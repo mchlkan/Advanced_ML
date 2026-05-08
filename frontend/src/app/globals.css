@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-ink: #0e0f0e;
+  --color-ink-secondary: rgb(107 108 106);
+  --color-ink-tertiary: rgb(155 156 153);
+  --color-bg: #ffffff;
+  --color-bg-subtle: #fafaf8;
+  --color-bg-card: rgb(239 236 230);
+  --color-border: rgb(231 229 224);
+  --color-accent: oklch(0.62 0.15 145);
+  --color-accent-orange: oklch(0.62 0.13 55);
+  --color-accent-dim: oklch(0.94 0.04 145);
+
+  --radius: 0px;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  height: 100%;
+  background-color: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Safe area insets for PWA notch/home bar */
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+textarea {
+  resize: none;
+}
+
+/* File inputs are hidden via visually-hidden styles on each element */
