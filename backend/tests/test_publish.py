@@ -192,6 +192,53 @@ def test_publish_vinted_real_failure_falls_back(app_client, jpeg_bytes, monkeypa
     assert body["prefill_url"] == "https://www.vinted.de/items/new"
 
 
+def test_delete_listing_vinted_success(app_client, monkeypatch, tmp_path):
+    """DELETE /publish/vinted/<id> with a configured session returns 204."""
+    session_file = tmp_path / "vinted.json"
+    session_file.write_text("{}")
+    monkeypatch.setenv("VINTED_SESSION_PATH", str(session_file))
+
+    called_with = []
+
+    async def fake_delete(item_id):
+        called_with.append(item_id)
+
+    monkeypatch.setattr("backend.routes.publish.vinted_integration.delete_listing", fake_delete)
+
+    r = app_client.delete("/publish/vinted/8858700111")
+    assert r.status_code == 204
+    assert r.content == b""
+    assert called_with == ["8858700111"]
+
+
+def test_delete_listing_vinted_not_configured(app_client):
+    """No VINTED_SESSION_PATH → 503, no integration call attempted."""
+    r = app_client.delete("/publish/vinted/8858700111")
+    assert r.status_code == 503
+
+
+def test_delete_listing_vinted_not_found(app_client, monkeypatch, tmp_path):
+    """Integration raises 'not found' → route maps to 404."""
+    from backend.integrations.vinted import VintedError
+
+    session_file = tmp_path / "vinted.json"
+    session_file.write_text("{}")
+    monkeypatch.setenv("VINTED_SESSION_PATH", str(session_file))
+
+    async def fake_delete(item_id):
+        raise VintedError(f"delete: item {item_id} not found")
+
+    monkeypatch.setattr("backend.routes.publish.vinted_integration.delete_listing", fake_delete)
+
+    r = app_client.delete("/publish/vinted/9999999999")
+    assert r.status_code == 404
+
+
+def test_delete_listing_kleinanzeigen_returns_501(app_client):
+    r = app_client.delete("/publish/kleinanzeigen/abc")
+    assert r.status_code == 501
+
+
 def test_publish_vinted_unmapped_category_falls_back(app_client, jpeg_bytes, monkeypatch, tmp_path):
     """When the canon category has no Vinted catalog mapping, surface a clear
     error rather than calling the API with a missing catalog_id."""

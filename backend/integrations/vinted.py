@@ -361,6 +361,23 @@ class VintedClient:
         self.session.datadome_cookie = _extract_dd(resp, self.session.datadome_cookie)
         return resp
 
+    def delete_draft(self, item_id: int | str) -> None:
+        """Delete a Vinted listing or draft. Same endpoint works for both
+        published listings and unpublished drafts. Raises VintedError on any
+        non-2xx response so callers can surface a meaningful failure."""
+        self._ensure_fresh()
+        resp = self.http.delete(
+            f"{self.base_url}/api/v2/item_upload/drafts/{item_id}",
+            headers=_mobile_headers(self.session),
+            timeout=30,
+        )
+        self.session.datadome_cookie = _extract_dd(resp, self.session.datadome_cookie)
+        if resp.status_code in (200, 204):
+            return
+        if resp.status_code == 404:
+            raise VintedError(f"delete: item {item_id} not found")
+        raise _classify_error(resp, "delete")
+
     def resolve_brand_id(self, brand: str) -> int | None:
         """Top hit from /api/v2/item_upload/brands?keyword=, cached per process.
         Returns None for blank input or no match — callers fall back to free-text
@@ -535,6 +552,22 @@ def seed_from_env() -> dict | None:
     if not all(seed.values()):
         return None
     return seed
+
+
+async def delete_listing(item_id: int | str) -> None:
+    """Async wrapper around VintedClient.delete_draft. Reads the persisted
+    session and writes back the rotated DataDome cookie afterward."""
+
+    def _do() -> None:
+        path = _session_path()
+        session = load_session(path)
+        if session is None:
+            raise VintedNotConfigured(f"no session file at {path}")
+        client = VintedClient(session)
+        client.delete_draft(item_id)
+        save_session(client.session, path)
+
+    await asyncio.to_thread(_do)
 
 
 async def login(email: str, password: str) -> VintedSession:

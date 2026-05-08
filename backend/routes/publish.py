@@ -18,14 +18,14 @@ import asyncio
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 # backend/__init__.py adds repo/src to sys.path.
 from listing_mappings import NEW_LISTING_URLS, to_vinted
 
 from backend import db, integrations
 from backend.integrations import vinted as vinted_integration
-from backend.schemas import PublishRequest, PublishResponse
+from backend.schemas import PublishRequest, PublishResponse, Platform
 
 
 router = APIRouter()
@@ -85,3 +85,21 @@ async def publish(body: PublishRequest) -> PublishResponse:
         platform_listing_url=platform_listing_url,
         error=error,
     )
+
+
+@router.delete("/publish/{platform}/{platform_listing_id}", status_code=204, response_class=Response)
+async def delete_listing(platform: Platform, platform_listing_id: str) -> Response:
+    """Delete a published listing or unpublished draft on the platform.
+    Same endpoint serves both — Vinted's API doesn't distinguish."""
+    if platform != "vinted":
+        raise HTTPException(status_code=501, detail=f"delete on {platform} not implemented")
+    if not integrations.is_configured("vinted"):
+        raise HTTPException(status_code=503, detail="Vinted integration not configured")
+    try:
+        await vinted_integration.delete_listing(platform_listing_id)
+    except vinted_integration.VintedError as exc:
+        msg = str(exc)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=502, detail=msg) from exc
+    return Response(status_code=204)
