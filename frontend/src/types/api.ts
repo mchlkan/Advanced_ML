@@ -73,3 +73,17 @@ export interface HealthzResponse {
   models_loaded: string[];
   device: string;
 }
+
+export interface ListingItem {
+  id: string;
+  created_at: number;
+  image_url: string;
+  title: string | null;
+  brand: string | null;
+  category: string | null;
+  published_platforms: string[];
+}
+
+export interface InventoryResponse {
+  listings: ListingItem[];
+}

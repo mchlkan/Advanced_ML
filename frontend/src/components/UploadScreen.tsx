@@ -4,9 +4,10 @@ import { useRef } from "react";
 
 interface Props {
   onFileSelected: (file: File, imageUrl: string) => void;
+  onInventory: () => void;
 }
 
-export default function UploadScreen({ onFileSelected }: Props) {
+export default function UploadScreen({ onFileSelected, onInventory }: Props) {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const libraryInputRef = useRef<HTMLInputElement>(null);
 
@@ -51,6 +52,22 @@ export default function UploadScreen({ onFileSelected }: Props) {
         >
           v0.1 · demo
         </span>
+        <button
+          onClick={onInventory}
+          style={{
+            marginLeft: "auto",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            fontSize: 13,
+            fontWeight: 500,
+            color: "var(--color-ink-secondary)",
+            padding: 0,
+            letterSpacing: "-0.1px",
+          }}
+        >
+          My Listings
+        </button>
       </header>
 
       {/* Main content */}

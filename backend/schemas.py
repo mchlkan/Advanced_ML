@@ -7,7 +7,7 @@ output (see `src.prompts.get_prompt`) so frontend and pipeline don't drift.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -260,3 +260,16 @@ class InventorySummary(BaseModel):
     live_views: int = 0
     live_favourites: int = 0
     last_synced_at: int | None = None
+
+class ListingItem(BaseModel):
+    id: str
+    created_at: int
+    image_url: str
+    title: str | None
+    brand: str | None
+    category: str | None
+    published_platforms: list[str]
+
+
+class ListingsResponse(BaseModel):
+    listings: list[ListingItem]

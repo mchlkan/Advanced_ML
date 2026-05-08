@@ -8,9 +8,11 @@ import UploadScreen from "@/components/UploadScreen";
 import AnalyzingScreen from "@/components/AnalyzingScreen";
 import ResultsScreen from "@/components/ResultsScreen";
 import PublishedScreen from "@/components/PublishedScreen";
+import InventoryScreen from "@/components/InventoryScreen";
 
 type AppState =
   | { screen: "upload" }
+  | { screen: "inventory" }
   | { screen: "analyzing"; imageUrl: string; file: File }
   | { screen: "results"; imageUrl: string; data: UploadResponse }
   | {
@@ -65,8 +67,17 @@ export default function Page() {
     setState({ screen: "upload" });
   }
 
+  if (state.screen === "inventory") {
+    return <InventoryScreen onBack={() => setState({ screen: "upload" })} />;
+  }
+
   if (state.screen === "upload") {
-    return <UploadScreen onFileSelected={handleFileSelected} />;
+    return (
+      <UploadScreen
+        onFileSelected={handleFileSelected}
+        onInventory={() => setState({ screen: "inventory" })}
+      />
+    );
   }
 
   if (state.screen === "analyzing") {

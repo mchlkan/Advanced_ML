@@ -18,6 +18,29 @@ from backend.schemas import UploadResponse
 router = APIRouter()
 UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "uploads"
 
+_MOCK_RESULT = {
+    "vinted": {
+        "identification": {
+            "brand": None, "category": None, "condition": None,
+            "color": None, "size": None, "title": None,
+            "description": None, "price_eur": None,
+        },
+        "price": {"q10": 0.0, "q50": 0.0, "q90": 0.0},
+        "sell_probability": 0.0,
+    },
+    "kleinanzeigen": {
+        "identification": {
+            "brand": None, "category": None, "condition": None,
+            "color": None, "size": None, "title": None,
+            "description": None, "price_eur": None,
+        },
+        "price": {"q10": 0.0, "q50": 0.0, "q90": 0.0},
+    },
+    "visual_wear_probability": 0.0,
+    "latency_ms": 0,
+    "vlm_call_count": 0,
+}
+
 
 def _save_jpeg(image: Image.Image, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -40,11 +63,17 @@ async def upload(request: Request, image: UploadFile = File(...)) -> UploadRespo
     image_path = UPLOADS_DIR / f"{listing_id}.jpg"
     state = request.app.state
 
-    save_task = asyncio.to_thread(_save_jpeg, pil_image, image_path)
-    pipeline_task = run_pipeline(pil_image, state.models, state.vlm)
-    _, result = await asyncio.gather(save_task, pipeline_task)
+    if state.models is None:
+        await asyncio.to_thread(_save_jpeg, pil_image, image_path)
+        result = _MOCK_RESULT
+        vlm_name = "skip_ml"
+    else:
+        save_task = asyncio.to_thread(_save_jpeg, pil_image, image_path)
+        pipeline_task = run_pipeline(pil_image, state.models, state.vlm)
+        _, result = await asyncio.gather(save_task, pipeline_task)
+        vlm_name = state.vlm.name
 
-    await db.log_listing(listing_id, image_path, state.vlm.name)
+    await db.log_listing(listing_id, image_path, vlm_name)
     await db.log_prediction(
         listing_id=listing_id,
         source="upload",
@@ -63,7 +92,7 @@ async def upload(request: Request, image: UploadFile = File(...)) -> UploadRespo
 
     return UploadResponse(
         listing_id=listing_id,
-        vlm_backend=state.vlm.name,
+        vlm_backend=vlm_name,
         visual_wear_probability=result["visual_wear_probability"],
         vinted=result["vinted"],
         kleinanzeigen=result["kleinanzeigen"],
