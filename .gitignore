@@ -80,3 +80,4 @@ Thumbs.db
 
 # Eval results (large; commit selectively)
 eval/results/
+captures/
