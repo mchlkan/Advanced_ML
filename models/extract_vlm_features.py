@@ -31,7 +31,8 @@ from peft import PeftModel
 from tqdm.auto import tqdm
 from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
 
-from extract_features import decode_image, load_combined
+# decode_image / load_combined are imported lazily in main() so serving
+# environments can reuse build_inputs / model_device without installing pandas.
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -181,6 +182,8 @@ def write_index(df, args: argparse.Namespace, hidden_dim: int) -> None:
 
 
 def main() -> None:
+    from extract_features import decode_image, load_combined  # lazy import: see top of file
+
     args = parse_args()
     if args.progress_every <= 0:
         raise ValueError("--progress-every must be positive")

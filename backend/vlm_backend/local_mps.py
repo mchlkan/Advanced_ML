@@ -18,6 +18,7 @@ we're on 5.8), downgrade with: ``uv pip install --no-deps 'transformers>=4.57,<5
 from __future__ import annotations
 
 import asyncio
+import os
 
 import torch
 from huggingface_hub.errors import GatedRepoError, HfHubHTTPError
@@ -28,7 +29,7 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 # backend/__init__.py adds repo/models and repo/src to sys.path.
 from extract_features import choose_device
 from extract_vlm_features import DEFAULT_ADAPTER, DEFAULT_BASE_MODEL, build_inputs
-from prompts import get_prompt
+from prompts import EXPECTED_HIDDEN_DIM, get_prompt
 
 from . import VLMOutput
 from .util import parse_json_lenient
@@ -74,15 +75,19 @@ class LocalMPSVLM:
 
     def _load(self) -> None:
         _check_memory(self.device)
+        token = os.environ.get("HF_TOKEN")
         try:
-            processor = AutoProcessor.from_pretrained(self.base_model, trust_remote_code=True)
+            processor = AutoProcessor.from_pretrained(
+                self.base_model, trust_remote_code=True, token=token
+            )
             base = AutoModelForImageTextToText.from_pretrained(
                 self.base_model,
                 trust_remote_code=True,
                 torch_dtype=self.torch_dtype,
                 device_map={"": self.device},
+                token=token,
             )
-            model = PeftModel.from_pretrained(base, self.adapter_id)
+            model = PeftModel.from_pretrained(base, self.adapter_id, token=token)
             model.eval()
         except GatedRepoError as exc:
             raise RuntimeError(
@@ -115,6 +120,10 @@ class LocalMPSVLM:
 
         out = self.model(**inputs, output_hidden_states=True, return_dict=True)
         hidden = out.hidden_states[-1][0, -1, :].float().cpu().numpy()
+        if hidden.shape != (EXPECTED_HIDDEN_DIM,):
+            raise RuntimeError(
+                f"LocalMPSVLM hidden_state shape {hidden.shape}, expected ({EXPECTED_HIDDEN_DIM},)"
+            )
 
         gen = self.model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
         new_tokens = gen[0, inputs["input_ids"].shape[1]:]

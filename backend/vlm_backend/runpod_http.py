@@ -22,6 +22,9 @@ import httpx
 import numpy as np
 from PIL import Image
 
+# backend/__init__.py adds repo/src to sys.path.
+from prompts import EXPECTED_HIDDEN_DIM
+
 from . import VLMOutput
 from .util import parse_json_lenient, resize_and_b64
 
@@ -79,8 +82,18 @@ class RunpodHTTPVLM:
 
             output = await self._poll_until_done(client, job_id)
 
+        if isinstance(output, dict) and "error" in output:
+            raise RuntimeError(f"RunPod worker error: {output['error']}")
+        if not isinstance(output, dict) or "hidden_state" not in output or "raw_text" not in output:
+            raise RuntimeError(f"RunPod worker returned malformed output: {output!r}")
+
         hidden = np.asarray(output["hidden_state"], dtype=np.float32)
-        raw_text = output.get("raw_text", "")
+        if hidden.shape != (EXPECTED_HIDDEN_DIM,):
+            raise RuntimeError(
+                f"RunPod worker returned hidden_state of shape {hidden.shape}, "
+                f"expected ({EXPECTED_HIDDEN_DIM},)"
+            )
+        raw_text = output["raw_text"]
         return VLMOutput(
             hidden_state=hidden,
             fields=parse_json_lenient(raw_text),

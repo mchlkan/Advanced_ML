@@ -42,5 +42,6 @@ def get_backend() -> VLMBackend:
         )
     if name == "runpod_http":
         from .runpod_http import RunpodHTTPVLM
-        return RunpodHTTPVLM()
+        timeout_s = int(os.environ.get("RUNPOD_TIMEOUT_S", "120"))
+        return RunpodHTTPVLM(timeout_s=timeout_s)
     raise ValueError(f"Unknown VLM_BACKEND: {name!r}")

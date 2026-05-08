@@ -119,6 +119,56 @@ def test_run_without_job_id_raises(jpeg_image):
 
 
 @respx.mock
+def test_worker_error_payload_raises(jpeg_image):
+    """Worker returned COMPLETED with output={'error': ...} — bad input or
+    shape mismatch in the handler. Must surface as a clear RuntimeError, not
+    a confusing KeyError on output['hidden_state']."""
+    respx.post(f"{BASE_URL}/run").mock(return_value=httpx.Response(200, json={"id": JOB_ID, "status": "IN_QUEUE"}))
+    respx.get(f"{BASE_URL}/status/{JOB_ID}").mock(return_value=httpx.Response(200, json={
+        "id": JOB_ID,
+        "status": "COMPLETED",
+        "output": {"error": "could not decode image_b64"},
+    }))
+
+    vlm = RunpodHTTPVLM(timeout_s=10)
+    with pytest.raises(RuntimeError, match="worker error.*decode"):
+        asyncio.run(vlm.predict(jpeg_image, "vinted"))
+
+
+@respx.mock
+def test_malformed_output_raises(jpeg_image):
+    """Worker returned COMPLETED but output is missing required keys —
+    surface a clear error rather than KeyError downstream."""
+    respx.post(f"{BASE_URL}/run").mock(return_value=httpx.Response(200, json={"id": JOB_ID, "status": "IN_QUEUE"}))
+    respx.get(f"{BASE_URL}/status/{JOB_ID}").mock(return_value=httpx.Response(200, json={
+        "id": JOB_ID,
+        "status": "COMPLETED",
+        "output": {"hidden_state": [0.0] * 2560},  # missing raw_text
+    }))
+
+    vlm = RunpodHTTPVLM(timeout_s=10)
+    with pytest.raises(RuntimeError, match="malformed output"):
+        asyncio.run(vlm.predict(jpeg_image, "vinted"))
+
+
+@respx.mock
+def test_wrong_hidden_dim_raises(jpeg_image):
+    """Worker returned hidden_state of unexpected dimension — likely a model
+    config mismatch. Catch it client-side rather than letting downstream
+    matmuls fail with a tensor shape error."""
+    respx.post(f"{BASE_URL}/run").mock(return_value=httpx.Response(200, json={"id": JOB_ID, "status": "IN_QUEUE"}))
+    respx.get(f"{BASE_URL}/status/{JOB_ID}").mock(return_value=httpx.Response(200, json={
+        "id": JOB_ID,
+        "status": "COMPLETED",
+        "output": {"hidden_state": [0.0] * 1024, "raw_text": "{}"},
+    }))
+
+    vlm = RunpodHTTPVLM(timeout_s=10)
+    with pytest.raises(RuntimeError, match="hidden_state of shape"):
+        asyncio.run(vlm.predict(jpeg_image, "vinted"))
+
+
+@respx.mock
 def test_authorization_header_sent(jpeg_image):
     run_route = respx.post(f"{BASE_URL}/run").mock(return_value=httpx.Response(200, json={"id": JOB_ID, "status": "IN_QUEUE"}))
     respx.get(f"{BASE_URL}/status/{JOB_ID}").mock(return_value=httpx.Response(200, json=_completed_payload()))

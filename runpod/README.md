@@ -7,9 +7,10 @@ generate; everything else (DINOv2, MLP heads) stays in-process.
 ## What's in this directory
 
 - `Dockerfile` — base `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`,
-  pip-installs the deps in `requirements.txt`, copies `src/`, the relevant
-  files from `models/`, and `handler.py` into the image. Build context is
-  the repo root.
+  pip-installs the deps in `requirements.txt`, copies `src/` and
+  `handler.py` into the image. Build context is the repo root. The handler
+  is self-contained: `build_inputs` and `model_device` are inlined so the
+  worker doesn't depend on the training module's churn.
 - `handler.py` — module-init loads the model + adapter once. `handler(event)`
   runs forward + generate and returns `{hidden_state, raw_text}`.
 - `requirements.txt` — pinned dep set; same versions used during the Day-3
@@ -30,7 +31,7 @@ echo $GH_TOKEN | docker login ghcr.io -u Leon-71644 --password-stdin
 docker buildx build \
   --platform linux/amd64 \
   -f runpod/Dockerfile \
-  -t ghcr.io/leon-71644/resell-vlm:latest \
+  -t ghcr.io/rengo33/resell-vlm:latest \
   --push \
   .
 ```
@@ -41,12 +42,18 @@ and `docker login docker.io` instead — no other change needed.
 ## Deploy on RunPod
 
 1. RunPod dashboard → **Serverless** → **Endpoints** → **Create New Endpoint**.
-2. **Container image:** `ghcr.io/leon-71644/resell-vlm:latest` (mark as private if your GHCR package is private — provide the GHCR PAT as a registry credential).
+2. **Container image:** `ghcr.io/rengo33/resell-vlm:latest` (mark as private if your GHCR package is private — provide the GHCR PAT as a registry credential).
 3. **Container disk:** 25 GB. The 8 GB Qwen base + adapter + cache fit comfortably with headroom.
 4. **Workers:**
    - **GPU type:** RTX 4090 (24 GB VRAM, plenty for 4-bit Qwen) or A4000 (cheaper).
    - **Min workers:** `0` for dev, `1` during the demo window for zero cold starts.
-   - **Max workers:** `1` for v1 (or `2` if you want true VLM parallelism for the two prompts per /upload).
+   - **Max workers:** `1` recommended. The backend issues two parallel `/run`
+     calls per `/upload` (one per platform prompt). With `max_workers > 1`,
+     RunPod's autoscaler tries to spawn a second worker — fine when stable,
+     but during a crash loop it multiplies failures across N workers. Keep
+     `max_workers=1` until you've confirmed warm calls succeed end-to-end;
+     the second platform call queues for ~2 s, so /upload latency is
+     ~4-6 s warm instead of ~2-3 s. Bump to `2` only after you're stable.
    - **Idle timeout:** `600` seconds — workers stay warm 10 min between calls.
    - **FlashBoot:** ON. Snapshots warm workers so subsequent cold starts skip the 8 GB model download.
 5. **Environment variables:**
@@ -95,10 +102,24 @@ idle worker.
 ## Troubleshooting
 
 - **401 from RunPod API**: `RUNPOD_API_KEY` wrong or revoked.
-- **Worker `FAILED` immediately**: check worker logs in RunPod dashboard. Most
-  common: missing `HF_TOKEN` env var, or HF account hasn't accepted the gated
-  Qwen3-VL repo.
+- **Worker `FAILED` immediately**: check worker logs in RunPod dashboard. The
+  handler prints `[boot] HF_TOKEN: set (len=...)` or `MISSING` first. If
+  MISSING, the env var didn't reach the endpoint — check Settings → Env Vars.
+  If set but boot fails on adapter load with `Can't find 'adapter_config.json'`,
+  the token doesn't have access to the private adapter repo. Regenerate at
+  https://huggingface.co/settings/tokens with "Read" role and the adapter
+  repo explicitly granted.
 - **Worker `FAILED` mid-run with OOM**: GPU isn't 4090; switch GPU type or
   re-check the 4-bit quant config in `handler.py`.
+- **Backend `RuntimeError: worker error: ...`**: handler returned an error
+  payload (bad input or shape mismatch). The error string in the message
+  is verbatim from the worker.
+- **Backend `RuntimeError: hidden_state of shape ...`**: model returned a
+  hidden state of the wrong dimension. Check `EXPECTED_HIDDEN_DIM` env var
+  on both the endpoint and `runpod_http.py` — must match the base model.
 - **Backend gets `TimeoutError`**: cold start exceeding the default 120 s.
   Either flip `min_workers=1` or bump `timeout_s` on `RunpodHTTPVLM`.
+- **Workers keep spawning even when idle**: cancel pending jobs in the
+  endpoint's *Requests* tab — failed jobs get retried on fresh workers
+  until they hit their per-job timeout. Set `Max Workers = 1` to cap the
+  blast radius.

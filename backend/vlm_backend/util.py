@@ -7,14 +7,18 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import re
 
 from PIL import Image
 
+logger = logging.getLogger(__name__)
+
 
 def parse_json_lenient(text: str) -> dict:
     """Best-effort JSON extraction. The VLM may wrap output in markdown fences
-    or trail prose. Falls back to ``{}`` so callers can ``.get()`` defensively."""
+    or trail prose. Falls back to ``{}`` so callers can ``.get()`` defensively —
+    but logs a warning so silent garbage predictions leave a breadcrumb."""
     if not text:
         return {}
     cleaned = text.strip()
@@ -31,6 +35,10 @@ def parse_json_lenient(text: str) -> dict:
             return json.loads(cleaned[start : end + 1])
         except json.JSONDecodeError:
             pass
+    logger.warning(
+        "parse_json_lenient: could not extract JSON from VLM output (first 200 chars): %r",
+        text[:200],
+    )
     return {}
 
 

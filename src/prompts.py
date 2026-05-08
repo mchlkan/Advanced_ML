@@ -14,6 +14,11 @@ from __future__ import annotations
 
 import json
 
+SUPPORTED_PLATFORMS = ("vinted", "kleinanzeigen")
+# Pooled hidden-state dimension of Qwen3-VL-4B. Pinned because the price/sell
+# heads were trained against this size; changing the base VLM means retraining.
+EXPECTED_HIDDEN_DIM = 2560
+
 VINTED_CATEGORIES_EN = ["jackets", "jeans", "tshirts", "sneakers"]
 KLEINANZEIGEN_CATEGORIES_EN = [
     "Women's clothing",
