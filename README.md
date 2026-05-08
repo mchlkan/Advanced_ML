@@ -153,4 +153,4 @@ Headline metric: **Price MAPE per platform**, our pipeline vs GPT-4o-mini.
 .venv/bin/pytest backend/tests -q
 ```
 
-28 tests cover the FastAPI routes, the SQLite logging, and the three VLM backends (including respx-mocked RunPod scenarios for cold start, FAILED status, timeout, malformed output, wrong hidden-state dim, and worker error payloads).
+42 tests cover the FastAPI routes (`/upload`, `/verify`, `/publish`), the SQLite logging, and the three VLM backends (including respx-mocked RunPod scenarios for cold start, FAILED status, timeout, malformed output, wrong hidden-state dim, and worker error payloads).

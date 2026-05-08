@@ -66,16 +66,23 @@ def test_verify_round_trip(app_client, jpeg_bytes):
     assert body["kleinanzeigen"]["identification"]["size"] == "L"
 
 
-def test_publish_returns_501(app_client):
+def test_publish_round_trip(app_client, jpeg_bytes):
+    upload = app_client.post("/upload", files={"image": ("hero.jpg", jpeg_bytes, "image/jpeg")})
+    listing_id = upload.json()["listing_id"]
+
     r = app_client.post(
         "/publish",
         json={
-            "listing_id": "x",
+            "listing_id": listing_id,
             "platform": "vinted",
             "final_fields": {"brand": "Zara", "title": "t", "description": "d"},
         },
     )
-    assert r.status_code == 501
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["listing_id"] == listing_id
+    assert body["platform"] == "vinted"
+    assert body["prefill_url"].startswith("https://www.vinted.de/")
 
 
 def test_upload_rejects_non_image(app_client):
