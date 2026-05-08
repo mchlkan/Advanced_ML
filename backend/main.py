@@ -15,7 +15,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from backend import db  # noqa: E402
 from backend.bootstrap import load_models  # noqa: E402
-from backend.routes import publish, upload, verify  # noqa: E402
+from backend.routes import onboarding, publish, upload, verify  # noqa: E402
 from backend.schemas import HealthzResponse  # noqa: E402
 from backend.vlm_backend import get_backend  # noqa: E402
 
@@ -43,6 +43,7 @@ app = FastAPI(title="Resell Copilot API", lifespan=lifespan)
 app.include_router(upload.router)
 app.include_router(verify.router)
 app.include_router(publish.router)
+app.include_router(onboarding.router)
 
 
 @app.get("/healthz", response_model=HealthzResponse)

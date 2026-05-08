@@ -97,3 +97,27 @@ class HealthzResponse(BaseModel):
     vlm_backend: str
     models_loaded: list[str]
     device: str
+
+
+class OnboardingLoginRequest(BaseModel):
+    platform: Platform
+    email: str
+    password: str
+
+
+class OnboardingLoginResponse(BaseModel):
+    platform: Platform
+    status: Literal["ready"]
+    user_id: str
+    expires_at: float
+
+
+class PlatformStatus(BaseModel):
+    state: Literal["ready", "expired", "not_configured", "not_implemented"]
+    expires_at: float | None = None
+    user_id: str | None = None
+
+
+class OnboardingStatusResponse(BaseModel):
+    vinted: PlatformStatus
+    kleinanzeigen: PlatformStatus

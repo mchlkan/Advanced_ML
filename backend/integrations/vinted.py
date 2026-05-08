@@ -171,6 +171,87 @@ def _decode_jwt_payload(token: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (4 - len(parts[1]) % 4)))
 
 
+def _pre_auth_headers(seed: dict, dd_cookie: str) -> dict:
+    """Mobile headers for endpoints called *before* we have an access token —
+    OAuth password / refresh grants. No Authorization, no x-v-uid/sid."""
+    return {
+        "user-agent": _ua(),
+        "x-anon-id": seed["anon_id"],
+        "x-device-uuid": seed["device_uuid"],
+        "x-v-udt": seed["device_token"],
+        "x-platform": "android",
+        "x-portal": "fr",
+        "x-app-version": DEVICE["app_version"],
+        "x-os-version": DEVICE["os_version"],
+        "x-device-model": f"{DEVICE['manufacturer'].title()} {DEVICE['model']}",
+        "x-screen-width": str(DEVICE["screen_width"]),
+        "x-screen-height": str(DEVICE["screen_height"]),
+        "x-local-time": str(int(time.time() * 1000)),
+        "accept-language": "de-fr",
+        "locale": "de-DE",
+        "cookie": f"datadome={dd_cookie}",
+    }
+
+
+def password_login(
+    *,
+    email: str,
+    password: str,
+    seed: dict,
+    domain: str = DEFAULT_DOMAIN,
+) -> VintedSession:
+    """OAuth password grant against /oauth/token.
+
+    `seed` must include the four phone-extracted fields ``datadome_cookie``,
+    ``anon_id``, ``device_uuid``, ``device_token``. The DataDome cookie is
+    refreshed via the SDK before the request to maximise trust score.
+
+    The seed values come from a one-time ADB extraction — see vinted-lister's
+    ``extract-cookie`` CLI. Without a high-trust DD cookie, /oauth/token
+    returns a DataDome challenge.
+    """
+    for key in ("datadome_cookie", "anon_id", "device_uuid", "device_token"):
+        if not seed.get(key):
+            raise VintedNotConfigured(f"missing seed field: {key}")
+
+    base_url = f"https://{domain}"
+    dd_cookie = _refresh_datadome(seed["datadome_cookie"], f"{base_url}/oauth/token")
+    headers = _pre_auth_headers(seed, dd_cookie) | {"content-type": "application/x-www-form-urlencoded"}
+    resp = httpx.post(
+        f"{base_url}/oauth/token",
+        data={
+            "grant_type": "password",
+            "client_id": "android",
+            "scope": "user",
+            "username": email,
+            "password": password,
+        },
+        headers=headers,
+        timeout=30,
+    )
+    body_preview = resp.text[:200]
+    if resp.status_code != 200:
+        if "captcha" in body_preview.lower() or "datadome" in body_preview.lower():
+            raise VintedBlocked(f"password login: DataDome blocked at status {resp.status_code}")
+        raise VintedAuthExpired(f"password login: {resp.status_code} — {body_preview}")
+
+    dd_cookie = _extract_dd(resp, dd_cookie)
+    data = resp.json()
+    payload = _decode_jwt_payload(data["access_token"])
+    return VintedSession(
+        access_token=data["access_token"],
+        refresh_token=data.get("refresh_token", ""),
+        expires_at=float(payload.get("exp", time.time() + 3599)),
+        datadome_cookie=dd_cookie,
+        anon_id=seed["anon_id"],
+        device_uuid=seed["device_uuid"],
+        device_token=seed["device_token"],
+        user_id=payload.get("sub", ""),
+        session_id=payload.get("sid", ""),
+        domain=domain,
+    )
+
+
 def refresh_access_token(session: VintedSession) -> VintedSession:
     """Mint a new access token via the refresh grant. No password / phone needed."""
     base_url = f"https://{session.domain}"
@@ -403,6 +484,40 @@ def is_configured() -> bool:
     if not path:
         return False
     return Path(path).expanduser().exists()
+
+
+def seed_from_env() -> dict | None:
+    """Read the four phone-extracted seed values from env vars.
+    Returns None if any are missing — used by /onboarding/login."""
+    seed = {
+        "datadome_cookie": os.environ.get("VINTED_DATADOME_SEED", ""),
+        "anon_id": os.environ.get("VINTED_ANON_ID", ""),
+        "device_uuid": os.environ.get("VINTED_DEVICE_UUID", ""),
+        "device_token": os.environ.get("VINTED_DEVICE_TOKEN", ""),
+    }
+    if not all(seed.values()):
+        return None
+    return seed
+
+
+async def login(email: str, password: str) -> VintedSession:
+    """Async wrapper around password_login. Reads the seed from env vars and
+    persists the resulting session to VINTED_SESSION_PATH so subsequent
+    /publish calls can use it."""
+    seed = seed_from_env()
+    if seed is None:
+        raise VintedNotConfigured(
+            "VINTED_DATADOME_SEED / VINTED_ANON_ID / VINTED_DEVICE_UUID / "
+            "VINTED_DEVICE_TOKEN must all be set (extract once via "
+            "vinted-lister's `extract-cookie` CLI)"
+        )
+
+    def _do() -> VintedSession:
+        session = password_login(email=email, password=password, seed=seed)
+        save_session(session, _session_path())
+        return session
+
+    return await asyncio.to_thread(_do)
 
 
 def _session_path() -> Path:

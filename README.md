@@ -111,45 +111,73 @@ docker buildx build --platform linux/amd64 \
 
 Then on RunPod dashboard: Serverless → Endpoints → Create New Endpoint, point at the GHCR image, and set the env vars. The container expects `HF_TOKEN` (gated-repo access) and the same `BASE_MODEL` / `ADAPTER_ID` / `MAX_NEW_TOKENS` overrides used during training.
 
-## Direct publishing — Vinted (Phase 6a)
+## Direct publishing — Vinted
 
-`/publish` can post listings directly to Vinted via the mobile draft-mode
+`/publish` posts listings directly to Vinted via the mobile draft-mode
 flow (which bypasses DataDome on the protected submission endpoint).
 
-**One-off bootstrap** (uses the sister project at
-`~/Projekte/Vinted/vinted-lister`):
+### One-off bootstrap
+
+Vinted's password endpoint requires a "high-trust" DataDome cookie that
+can't be minted from a clean IP — it has to come from a real Android
+device once. Use vinted-lister's existing CLI to extract the four
+phone-derived values via ADB:
 
 ```bash
 cd ~/Projekte/Vinted/vinted-lister
-python -m src.main login --mode password
-# writes .vinted-session.json with refresh_token + datadome cookie
+python -m src.main extract-cookie
+# prints datadome_cookie / anon_id / device_uuid / device_token
 ```
 
-Then in resell-copilot's `.env`:
+Drop those four values into resell-copilot's `.env`:
 
 ```bash
-VINTED_SESSION_PATH=/path/to/.vinted-session.json
+VINTED_DATADOME_SEED=<datadome cookie>
+VINTED_ANON_ID=<anon id>
+VINTED_DEVICE_UUID=<device uuid>
+VINTED_DEVICE_TOKEN=<device token>
+VINTED_SESSION_PATH=/path/to/.vinted-session.json   # where /onboarding/login will write
 ```
+
+The seed values self-refresh indefinitely — extract once per machine.
+
+### Login from the backend
+
+```bash
+curl -X POST http://localhost:8000/onboarding/login \
+  -H 'content-type: application/json' \
+  -d '{"platform": "vinted", "email": "you@example.com", "password": "..."}'
+```
+
+On success: returns `{platform, status:"ready", user_id, expires_at}` and
+writes the session JSON to `VINTED_SESSION_PATH`. The password is used
+once for the OAuth password grant and never logged or persisted.
+
+```bash
+curl http://localhost:8000/onboarding/status
+# {"vinted": {"state": "ready", ...}, "kleinanzeigen": {"state": "not_implemented"}}
+```
+
+### Publish behaviour
+
+- **Vinted not configured** → `/publish` returns the new-listing page URL
+  with `posted: false`, `error: null` (graceful fallback).
+- **Session configured but publish fails** (DataDome 429, refresh expired,
+  network) → response falls back to the URL with `posted: false` and a
+  populated `error` string. Never 5xx.
+- **Success** → response includes `platform_listing_url` pointing at the
+  live listing.
 
 The backend reads the session at request time, refreshes the access
 token transparently when near expiry, and persists the rotated DataDome
 cookie back to the file after each publish.
 
-**Behaviour:**
-- If `VINTED_SESSION_PATH` is unset → `/publish` returns the new-listing
-  page URL with `posted: false` and `error: null` (graceful fallback).
-- If the session is configured but the publish fails (DataDome 429,
-  refresh expired, network) → response falls back to the URL with
-  `posted: false` and a populated `error` string. Never 5xx.
-- On success → response includes `platform_listing_url` pointing at
-  the live listing.
+**Out of scope (deferred to Phase 6b):** queue + retry, polling status
+endpoint for in-flight publishes.
 
-**Out of scope for 6a (deferred to 6b):** queue + retry, polling status
-endpoint, password login on the backend.
-
-**Out of scope for 6a (deferred to 6c):** Kleinanzeigen direct publishing.
+**Out of scope (deferred to Phase 6c):** Kleinanzeigen direct publishing.
 KA always falls back to the URL with `error: "Phase 6c"` until the
-mobile listing-create flow is captured + implemented in vinted-lister.
+mobile listing-create flow is captured and implemented.
 
 ---
 
