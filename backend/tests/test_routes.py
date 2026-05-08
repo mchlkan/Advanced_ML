@@ -47,9 +47,23 @@ def test_upload_round_trip(app_client, jpeg_bytes):
     assert preds[0][2] == 2
 
 
-def test_verify_returns_501(app_client):
-    r = app_client.post("/verify", json={"listing_id": "x", "hints": {}})
-    assert r.status_code == 501
+def test_verify_round_trip(app_client, jpeg_bytes):
+    upload = app_client.post("/upload", files={"image": ("hero.jpg", jpeg_bytes, "image/jpeg")})
+    listing_id = upload.json()["listing_id"]
+
+    r = app_client.post("/verify", json={
+        "listing_id": listing_id,
+        "hints": {"brand": "Zara", "size": "L"},
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["listing_id"] == listing_id
+    assert body["revised"] is True
+    assert body["vinted"]["identification"]["brand"] == "Zara"
+    assert body["vinted"]["identification"]["size"] == "L"
+    assert body["kleinanzeigen"]["identification"]["brand"] == "Zara"
+    assert body["kleinanzeigen"]["identification"]["size"] == "L"
 
 
 def test_publish_returns_501(app_client):

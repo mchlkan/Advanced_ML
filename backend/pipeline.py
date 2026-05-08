@@ -137,6 +137,7 @@ async def run_pipeline(
     models: LoadedModels,
     vlm: VLMBackend,
     hints: str | None = None,
+    field_overrides: dict | None = None,
 ) -> dict:
     started = time.perf_counter()
 
@@ -144,6 +145,10 @@ async def run_pipeline(
         vlm.predict(image, "vinted", hints=hints),
         vlm.predict(image, "kleinanzeigen", hints=hints),
     )
+
+    if field_overrides:
+        for vlm_out in (vinted_vlm, ka_vlm):
+            vlm_out.fields = {**vlm_out.fields, **field_overrides}
 
     local = await asyncio.to_thread(_run_local_inference, image, models, vinted_vlm, ka_vlm)
 

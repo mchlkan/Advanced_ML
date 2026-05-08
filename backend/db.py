@@ -145,6 +145,31 @@ async def log_edits(
         await conn.commit()
 
 
+async def get_listing(
+    listing_id: str,
+    db_path: Path | None = None,
+) -> dict | None:
+    """Return the listing's image path and most-recent english_fields, or None
+    if the id is unknown. The fields come from the latest row in `predictions`
+    so a 3rd /verify diffs against the 2nd, not the original /upload."""
+    async with aiosqlite.connect(_resolve(db_path)) as conn:
+        conn.row_factory = aiosqlite.Row
+        listing_row = await (await conn.execute(
+            "SELECT image_path FROM listings WHERE id = ?", (listing_id,)
+        )).fetchone()
+        if listing_row is None:
+            return None
+        latest = await (await conn.execute(
+            "SELECT english_fields FROM predictions "
+            "WHERE listing_id = ? ORDER BY id DESC LIMIT 1",
+            (listing_id,),
+        )).fetchone()
+        return {
+            "image_path": listing_row["image_path"],
+            "last_english_fields": json.loads(latest["english_fields"]) if latest else {},
+        }
+
+
 async def log_publish(
     listing_id: str,
     platform: str,
