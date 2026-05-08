@@ -14,6 +14,7 @@ until the mobile listing-create flow lands (Phase 6c).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -68,9 +69,11 @@ async def kleinanzeigen_onboarding(
     body: KleinanzeigenOnboardingRequest,
 ) -> KleinanzeigenOnboardingResponse:
     """Seed a KA session from a captured refresh_token. Persists the result
-    to KA_SESSION_PATH so the runner picks it up on the next publish."""
-    import asyncio
+    to KA_SESSION_PATH so the runner picks it up on the next publish.
 
+    login_with_refresh is sync (uses httpx.post); wrapped in to_thread so
+    it doesn't block the event loop.
+    """
     if not os.environ.get("KA_SESSION_PATH"):
         raise HTTPException(
             status_code=503,

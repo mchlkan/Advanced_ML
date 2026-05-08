@@ -24,7 +24,6 @@ the backend via /onboarding/kleinanzeigen.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import os
@@ -33,6 +32,8 @@ import secrets
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Literal
+from xml.sax.saxutils import escape as _saxutils_escape
 
 import httpx
 
@@ -53,6 +54,12 @@ AUTH0_CLIENT_HEADER = (
 )
 
 API_BASE = "https://api.kleinanzeigen.de"
+
+# Poster-type values are server-side enums; centralised here so schemas /
+# session defaults / XML body all reference one source of truth.
+POSTER_TYPE_PRIVATE = "PRIVATE"
+POSTER_TYPE_COMMERCIAL = "COMMERCIAL"
+PosterType = Literal["PRIVATE", "COMMERCIAL"]
 
 
 class KAError(RuntimeError):
@@ -77,7 +84,7 @@ class KASession:
     expires_at: float
     user_id: int
     email: str
-    poster_type: str = "PRIVATE"           # or "COMMERCIAL"
+    poster_type: PosterType = POSTER_TYPE_PRIVATE
     imprint: str = ""
     contact_name: str = ""
     home_location_id: int | None = None
@@ -123,11 +130,7 @@ def _session_path() -> Path:
     return Path(path).expanduser()
 
 
-def _decode_jwt_payload(token: str) -> dict:
-    parts = token.split(".")
-    if len(parts) != 3:
-        return {}
-    return json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (4 - len(parts[1]) % 4)))
+from ._oauth import decode_jwt_payload as _decode_jwt_payload  # noqa: E402
 
 
 def refresh_access_token(session: KASession) -> KASession:
@@ -167,7 +170,7 @@ def login_with_refresh(
     *,
     refresh_token: str,
     email: str,
-    poster_type: str = "PRIVATE",
+    poster_type: PosterType = POSTER_TYPE_PRIVATE,
     imprint: str = "",
     contact_name: str = "",
     home_location_id: int | None = None,
@@ -199,13 +202,10 @@ def login_with_refresh(
 
 
 def _xml_escape(text: str) -> str:
-    """Escape & < > " ' for XML element text + attributes."""
-    return (text
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("'", "&apos;"))
+    """Escape & < > " ' for XML element text + attributes. Stdlib's
+    ``saxutils.escape`` handles & < > by default; we extend it for the two
+    quote chars so it covers attribute values too."""
+    return _saxutils_escape(text, {'"': "&quot;", "'": "&apos;"})
 
 
 _XML_NS = (
@@ -307,6 +307,9 @@ class KAClient:
             return
         logger.info("refreshing KA access token (near expiry)")
         self.session = refresh_access_token(self.session)
+        # Persist immediately — refresh tokens are single-use on KA's
+        # Auth0 tenant, so a downstream failure must not leave the rotated
+        # token unsaved.
         try:
             save_session(self.session, _session_path())
         except KANotConfigured:
@@ -422,6 +425,4 @@ def _publish_sync(image_path: str | Path, payload: dict) -> tuple[int, str]:
     if not picture_links:
         raise KAError("photo upload returned no link blocks")
     ad_xml = build_ad_xml(full_payload, picture_links)
-    listing_id, url = client.submit_listing(ad_xml)
-    save_session(client.session, path)
-    return listing_id, url
+    return client.submit_listing(ad_xml)

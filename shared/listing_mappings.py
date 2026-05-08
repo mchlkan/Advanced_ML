@@ -11,6 +11,7 @@ brand) still produces a valid payload.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from translations import (
@@ -33,40 +34,72 @@ KA_CATEGORY_TO_ID: dict[str, int] = {
     "jeans": 160,
 }
 
-# KA's per-category attribute schema for category 160 (kleidung_herren).
-# All seven slots get filled even though metadata says required=False —
-# the publish endpoint enforces presence beyond what metadata exposes
-# (verified empirically: omitting `kleidung_herren.art` returns
-# "Bitte gib einen Wert ein.").
-KA_ATTR_FIXED_KLEIDUNG_HERREN: dict[str, str] = {
-    "kleidung_herren.versand": "ja",
-    "kleidung_herren.seller_badges": "none",
-}
-
-# canonical category → KA "art" (clothing-type) slug
-KA_ATTR_ART_KLEIDUNG_HERREN: dict[str, str] = {
-    "tshirts": "shirts",
-    "jackets": "jacken_maentel",
-    "jeans": "jeans",
-}
-
-# canonical condition → KA condition slug. The capture confirmed only
-# "Very good" → "like_new"; the others are best-guess slugs that match
-# Vinted-side patterns. If KA rejects one, the request body is shown in
-# the runner's error column so we can correct empirically.
-KA_ATTR_CONDITION_KLEIDUNG_HERREN: dict[str, str] = {
-    "New with tags": "new_etikett",
-    "New": "new",
-    "Very good": "like_new",
-    "Good": "good",
+# KA's per-category attribute schema, keyed by numeric category id. Even
+# though /api/ads/metadata/{cat}.json reports required=False, the publish
+# endpoint actually enforces presence beyond what metadata exposes
+# (omitting kleidung_herren.art returns "Bitte gib einen Wert ein.").
+# Add a new category by appending a sibling entry — to_kleinanzeigen
+# walks this registry without per-category branching.
+KA_ATTRS: dict[int, dict[str, dict]] = {
+    160: {  # kleidung_herren
+        # Fixed slots that aren't derived from canon fields
+        "fixed": {
+            "kleidung_herren.versand": "ja",
+            "kleidung_herren.seller_badges": "none",
+        },
+        # canonical category → "art" slug (clothing type)
+        "art": {
+            "tshirts": "shirts",
+            "jackets": "jacken_maentel",
+            "jeans": "jeans",
+        },
+        # canonical condition → KA condition slug. The capture confirmed
+        # only "Very good" → "like_new"; the others mirror Vinted-side
+        # patterns. If KA rejects one, the runner's error column shows
+        # the response so we can correct empirically.
+        "condition": {
+            "New with tags": "new_etikett",
+            "New": "new",
+            "Very good": "like_new",
+            "Good": "good",
+        },
+        # Per-category attribute name prefix (e.g. "kleidung_herren.brand")
+        "prefix": "kleidung_herren",
+    },
 }
 
 
 def _ka_brand_slug(brand: str) -> str:
     """Slugify the brand to the form KA stores
     (e.g. ``"abercrombie & fitch" → "abercrombie_fitch"``)."""
-    import re
     return re.sub(r"[^a-z0-9]+", "_", brand.lower()).strip("_")
+
+
+def _ka_attributes(canon: dict[str, Any], category_id: int) -> dict[str, str]:
+    """Build the per-category attribute block for KA category `category_id`.
+    Missing canon fields drop their slots; KA returns a per-attribute error
+    if a required slot is omitted, surfacing the gap to the runner."""
+    spec = KA_ATTRS.get(category_id)
+    if spec is None:
+        return {}
+    prefix = spec["prefix"]
+    attrs: dict[str, str] = dict(spec["fixed"])
+    if canon.get("brand"):
+        attrs[f"{prefix}.brand"] = _ka_brand_slug(str(canon["brand"]))
+    size = canon.get("size") or ""
+    first = size.replace("/", " ").split()[:1]
+    if first:
+        attrs[f"{prefix}.groesse"] = first[0].lower()
+    color = canon.get("color")
+    if color and color in COLOR_EN_TO_KA_DE:
+        attrs[f"{prefix}.color"] = COLOR_EN_TO_KA_DE[color].lower()
+    cond = canon.get("condition")
+    if cond and cond in spec["condition"]:
+        attrs[f"{prefix}.condition"] = spec["condition"][cond]
+    cat = canon.get("category")
+    if cat and cat in spec["art"]:
+        attrs[f"{prefix}.art"] = spec["art"][cat]
+    return attrs
 
 # Used by /publish to redirect the user to the platform's new-listing form
 # when direct publishing isn't available.
@@ -187,27 +220,11 @@ def to_kleinanzeigen(canon: dict[str, Any]) -> dict[str, Any]:
         out["price_eur"] = canon["price_eur"]
     cat = canon.get("category")
     if cat and cat in KA_CATEGORY_TO_ID:
-        out["category_id"] = KA_CATEGORY_TO_ID[cat]
-        # KA's category 160 (kleidung_herren) requires a 7-slot attributes
-        # block. Fill the always-fixed two plus whatever maps cleanly from
-        # canon. Missing slots stay empty — KA will reject the submit in
-        # that case with a per-attribute error visible in the job's error.
-        attrs: dict[str, str] = dict(KA_ATTR_FIXED_KLEIDUNG_HERREN)
-        if canon.get("brand"):
-            attrs["kleidung_herren.brand"] = _ka_brand_slug(str(canon["brand"]))
-        size = canon.get("size") or ""
-        first = size.replace("/", " ").split()[:1]
-        if first:
-            attrs["kleidung_herren.groesse"] = first[0].lower()
-        color = canon.get("color")
-        if color and color in COLOR_EN_TO_KA_DE:
-            attrs["kleidung_herren.color"] = COLOR_EN_TO_KA_DE[color].lower()
-        cond = canon.get("condition")
-        if cond and cond in KA_ATTR_CONDITION_KLEIDUNG_HERREN:
-            attrs["kleidung_herren.condition"] = KA_ATTR_CONDITION_KLEIDUNG_HERREN[cond]
-        if cat in KA_ATTR_ART_KLEIDUNG_HERREN:
-            attrs["kleidung_herren.art"] = KA_ATTR_ART_KLEIDUNG_HERREN[cat]
-        out["attributes"] = attrs
+        cat_id = KA_CATEGORY_TO_ID[cat]
+        out["category_id"] = cat_id
+        attrs = _ka_attributes(canon, cat_id)
+        if attrs:
+            out["attributes"] = attrs
     return out
 
 

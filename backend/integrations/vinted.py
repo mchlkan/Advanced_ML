@@ -166,11 +166,7 @@ def _refresh_datadome(existing_cookie: str, request_url: str) -> str:
     return existing_cookie
 
 
-def _decode_jwt_payload(token: str) -> dict:
-    parts = token.split(".")
-    if len(parts) != 3:
-        return {}
-    return json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (4 - len(parts[1]) % 4)))
+from ._oauth import decode_jwt_payload as _decode_jwt_payload  # noqa: E402
 
 
 def _pre_auth_headers(seed: dict, dd_cookie: str) -> dict:
@@ -360,6 +356,30 @@ class VintedClient:
         resp = self.http.get(f"{self.base_url}{path}", headers=_mobile_headers(self.session), timeout=timeout)
         self.session.datadome_cookie = _extract_dd(resp, self.session.datadome_cookie)
         return resp
+
+    def get_wardrobe(self, *, per_page: int = 100, max_pages: int = 20) -> list[dict]:
+        """Fetch all active items in the logged-in user's wardrobe via
+        GET /api/v2/wardrobe/{user_id}/items. Paginates until an empty page
+        or `max_pages` is hit. Returns the raw API item dicts."""
+        self._ensure_fresh()
+        user_id = self.session.user_id
+        if not user_id:
+            raise VintedAuthExpired("session has no user_id; re-login required")
+        items: list[dict] = []
+        for page in range(1, max_pages + 1):
+            resp = self._get(
+                f"/api/v2/wardrobe/{user_id}/items"
+                f"?page={page}&per_page={per_page}&order=created_at_desc"
+            )
+            if resp.status_code != 200:
+                raise _classify_error(resp, "wardrobe fetch")
+            page_items = resp.json().get("items", []) or []
+            if not page_items:
+                break
+            items.extend(page_items)
+            if len(page_items) < per_page:
+                break
+        return items
 
     def delete_draft(self, item_id: int | str) -> None:
         """Delete a Vinted listing or draft. Same endpoint works for both
@@ -604,6 +624,44 @@ async def publish(image_path: str | Path, payload: dict) -> tuple[int, str]:
     failure — caller is expected to translate them into the response shape.
     """
     return await asyncio.to_thread(_publish_sync, image_path, payload)
+
+
+def normalize_wardrobe_item(item: dict) -> dict:
+    """Map a raw wardrobe API item to the column set in wardrobe_snapshots,
+    plus a 'raw' key holding the full original blob for forward-compatibility.
+    Returns a dict with keys consumed by db.insert_wardrobe_snapshots."""
+    photos = item.get("photos") or []
+    price = item.get("price") or {}
+    raw_amount = price.get("amount") if isinstance(price, dict) else None
+    return {
+        "platform_listing_id": str(item["id"]),
+        "title": item.get("title"),
+        "price_eur": float(raw_amount) if raw_amount is not None else None,
+        "currency": price.get("currency_code") if isinstance(price, dict) else None,
+        "views": item.get("view_count"),
+        "favourites": item.get("favourite_count"),
+        "url": item.get("url"),
+        "primary_photo_url": (photos[0].get("url") if photos and isinstance(photos[0], dict) else None),
+        "raw": item,
+    }
+
+
+async def fetch_wardrobe() -> list[dict]:
+    """Async wrapper around VintedClient.get_wardrobe. Reads the persisted
+    session, fetches all wardrobe items, and writes back the rotated DataDome
+    cookie. Returns the raw API item dicts."""
+
+    def _do() -> list[dict]:
+        path = _session_path()
+        session = load_session(path)
+        if session is None:
+            raise VintedNotConfigured(f"no session file at {path}")
+        client = VintedClient(session)
+        items = client.get_wardrobe()
+        save_session(client.session, path)
+        return items
+
+    return await asyncio.to_thread(_do)
 
 
 def _publish_sync(image_path: str | Path, payload: dict) -> tuple[int, str]:

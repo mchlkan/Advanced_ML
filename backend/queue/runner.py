@@ -161,7 +161,7 @@ class PublishRunner:
             return "Vinted integration not configured (set VINTED_SESSION_PATH)"
         payload = to_vinted(fields)
         if "catalog_id" not in payload:
-            return f"category {fields.get('category')!r} has no Vinted catalog mapping"
+            return f"category {fields.get('category')} has no Vinted catalog mapping"
         if not payload.get("title") or not payload.get("description") or not payload.get("price"):
             return "title, description, and price are required for Vinted"
         return None
@@ -172,7 +172,7 @@ class PublishRunner:
             return "Kleinanzeigen integration not configured (set KA_SESSION_PATH)"
         payload = to_kleinanzeigen(fields)
         if "category_id" not in payload:
-            return f"category {fields.get('category')!r} has no Kleinanzeigen category mapping"
+            return f"category {fields.get('category')} has no Kleinanzeigen category mapping"
         if not payload.get("title") or not payload.get("description") or payload.get("price_eur") is None:
             return "title, description, and price are required for Kleinanzeigen"
         return None
