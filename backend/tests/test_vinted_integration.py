@@ -122,6 +122,51 @@ def test_publish_raises_not_configured_when_env_missing(monkeypatch, tmp_path: P
         asyncio.run(vinted.publish(tmp_path / "img.jpg", {"title": "t"}))
 
 
+def test_to_vinted_populates_size_and_color_ids():
+    """to_vinted should map English color names + size labels to Vinted IDs
+    when the canon fields cover them, and drop the keys when they don't."""
+    import sys
+    sys.path.insert(0, "src")
+    from listing_mappings import to_vinted
+
+    out = to_vinted({
+        "category": "tshirts", "condition": "Very good", "color": "Pink", "size": "S",
+        "title": "x", "description": "y", "price_eur": 5.0,
+    })
+    assert out["catalog_id"] == 221
+    assert out["condition_id"] == 2
+    assert out["size_id"] == 2
+    assert out["color_ids"] == [5]
+
+
+def test_to_vinted_size_normalization():
+    """Verify-time sizes can look like 'M / 38 / 8' — the first known token wins."""
+    import sys
+    sys.path.insert(0, "src")
+    from listing_mappings import to_vinted
+
+    out = to_vinted({
+        "category": "tshirts", "color": "navy", "size": "M / 38 / 8",
+        "title": "x", "description": "y", "price_eur": 5.0,
+    })
+    assert out["size_id"] == 3  # M
+    assert out["color_ids"] == [27]  # Marineblau
+
+
+def test_to_vinted_drops_unmapped_color_and_size():
+    """Unknown color or size → just doesn't emit the key, no crash."""
+    import sys
+    sys.path.insert(0, "src")
+    from listing_mappings import to_vinted
+
+    out = to_vinted({
+        "category": "tshirts", "color": "Aubergine", "size": "Onesize",
+        "title": "x", "description": "y", "price_eur": 5.0,
+    })
+    assert "size_id" not in out
+    assert out["color_ids"] == []
+
+
 def test_publish_raises_not_configured_when_session_file_missing(monkeypatch, tmp_path: Path):
     """Env var points at a non-existent file → still raise NotConfigured."""
     monkeypatch.setenv("VINTED_SESSION_PATH", str(tmp_path / "ghost.json"))

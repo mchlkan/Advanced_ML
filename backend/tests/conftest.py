@@ -29,6 +29,14 @@ def app_client(tmp_path, monkeypatch, loaded_models):
     uploads_dir.mkdir()
 
     monkeypatch.setenv("VLM_BACKEND", "stub")
+    # Default tests run with no platform integrations configured. Individual
+    # tests can monkeypatch these back in if they're testing the real-publish
+    # path explicitly.
+    for var in (
+        "VINTED_SESSION_PATH", "VINTED_DATADOME_SEED",
+        "VINTED_ANON_ID", "VINTED_DEVICE_UUID", "VINTED_DEVICE_TOKEN",
+    ):
+        monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr("backend.db.DEFAULT_DB_PATH", db_path)
     monkeypatch.setattr("backend.routes.upload.UPLOADS_DIR", uploads_dir)
 

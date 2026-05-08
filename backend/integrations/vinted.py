@@ -330,6 +330,15 @@ class VintedClient:
             return
         logger.info("refreshing Vinted access token (near expiry)")
         self.session = refresh_access_token(self.session)
+        # Persist immediately. Refresh tokens are single-use — if we waited
+        # until after a successful publish and the publish failed, the next
+        # request would try to refresh with the now-revoked old token and
+        # get 401 invalid_grant. Save now so the new refresh_token is on
+        # disk regardless of what happens downstream.
+        try:
+            save_session(self.session, _session_path())
+        except VintedNotConfigured:
+            pass  # in-memory only path (e.g. tests)
 
     def _post(self, path: str, *, json_body: Any = None, data: Any = None, extra_headers: dict | None = None, timeout: int = 30) -> httpx.Response:
         headers = _mobile_headers(self.session)
