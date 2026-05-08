@@ -260,9 +260,7 @@ def train(args: argparse.Namespace) -> dict:
     train_ds = PriceDataset(vlm, features, train_mask, no_flaw=args.no_flaw)
     val_ds = PriceDataset(vlm, features, val_mask, no_flaw=args.no_flaw)
     test_ds = PriceDataset(vlm, features, test_mask, no_flaw=args.no_flaw)
-    generator = torch.Generator()
-    generator.manual_seed(args.seed)
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, generator=generator)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
 
