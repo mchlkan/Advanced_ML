@@ -59,6 +59,11 @@ FIELD_MAP = {
 }
 REQUIRED_OUTPUT_FIELDS = ["brand", "category", "condition", "color", "size", "title", "description", "price_eur"]
 WORD_RE = re.compile(r"\w+")
+JSON_FIELD_RE = re.compile(
+    r'"(?P<key>brand|category|condition|color|size|title|description|price_eur)"\s*:\s*'
+    r'(?P<value>"(?:[^"\\]|\\.)*"?|-?\d+(?:\.\d+)?|null)',
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -166,6 +171,27 @@ def as_float(value: Any) -> float | None:
     return out if math.isfinite(out) and out >= 0 else None
 
 
+def parse_model_output(raw_text: str) -> tuple[dict, bool]:
+    fields = parse_json_lenient(raw_text)
+    if fields:
+        return fields, True
+
+    # Fallback for common Qwen failure mode: JSON object starts correctly but a
+    # long description contains raw newlines or truncates before the closing
+    # quote/brace. Recover scalar fields so accuracy metrics remain useful.
+    recovered: dict[str, Any] = {}
+    for match in JSON_FIELD_RE.finditer(raw_text or ""):
+        key = match.group("key")
+        value = match.group("value").strip()
+        if value == "null":
+            recovered[key] = None
+        elif value.startswith('"'):
+            recovered[key] = value[1:].rstrip('"').replace('\\"', '"').replace("\\n", "\n").strip()
+        else:
+            recovered[key] = as_float(value)
+    return recovered, False
+
+
 @torch.no_grad()
 def predict_one(processor, model, row: pd.Series, max_new_tokens: int) -> dict:
     image = decode_image(row["image"])
@@ -173,8 +199,8 @@ def predict_one(processor, model, row: pd.Series, max_new_tokens: int) -> dict:
     generated = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
     new_tokens = generated[0, inputs["input_ids"].shape[1] :]
     raw_text = processor.decode(new_tokens, skip_special_tokens=True).strip()
-    fields = parse_json_lenient(raw_text)
-    return {"raw_text": raw_text, "fields": fields, "parse_ok": bool(fields)}
+    fields, parse_ok = parse_model_output(raw_text)
+    return {"raw_text": raw_text, "fields": fields, "parse_ok": parse_ok}
 
 
 def load_existing(path: Path) -> dict[tuple[str, int], dict]:

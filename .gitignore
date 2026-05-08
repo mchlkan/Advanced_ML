@@ -43,6 +43,7 @@ data/embeddings/
 data/*.db
 data/splits/*.parquet
 data/translations/
+data/resell-copilot-artifacts/
 !data/splits/.gitkeep
 *.cache/
 *.h5

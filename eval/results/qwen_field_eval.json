@@ -1,0 +1,507 @@
+{
+  "model": "Qwen/Qwen3-VL-4B-Instruct",
+  "adapter": "Rengo33/qwen3vl4b-resell-adapter",
+  "n_total": 500,
+  "n_parse_ok": 409,
+  "n_errors": 0,
+  "generation_failures_this_run": 0,
+  "overall": {
+    "n": 500,
+    "parse_rate": 0.818,
+    "field_fill_rate": {
+      "brand": 0.962,
+      "category": 1.0,
+      "condition": 1.0,
+      "color": 1.0,
+      "size": 1.0,
+      "title": 1.0,
+      "description": 1.0,
+      "price_eur": 0.826
+    },
+    "accuracy": {
+      "brand": {
+        "n": 488,
+        "exact": 0.47540983606557374,
+        "fuzzy": 0.5040983606557377
+      },
+      "category": {
+        "n": 500,
+        "exact": 0.968
+      },
+      "condition": {
+        "n": 500,
+        "exact": 0.656
+      },
+      "color": {
+        "n": 500,
+        "exact": 0.722
+      },
+      "size": {
+        "n": 500,
+        "exact": 0.24
+      }
+    },
+    "vlm_price_eur": {
+      "n": 413,
+      "mae": 18.173922522593355,
+      "mape": 0.506483061325488,
+      "rmsle": 0.6513086645060935
+    },
+    "title_bleu4": 0.11343870373083602,
+    "description_bleu4": 0.03086455312005156
+  },
+  "by_platform": {
+    "kleinanzeigen": {
+      "n": 132,
+      "parse_rate": 0.4090909090909091,
+      "field_fill_rate": {
+        "brand": 0.8560606060606061,
+        "category": 1.0,
+        "condition": 1.0,
+        "color": 1.0,
+        "size": 1.0,
+        "title": 1.0,
+        "description": 1.0,
+        "price_eur": 0.4318181818181818
+      },
+      "accuracy": {
+        "brand": {
+          "n": 132,
+          "exact": 0.44696969696969696,
+          "fuzzy": 0.44696969696969696
+        },
+        "category": {
+          "n": 132,
+          "exact": 0.8863636363636364
+        },
+        "condition": {
+          "n": 132,
+          "exact": 0.696969696969697
+        },
+        "color": {
+          "n": 132,
+          "exact": 0.6439393939393939
+        },
+        "size": {
+          "n": 132,
+          "exact": 0.21212121212121213
+        }
+      },
+      "vlm_price_eur": {
+        "n": 57,
+        "mae": 23.63157894736842,
+        "mape": 0.6273900701606605,
+        "rmsle": 0.7761860131282566
+      },
+      "title_bleu4": 0.10005581262518462,
+      "description_bleu4": 0.027640164974511137
+    },
+    "vinted": {
+      "n": 368,
+      "parse_rate": 0.9646739130434783,
+      "field_fill_rate": {
+        "brand": 1.0,
+        "category": 1.0,
+        "condition": 1.0,
+        "color": 1.0,
+        "size": 1.0,
+        "title": 1.0,
+        "description": 1.0,
+        "price_eur": 0.967391304347826
+      },
+      "accuracy": {
+        "brand": {
+          "n": 356,
+          "exact": 0.4859550561797753,
+          "fuzzy": 0.5252808988764045
+        },
+        "category": {
+          "n": 368,
+          "exact": 0.9972826086956522
+        },
+        "condition": {
+          "n": 368,
+          "exact": 0.6413043478260869
+        },
+        "color": {
+          "n": 368,
+          "exact": 0.75
+        },
+        "size": {
+          "n": 368,
+          "exact": 0.25
+        }
+      },
+      "vlm_price_eur": {
+        "n": 356,
+        "mae": 17.300084274806334,
+        "mape": 0.48712435485468797,
+        "rmsle": 0.6290159512827196
+      },
+      "title_bleu4": 0.11823908858395013,
+      "description_bleu4": 0.03202112712877801
+    }
+  },
+  "by_category": {
+    "Men's clothing": {
+      "n": 43,
+      "parse_rate": 0.32558139534883723,
+      "field_fill_rate": {
+        "brand": 0.8837209302325582,
+        "category": 1.0,
+        "condition": 1.0,
+        "color": 1.0,
+        "size": 1.0,
+        "title": 1.0,
+        "description": 1.0,
+        "price_eur": 0.32558139534883723
+      },
+      "accuracy": {
+        "brand": {
+          "n": 43,
+          "exact": 0.5581395348837209,
+          "fuzzy": 0.5581395348837209
+        },
+        "category": {
+          "n": 43,
+          "exact": 0.9534883720930233
+        },
+        "condition": {
+          "n": 43,
+          "exact": 0.627906976744186
+        },
+        "color": {
+          "n": 43,
+          "exact": 0.7906976744186046
+        },
+        "size": {
+          "n": 43,
+          "exact": 0.16279069767441862
+        }
+      },
+      "vlm_price_eur": {
+        "n": 14,
+        "mae": 45.785714285714285,
+        "mape": 1.1715304253569558,
+        "rmsle": 0.9231911456391255
+      },
+      "title_bleu4": 0.13881878157886857,
+      "description_bleu4": 0.024779393398228548
+    },
+    "Men's shoes": {
+      "n": 15,
+      "parse_rate": 0.5333333333333333,
+      "field_fill_rate": {
+        "brand": 0.9333333333333333,
+        "category": 1.0,
+        "condition": 1.0,
+        "color": 1.0,
+        "size": 1.0,
+        "title": 1.0,
+        "description": 1.0,
+        "price_eur": 0.6666666666666666
+      },
+      "accuracy": {
+        "brand": {
+          "n": 15,
+          "exact": 0.8,
+          "fuzzy": 0.8
+        },
+        "category": {
+          "n": 15,
+          "exact": 0.8666666666666667
+        },
+        "condition": {
+          "n": 15,
+          "exact": 0.7333333333333333
+        },
+        "color": {
+          "n": 15,
+          "exact": 0.5333333333333333
+        },
+        "size": {
+          "n": 15,
+          "exact": 0.06666666666666667
+        }
+      },
+      "vlm_price_eur": {
+        "n": 10,
+        "mae": 28.8,
+        "mape": 0.35556178467518534,
+        "rmsle": 0.5288014376066705
+      },
+      "title_bleu4": 0.11123566968065474,
+      "description_bleu4": 0.029412958229449275
+    },
+    "Women's clothing": {
+      "n": 57,
+      "parse_rate": 0.45614035087719296,
+      "field_fill_rate": {
+        "brand": 0.8596491228070176,
+        "category": 1.0,
+        "condition": 1.0,
+        "color": 1.0,
+        "size": 1.0,
+        "title": 1.0,
+        "description": 1.0,
+        "price_eur": 0.45614035087719296
+      },
+      "accuracy": {
+        "brand": {
+          "n": 57,
+          "exact": 0.24561403508771928,
+          "fuzzy": 0.24561403508771928
+        },
+        "category": {
+          "n": 57,
+          "exact": 0.8947368421052632
+        },
+        "condition": {
+          "n": 57,
+          "exact": 0.7192982456140351
+        },
+        "color": {
+          "n": 57,
+          "exact": 0.6140350877192983
+        },
+        "size": {
+          "n": 57,
+          "exact": 0.3333333333333333
+        }
+      },
+      "vlm_price_eur": {
+        "n": 26,
+        "mae": 10.73076923076923,
+        "mape": 0.4058798321729356,
+        "rmsle": 0.659355369861886
+      },
+      "title_bleu4": 0.07685944484355199,
+      "description_bleu4": 0.02919191513548376
+    },
+    "Women's shoes": {
+      "n": 17,
+      "parse_rate": 0.35294117647058826,
+      "field_fill_rate": {
+        "brand": 0.7058823529411765,
+        "category": 1.0,
+        "condition": 1.0,
+        "color": 1.0,
+        "size": 1.0,
+        "title": 1.0,
+        "description": 1.0,
+        "price_eur": 0.4117647058823529
+      },
+      "accuracy": {
+        "brand": {
+          "n": 17,
+          "exact": 0.5294117647058824,
+          "fuzzy": 0.5294117647058824
+        },
+        "category": {
+          "n": 17,
+          "exact": 0.7058823529411765
+        },
+        "condition": {
+          "n": 17,
+          "exact": 0.7647058823529411
+        },
+        "color": {
+          "n": 17,
+          "exact": 0.47058823529411764
+        },
+        "size": {
+          "n": 17,
+          "exact": 0.058823529411764705
+        }
+      },
+      "vlm_price_eur": {
+        "n": 7,
+        "mae": 19.857142857142858,
+        "mape": 0.7501877944160119,
+        "rmsle": 1.0894786601306545
+      },
+      "title_bleu4": 0.06991977984357288,
+      "description_bleu4": 0.028109077902784073
+    },
+    "jackets": {
+      "n": 124,
+      "parse_rate": 0.9758064516129032,
+      "field_fill_rate": {
+        "brand": 1.0,
+        "category": 1.0,
+        "condition": 1.0,
+        "color": 1.0,
+        "size": 1.0,
+        "title": 1.0,
+        "description": 1.0,
+        "price_eur": 0.9758064516129032
+      },
+      "accuracy": {
+        "brand": {
+          "n": 117,
+          "exact": 0.39316239316239315,
+          "fuzzy": 0.42735042735042733
+        },
+        "category": {
+          "n": 124,
+          "exact": 0.9919354838709677
+        },
+        "condition": {
+          "n": 124,
+          "exact": 0.6048387096774194
+        },
+        "color": {
+          "n": 124,
+          "exact": 0.7661290322580645
+        },
+        "size": {
+          "n": 124,
+          "exact": 0.22580645161290322
+        }
+      },
+      "vlm_price_eur": {
+        "n": 121,
+        "mae": 26.918925592721987,
+        "mape": 0.5322724469206561,
+        "rmsle": 0.7004361200152567
+      },
+      "title_bleu4": 0.09806606249427592,
+      "description_bleu4": 0.030967791281959523
+    },
+    "jeans": {
+      "n": 111,
+      "parse_rate": 0.9279279279279279,
+      "field_fill_rate": {
+        "brand": 1.0,
+        "category": 1.0,
+        "condition": 1.0,
+        "color": 1.0,
+        "size": 1.0,
+        "title": 1.0,
+        "description": 1.0,
+        "price_eur": 0.9369369369369369
+      },
+      "accuracy": {
+        "brand": {
+          "n": 109,
+          "exact": 0.42201834862385323,
+          "fuzzy": 0.45871559633027525
+        },
+        "category": {
+          "n": 111,
+          "exact": 1.0
+        },
+        "condition": {
+          "n": 111,
+          "exact": 0.6576576576576577
+        },
+        "color": {
+          "n": 111,
+          "exact": 0.7207207207207207
+        },
+        "size": {
+          "n": 111,
+          "exact": 0.2702702702702703
+        }
+      },
+      "vlm_price_eur": {
+        "n": 104,
+        "mae": 9.188942340704111,
+        "mape": 0.4918267802057311,
+        "rmsle": 0.5805747774383175
+      },
+      "title_bleu4": 0.09740725372735183,
+      "description_bleu4": 0.021744955888821974
+    },
+    "sneakers": {
+      "n": 53,
+      "parse_rate": 1.0,
+      "field_fill_rate": {
+        "brand": 1.0,
+        "category": 1.0,
+        "condition": 1.0,
+        "color": 1.0,
+        "size": 1.0,
+        "title": 1.0,
+        "description": 1.0,
+        "price_eur": 1.0
+      },
+      "accuracy": {
+        "brand": {
+          "n": 53,
+          "exact": 0.7547169811320755,
+          "fuzzy": 0.7924528301886793
+        },
+        "category": {
+          "n": 53,
+          "exact": 1.0
+        },
+        "condition": {
+          "n": 53,
+          "exact": 0.6226415094339622
+        },
+        "color": {
+          "n": 53,
+          "exact": 0.660377358490566
+        },
+        "size": {
+          "n": 53,
+          "exact": 0.1509433962264151
+        }
+      },
+      "vlm_price_eur": {
+        "n": 53,
+        "mae": 28.0188679245283,
+        "mape": 0.358385995417739,
+        "rmsle": 0.6213275967623288
+      },
+      "title_bleu4": 0.09788564331109487,
+      "description_bleu4": 0.027141635972605282
+    },
+    "tshirts": {
+      "n": 80,
+      "parse_rate": 0.975,
+      "field_fill_rate": {
+        "brand": 1.0,
+        "category": 1.0,
+        "condition": 1.0,
+        "color": 1.0,
+        "size": 1.0,
+        "title": 1.0,
+        "description": 1.0,
+        "price_eur": 0.975
+      },
+      "accuracy": {
+        "brand": {
+          "n": 77,
+          "exact": 0.5324675324675324,
+          "fuzzy": 0.5844155844155844
+        },
+        "category": {
+          "n": 80,
+          "exact": 1.0
+        },
+        "condition": {
+          "n": 80,
+          "exact": 0.6875
+        },
+        "color": {
+          "n": 80,
+          "exact": 0.825
+        },
+        "size": {
+          "n": 80,
+          "exact": 0.325
+        }
+      },
+      "vlm_price_eur": {
+        "n": 78,
+        "mae": 5.91012822664701,
+        "mape": 0.49829309426068347,
+        "rmsle": 0.5770828442817509
+      },
+      "title_bleu4": 0.19189560737974193,
+      "description_bleu4": 0.05114464817775011
+    }
+  }
+}

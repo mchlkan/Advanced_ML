@@ -135,6 +135,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden-dim", type=int, default=512)
     parser.add_argument("--brand-dim", type=int, default=32)
     parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--no-flaw", action="store_true", help="Ablation: remove visual_wear_probability.")
     parser.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
     return parser.parse_args()
@@ -188,10 +189,22 @@ def predict(model: nn.Module, loader: DataLoader, device: torch.device) -> tuple
         pred = model(batch).detach().cpu().numpy()
         preds.append(pred)
         targets.append(batch["target"].detach().cpu().numpy())
-    return np.concatenate(preds, axis=0), np.concatenate(targets, axis=0)
+    pred_arr = np.concatenate(preds, axis=0)
+    target_arr = np.concatenate(targets, axis=0)
+    if not np.isfinite(pred_arr).all():
+        raise ValueError("Model produced non-finite price quantiles")
+    if not np.isfinite(target_arr).all():
+        raise ValueError("Targets contain non-finite values")
+    return pred_arr, target_arr
 
 
 def compute_group_metrics(pred_log_q: np.ndarray, y_log: np.ndarray) -> GroupMetrics:
+    if pred_log_q.ndim != 2 or pred_log_q.shape[1] != len(QUANTILES):
+        raise ValueError(f"Expected predictions [N, {len(QUANTILES)}], got {pred_log_q.shape}")
+    if not np.isfinite(pred_log_q).all():
+        raise ValueError("Predicted quantiles contain non-finite values")
+    if not np.isfinite(y_log).all():
+        raise ValueError("Targets contain non-finite values")
     pred_log_q = np.sort(pred_log_q, axis=1)
     q10_log = pred_log_q[:, 0]
     q50_log = pred_log_q[:, 2]
@@ -234,9 +247,10 @@ def metrics_by_group(pred: np.ndarray, y: np.ndarray, features: pd.DataFrame, ma
 
 
 def train(args: argparse.Namespace) -> dict:
-    set_seed(SEED)
+    set_seed(args.seed)
     device = choose_device(args.device)
     print(f"Using device: {device}")
+    print(f"Using seed: {args.seed}")
 
     vlm, features, vocab = load_inputs(args.vlm_embeddings, args.features, args.vocab)
     train_mask = features["split"].eq("train").to_numpy()
@@ -246,7 +260,9 @@ def train(args: argparse.Namespace) -> dict:
     train_ds = PriceDataset(vlm, features, train_mask, no_flaw=args.no_flaw)
     val_ds = PriceDataset(vlm, features, val_mask, no_flaw=args.no_flaw)
     test_ds = PriceDataset(vlm, features, test_mask, no_flaw=args.no_flaw)
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+    generator = torch.Generator()
+    generator.manual_seed(args.seed)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, generator=generator)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
 
@@ -277,6 +293,8 @@ def train(args: argparse.Namespace) -> dict:
             optimizer.zero_grad(set_to_none=True)
             pred = model(batch)
             loss = pinball_loss(pred, batch["target"], QUANTILES)
+            if not torch.isfinite(loss):
+                raise ValueError(f"Non-finite training loss at epoch {epoch}")
             loss.backward()
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
@@ -287,6 +305,8 @@ def train(args: argparse.Namespace) -> dict:
             torch.from_numpy(val_y),
             QUANTILES,
         ))
+        if not np.isfinite(val_loss):
+            raise ValueError(f"Non-finite validation loss at epoch {epoch}")
         row = {"epoch": epoch, "train_loss": float(np.mean(losses)), "val_pinball": val_loss}
         history.append(row)
         print(f"epoch={epoch:03d} train_loss={row['train_loss']:.4f} val_pinball={val_loss:.4f}")
@@ -313,6 +333,18 @@ def train(args: argparse.Namespace) -> dict:
         "quantiles": QUANTILES.tolist(),
         "target": "log(price + 1)",
         "uses_visual_wear_probability": not args.no_flaw,
+        "seed": args.seed,
+        "hyperparameters": {
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "lr": args.lr,
+            "weight_decay": args.weight_decay,
+            "patience": args.patience,
+            "hidden_dim": args.hidden_dim,
+            "brand_dim": args.brand_dim,
+            "dropout": args.dropout,
+            "no_flaw": args.no_flaw,
+        },
         "best_epoch": best_epoch,
         "best_val_pinball": best_val_loss,
         "split_counts": {k: int(v) for k, v in features["split"].value_counts().sort_index().items()},
@@ -339,6 +371,7 @@ def train(args: argparse.Namespace) -> dict:
             "vocab": vocab,
             "quantiles": QUANTILES.tolist(),
             "uses_visual_wear_probability": not args.no_flaw,
+            "seed": args.seed,
         },
         args.output,
     )
