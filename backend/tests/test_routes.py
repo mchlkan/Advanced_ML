@@ -78,11 +78,12 @@ def test_publish_round_trip(app_client, jpeg_bytes):
             "final_fields": {"brand": "Zara", "title": "t", "description": "d"},
         },
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 202, r.text
     body = r.json()
     assert body["listing_id"] == listing_id
     assert body["platform"] == "vinted"
-    assert body["prefill_url"].startswith("https://www.vinted.de/")
+    assert body["status"] == "pending"
+    assert isinstance(body["job_id"], int)
 
 
 def test_upload_rejects_non_image(app_client):

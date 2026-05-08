@@ -158,26 +158,37 @@ curl http://localhost:8000/onboarding/status
 # {"vinted": {"state": "ready", ...}, "kleinanzeigen": {"state": "not_implemented"}}
 ```
 
-### Publish behaviour
+### Publish behaviour (async, Phase 6b)
 
-- **Vinted not configured** → `/publish` returns the new-listing page URL
-  with `posted: false`, `error: null` (graceful fallback).
-- **Session configured but publish fails** (DataDome 429, refresh expired,
-  network) → response falls back to the URL with `posted: false` and a
-  populated `error` string. Never 5xx.
-- **Success** → response includes `platform_listing_url` pointing at the
-  live listing.
+`POST /publish` enqueues a job and returns 202 immediately:
 
-The backend reads the session at request time, refreshes the access
-token transparently when near expiry, and persists the rotated DataDome
-cookie back to the file after each publish.
+```json
+{"job_id": 42, "status": "pending", "listing_id": "abc123", "platform": "vinted"}
+```
 
-**Out of scope (deferred to Phase 6b):** queue + retry, polling status
-endpoint for in-flight publishes.
+A background runner picks the job up, calls Vinted, and updates its row
+in the `publishes` table. Frontend polls `GET /publish/status/{job_id}`
+every ~2s and stops once `status` is `posted` or `failed`:
+
+```json
+{
+  "job_id": 42, "status": "posted",
+  "platform_listing_id": "1234567890",
+  "platform_listing_url": "https://www.vinted.fr/items/1234567890",
+  "retry_count": 0, "next_attempt_at": null,
+  "error": null
+}
+```
+
+Transient failures (DataDome 429, network blips) auto-retry with
+exponential backoff (`5s → 30s → 120s`, configurable via
+`PUBLISH_RETRY_BACKOFF`). Permanent failures (auth expired, validation
+errors, missing config) skip retries and go straight to `status: failed`
+with a populated `error` field.
 
 **Out of scope (deferred to Phase 6c):** Kleinanzeigen direct publishing.
-KA always falls back to the URL with `error: "Phase 6c"` until the
-mobile listing-create flow is captured and implemented.
+KA jobs go straight to `status: failed` with `error: "Phase 6c"` until
+the mobile listing-create flow is captured and implemented.
 
 ### Known publish-side gaps
 

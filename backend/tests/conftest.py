@@ -29,6 +29,9 @@ def app_client(tmp_path, monkeypatch, loaded_models):
     uploads_dir.mkdir()
 
     monkeypatch.setenv("VLM_BACKEND", "stub")
+    # Tests drive the publish runner manually via the drain_publish_jobs
+    # helper below; the lifespan-managed runner would race with assertions.
+    monkeypatch.setenv("DISABLE_PUBLISH_RUNNER", "1")
     # Default tests run with no platform integrations configured. Individual
     # tests can monkeypatch these back in if they're testing the real-publish
     # path explicitly.
@@ -45,6 +48,25 @@ def app_client(tmp_path, monkeypatch, loaded_models):
         client.db_path = db_path  # expose for assertions
         client.uploads_dir = uploads_dir
         yield client
+
+
+@pytest.fixture
+def drain_publish_jobs():
+    """Run the publish runner over all currently-pending jobs synchronously.
+    Backoff schedule is collapsed to zero so retry tests don't sleep."""
+    import asyncio
+
+    def _drain(retry_schedule: tuple[float, ...] = (0.0, 0.0, 0.0)) -> None:
+        from backend.queue.runner import PublishRunner
+        runner = PublishRunner(backoff_schedule=retry_schedule)
+
+        async def _go() -> None:
+            while await runner.process_one_job():
+                pass
+
+        asyncio.run(_go())
+
+    return _drain
 
 
 @pytest.fixture

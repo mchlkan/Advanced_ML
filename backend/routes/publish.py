@@ -1,41 +1,44 @@
-"""POST /publish — try direct platform posting, fall back to a new-listing URL.
+"""POST /publish — enqueue a publish job and return the job_id immediately.
 
-Direct publish path (Phase 6a, Vinted only):
-  - If `VINTED_SESSION_PATH` is set and the file exists, attempt a real
-    publish via the mobile draft-mode flow (see backend/integrations/vinted.py).
-  - On success, the response includes `platform_listing_url` pointing at
-    the live listing.
-  - On any failure (DataDome 429, session expired, network), the response
-    falls back to the new-listing page URL with `posted=false` and a
-    machine-readable `error` string. Never 5xx.
+The actual platform API call happens in the background runner
+(`backend.queue.runner.PublishRunner`). The runner picks up the job from
+the `publishes` table, calls the integration, and updates the job's
+status. Frontend polls GET /publish/status/{job_id} to follow along.
 
-Kleinanzeigen always falls back to the URL path for now (Phase 6c).
+For Vinted that means: the user clicks "Publish to Vinted", gets a
+job_id back in milliseconds, and sees the listing URL appear once the
+runner finishes posting (~3-8 s warm). Transient failures (DataDome 429,
+network blips) retry automatically with backoff.
+
+Direct delete of an already-published listing is still synchronous via
+DELETE /publish/{platform}/{platform_listing_id}.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Response
 
 # backend/__init__.py adds repo/src to sys.path.
-from listing_mappings import NEW_LISTING_URLS, to_vinted
+from listing_mappings import NEW_LISTING_URLS
 
 from backend import db, integrations
 from backend.integrations import vinted as vinted_integration
-from backend.schemas import PublishRequest, PublishResponse, Platform
+from backend.schemas import (
+    Platform,
+    PublishCreatedResponse,
+    PublishRequest,
+    PublishStatusResponse,
+)
 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-PUBLISH_TIMEOUT_S = 60
 
-
-@router.post("/publish", response_model=PublishResponse)
-async def publish(body: PublishRequest) -> PublishResponse:
+@router.post("/publish", response_model=PublishCreatedResponse, status_code=202)
+async def publish(body: PublishRequest) -> PublishCreatedResponse:
     rec = await db.get_listing(body.listing_id)
     if rec is None:
         raise HTTPException(status_code=404, detail=f"listing {body.listing_id} not found")
@@ -43,47 +46,37 @@ async def publish(body: PublishRequest) -> PublishResponse:
     fallback_url = NEW_LISTING_URLS[body.platform]
     canon_fields = body.final_fields.model_dump()
 
-    posted = False
-    platform_listing_id: str | None = None
-    platform_listing_url: str | None = None
-    error: str | None = None
-
-    if body.platform == "vinted" and integrations.is_configured("vinted"):
-        try:
-            payload = to_vinted(canon_fields)
-            if "catalog_id" not in payload:
-                error = f"category {canon_fields.get('category')!r} has no Vinted catalog mapping"
-            elif not payload.get("title") or not payload.get("description") or not payload.get("price"):
-                error = "title, description, and price are required for Vinted"
-            else:
-                item_id, url = await asyncio.wait_for(
-                    vinted_integration.publish(rec["image_path"], payload),
-                    timeout=PUBLISH_TIMEOUT_S,
-                )
-                posted = True
-                platform_listing_id = str(item_id)
-                platform_listing_url = url
-        except asyncio.TimeoutError:
-            error = f"Vinted publish timed out after {PUBLISH_TIMEOUT_S}s"
-        except vinted_integration.VintedError as exc:
-            error = f"{type(exc).__name__}: {exc}"
-        except Exception as exc:
-            logger.exception("unexpected Vinted publish failure")
-            error = f"unexpected error: {type(exc).__name__}: {exc}"
-    elif body.platform == "kleinanzeigen":
-        error = "Kleinanzeigen direct publishing not implemented (Phase 6c)"
-
-    final_url = platform_listing_url or fallback_url
-    await db.log_publish(body.listing_id, body.platform, canon_fields, final_url)
-
-    return PublishResponse(
+    job_id = await db.create_publish_job(
         listing_id=body.listing_id,
         platform=body.platform,
-        prefill_url=final_url,
-        posted=posted,
-        platform_listing_id=platform_listing_id,
-        platform_listing_url=platform_listing_url,
-        error=error,
+        final_fields=canon_fields,
+        prefill_url=fallback_url,
+    )
+    return PublishCreatedResponse(
+        job_id=job_id,
+        status="pending",
+        listing_id=body.listing_id,
+        platform=body.platform,
+    )
+
+
+@router.get("/publish/status/{job_id}", response_model=PublishStatusResponse)
+async def publish_status(job_id: int) -> PublishStatusResponse:
+    row = await db.get_publish_job(job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"publish job {job_id} not found")
+    return PublishStatusResponse(
+        job_id=row["id"],
+        status=row["status"],
+        listing_id=row["listing_id"],
+        platform=row["platform"],
+        retry_count=row["retry_count"],
+        next_attempt_at=row.get("next_attempt_at"),
+        platform_listing_id=row.get("platform_listing_id"),
+        platform_listing_url=row.get("platform_listing_url"),
+        prefill_url=row["prefill_url"],
+        error=row.get("error"),
+        updated_at=row["updated_at"],
     )
 
 

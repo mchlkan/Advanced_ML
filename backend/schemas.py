@@ -83,6 +83,8 @@ class PublishRequest(BaseModel):
 
 
 class PublishResponse(BaseModel):
+    """Legacy synchronous response — retained for tests but no longer
+    returned by /publish (which is now async)."""
     listing_id: str
     platform: Platform
     prefill_url: str
@@ -90,6 +92,30 @@ class PublishResponse(BaseModel):
     platform_listing_id: str | None = None
     platform_listing_url: str | None = None
     error: str | None = None
+
+
+JobStatus = Literal["pending", "running", "posted", "failed"]
+
+
+class PublishCreatedResponse(BaseModel):
+    job_id: int
+    status: JobStatus
+    listing_id: str
+    platform: Platform
+
+
+class PublishStatusResponse(BaseModel):
+    job_id: int
+    status: JobStatus
+    listing_id: str
+    platform: Platform
+    retry_count: int
+    next_attempt_at: int | None = None
+    platform_listing_id: str | None = None
+    platform_listing_url: str | None = None
+    prefill_url: str
+    error: str | None = None
+    updated_at: int
 
 
 class HealthzResponse(BaseModel):

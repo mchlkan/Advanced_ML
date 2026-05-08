@@ -15,6 +15,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from backend import db  # noqa: E402
 from backend.bootstrap import load_models  # noqa: E402
+from backend.queue import PublishRunner  # noqa: E402
 from backend.routes import onboarding, publish, upload, verify  # noqa: E402
 from backend.schemas import HealthzResponse  # noqa: E402
 from backend.vlm_backend import get_backend  # noqa: E402
@@ -36,7 +37,19 @@ async def lifespan(app: FastAPI):
     app.state.models = models
 
     await db.init_db()
-    yield
+
+    # Tests run with DISABLE_PUBLISH_RUNNER=1 so they can drive process_one_job()
+    # directly without racing against the loop.
+    runner: PublishRunner | None = None
+    if not os.environ.get("DISABLE_PUBLISH_RUNNER"):
+        runner = PublishRunner()
+        runner.start()
+    app.state.publish_runner = runner
+    try:
+        yield
+    finally:
+        if runner is not None:
+            await runner.stop()
 
 
 app = FastAPI(title="Resell Copilot API", lifespan=lifespan)
