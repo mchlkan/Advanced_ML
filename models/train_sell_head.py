@@ -52,7 +52,6 @@ DEFAULT_OUTPUT = REPO_ROOT / "models" / "checkpoints" / "sell_head.pt"
 DEFAULT_METRICS = REPO_ROOT / "eval" / "results" / "sell_head.json"
 
 SEED = 42
-THRESHOLD = 0.5
 KEEP_STATES = {"sold", "active", "delisted"}
 
 
@@ -150,7 +149,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--no-flaw", action="store_true", help="Ablation: remove visual_wear_probability.")
     parser.add_argument("--no-vlm", action="store_true", help="Ablation: drop VLM features, metadata only.")
-    parser.add_argument("--threshold", type=float, default=THRESHOLD)
     parser.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
     return parser.parse_args()
 
@@ -321,7 +319,7 @@ def train(args: argparse.Namespace) -> dict:
         val_logits, val_y = predict(model, val_loader, device)
         val_probs = 1.0 / (1.0 + np.exp(-val_logits))
         val_auc = float(roc_auc_score(val_y, val_probs)) if 0 < val_y.sum() < len(val_y) else float("nan")
-        val_preds = (val_probs >= args.threshold).astype(int)
+        val_preds = (val_probs >= 0.5).astype(int)
         val_f1 = float(f1_score(val_y, val_preds, zero_division=0))
         val_recall = float(recall_score(val_y, val_preds, zero_division=0))
 
@@ -367,7 +365,6 @@ def train(args: argparse.Namespace) -> dict:
         "label": "state == 'sold'",
         "uses_visual_wear_probability": not args.no_flaw,
         "threshold_tuned_on_val": tuned_threshold,
-        "threshold_default": args.threshold,
         "pos_weight": pos_weight,
         "best_epoch": best_epoch,
         "best_val_auc": best_val_auc,

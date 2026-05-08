@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
 from openai import OpenAI
 from tqdm.auto import tqdm
 
@@ -64,18 +65,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-tokens", type=int, default=20)
     parser.add_argument("--temperature", type=float, default=0.0)
     return parser.parse_args()
-
-
-def load_dotenv_key(env_path: Path) -> None:
-    if os.getenv("OPENAI_API_KEY"):
-        return
-    if not env_path.exists():
-        return
-    for line in env_path.read_text().splitlines():
-        line = line.strip()
-        if line.startswith("OPENAI_API_KEY="):
-            os.environ["OPENAI_API_KEY"] = line.split("=", 1)[1].strip().strip('"').strip("'")
-            return
 
 
 def load_test_rows(features_path: Path, vinted_path: Path, ka_path: Path) -> pd.DataFrame:
@@ -144,8 +133,8 @@ def predict_one(client: OpenAI, model: str, row: pd.Series, max_tokens: int, tem
             return {"raw": raw, "pred_price": parse_price(raw), "error": None}
         except Exception as exc:  # rate limits, transient errors
             last_err = exc
-            # Linear backoff with jitter — TPM rate limits clear once per minute,
-            # so longer waits than exponential 2^n would imply.
+            # Linear backoff: TPM rate limits clear once per minute, so longer
+            # waits than exponential 2^n would imply.
             time.sleep(min(60, 5 + 5 * attempt))
     return {"raw": "", "pred_price": None, "error": f"{type(last_err).__name__}: {last_err}"}
 
@@ -201,7 +190,7 @@ def compute_metrics(df: pd.DataFrame) -> dict:
 
 def main() -> None:
     args = parse_args()
-    load_dotenv_key(REPO_ROOT / ".env")
+    load_dotenv(REPO_ROOT / ".env")
     if not os.getenv("OPENAI_API_KEY"):
         raise SystemExit("OPENAI_API_KEY not set; put it in .env or export it.")
 
