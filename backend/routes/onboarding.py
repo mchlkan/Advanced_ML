@@ -37,7 +37,17 @@ router = APIRouter(prefix="/onboarding")
 logger = logging.getLogger(__name__)
 
 
-@router.post("/login", response_model=OnboardingLoginResponse)
+@router.post(
+    "/login",
+    response_model=OnboardingLoginResponse,
+    responses={
+        401: {"description": "credentials rejected by the platform"},
+        429: {"description": "DataDome / anti-bot challenge — try again later"},
+        501: {"description": "password login not implemented for this platform (use the platform-specific onboarding route)"},
+        502: {"description": "upstream platform error"},
+        503: {"description": "platform integration not configured (missing seed env vars)"},
+    },
+)
 async def login(body: OnboardingLoginRequest) -> OnboardingLoginResponse:
     if body.platform != "vinted":
         raise HTTPException(
@@ -64,7 +74,15 @@ async def login(body: OnboardingLoginRequest) -> OnboardingLoginResponse:
     )
 
 
-@router.post("/kleinanzeigen", response_model=KleinanzeigenOnboardingResponse)
+@router.post(
+    "/kleinanzeigen",
+    response_model=KleinanzeigenOnboardingResponse,
+    responses={
+        401: {"description": "refresh_token rejected — re-capture via mitmproxy"},
+        502: {"description": "upstream KA / Auth0 error"},
+        503: {"description": "KA_SESSION_PATH env var not set"},
+    },
+)
 async def kleinanzeigen_onboarding(
     body: KleinanzeigenOnboardingRequest,
 ) -> KleinanzeigenOnboardingResponse:

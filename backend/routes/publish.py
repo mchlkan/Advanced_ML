@@ -37,7 +37,12 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post("/publish", response_model=PublishCreatedResponse, status_code=202)
+@router.post(
+    "/publish",
+    response_model=PublishCreatedResponse,
+    status_code=202,
+    responses={404: {"description": "listing_id not found"}},
+)
 async def publish(request: Request, body: PublishRequest) -> PublishCreatedResponse:
     rec = await db.get_listing(body.listing_id)
     if rec is None:
@@ -63,7 +68,11 @@ async def publish(request: Request, body: PublishRequest) -> PublishCreatedRespo
     )
 
 
-@router.get("/publish/status/{job_id}", response_model=PublishStatusResponse)
+@router.get(
+    "/publish/status/{job_id}",
+    response_model=PublishStatusResponse,
+    responses={404: {"description": "publish job not found"}},
+)
 async def publish_status(job_id: int) -> PublishStatusResponse:
     row = await db.get_publish_job(job_id)
     if row is None:
@@ -83,7 +92,17 @@ async def publish_status(job_id: int) -> PublishStatusResponse:
     )
 
 
-@router.delete("/publish/{platform}/{platform_listing_id}", status_code=204, response_class=Response)
+@router.delete(
+    "/publish/{platform}/{platform_listing_id}",
+    status_code=204,
+    response_class=Response,
+    responses={
+        404: {"description": "listing not found on the platform"},
+        501: {"description": "platform not implemented"},
+        502: {"description": "upstream platform error"},
+        503: {"description": "platform integration not configured"},
+    },
+)
 async def delete_listing(platform: Platform, platform_listing_id: str) -> Response:
     """Delete a published listing or unpublished draft on the platform.
     Same endpoint serves both — Vinted's API doesn't distinguish."""

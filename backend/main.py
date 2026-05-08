@@ -8,6 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 # Load .env at import time so any module reading os.environ (e.g.
 # vlm_backend factory) sees the values regardless of import order.
@@ -16,7 +17,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from backend import db  # noqa: E402
 from backend.bootstrap import load_models  # noqa: E402
 from backend.queue import PublishRunner  # noqa: E402
-from backend.routes import onboarding, publish, upload, verify  # noqa: E402
+from backend.routes import inventory, onboarding, publish, upload, verify  # noqa: E402
 from backend.schemas import HealthzResponse  # noqa: E402
 from backend.vlm_backend import get_backend  # noqa: E402
 
@@ -53,10 +54,30 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Resell Copilot API", lifespan=lifespan)
+
+# Allow the Next.js / Vite dev server to call the API in a browser. CORS_ORIGINS
+# can override at deploy time; default covers localhost dev for both common ports.
+_cors_origins = [
+    o.strip()
+    for o in os.environ.get(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(upload.router)
 app.include_router(verify.router)
 app.include_router(publish.router)
 app.include_router(onboarding.router)
+app.include_router(inventory.router)
 
 
 @app.get("/healthz", response_model=HealthzResponse)

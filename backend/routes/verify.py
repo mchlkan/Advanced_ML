@@ -46,7 +46,14 @@ def _diff_fields(old: dict, new: dict) -> list[tuple[str, str | None, str]]:
     return changes
 
 
-@router.post("/verify", response_model=VerifyResponse)
+@router.post(
+    "/verify",
+    response_model=VerifyResponse,
+    responses={
+        404: {"description": "listing_id unknown"},
+        410: {"description": "listing's image is no longer on disk"},
+    },
+)
 async def verify(request: Request, body: VerifyRequest) -> VerifyResponse:
     state = request.app.state
     rec = await db.get_listing(body.listing_id)

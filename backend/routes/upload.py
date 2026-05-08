@@ -24,7 +24,11 @@ def _save_jpeg(image: Image.Image, path: Path) -> None:
     image.save(path, format="JPEG", quality=92)
 
 
-@router.post("/upload", response_model=UploadResponse)
+@router.post(
+    "/upload",
+    response_model=UploadResponse,
+    responses={400: {"description": "uploaded file is not a decodable image"}},
+)
 async def upload(request: Request, image: UploadFile = File(...)) -> UploadResponse:
     raw = await image.read()
     try:
