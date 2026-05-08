@@ -20,7 +20,10 @@ from PIL import Image
 from build_price_dataset import canon_brand
 
 from .bootstrap import LoadedModels, dinov2_embed
-from .vlm_backend import VLMBackend
+from .vlm_backend import VLMBackend, VLMOutput
+
+
+WEAK_REVIEW_FIELDS = ("brand", "size")
 
 
 def _idx(value: str | None, mapping: dict, unk_key: str | None = None) -> int:
@@ -109,6 +112,19 @@ def _run_flaw_head(models: LoadedModels, dinov2_cls: torch.Tensor) -> float:
     return float(torch.sigmoid(logit).item())
 
 
+def _field_review(vlm_out: VLMOutput, field_overrides: dict | None) -> dict:
+    corrected = {k for k, v in (field_overrides or {}).items() if v not in (None, "")}
+    needs_review = [field for field in WEAK_REVIEW_FIELDS if field not in corrected]
+    reasons = {
+        field: "low_confidence"
+        for field in needs_review
+    }
+    if vlm_out.recovered:
+        for field in needs_review:
+            reasons[field] = f"{reasons[field]},parse_recovered"
+    return {"needs_review": needs_review, "reasons": reasons}
+
+
 def _run_local_inference(image: Image.Image, models: LoadedModels, vinted_vlm, ka_vlm) -> dict:
     """Sync tail: DINOv2 + flaw + 2× price + sell. Wrapped in asyncio.to_thread."""
     dinov2_cls = dinov2_embed(image, models)
@@ -160,10 +176,12 @@ async def run_pipeline(
             "price": {"q10": v_q10, "q50": v_q50, "q90": v_q90},
             "sell_probability": local["sell_prob"],
             "identification": vinted_vlm.fields,
+            "field_review": _field_review(vinted_vlm, field_overrides),
         },
         "kleinanzeigen": {
             "price": {"q10": k_q10, "q50": k_q50, "q90": k_q90},
             "identification": ka_vlm.fields,
+            "field_review": _field_review(ka_vlm, field_overrides),
         },
         "latency_ms": int((time.perf_counter() - started) * 1000),
         "vlm_call_count": 2,

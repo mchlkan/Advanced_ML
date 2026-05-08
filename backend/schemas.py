@@ -7,7 +7,7 @@ output (see `src.prompts.get_prompt`) so frontend and pipeline don't drift.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -32,15 +32,22 @@ class PriceBand(BaseModel):
     q90: float
 
 
+class FieldReview(BaseModel):
+    needs_review: list[str] = Field(default_factory=list)
+    reasons: dict[str, str] = Field(default_factory=dict)
+
+
 class VintedBlock(BaseModel):
     price: PriceBand
     sell_probability: float
     identification: Identification
+    field_review: FieldReview = Field(default_factory=FieldReview)
 
 
 class KleinanzeigenBlock(BaseModel):
     price: PriceBand
     identification: Identification
+    field_review: FieldReview = Field(default_factory=FieldReview)
     qualitative_note: str = Field(
         default=(
             "Kleinanzeigen does not expose a sold marker. "
@@ -260,6 +267,7 @@ class InventorySummary(BaseModel):
     live_views: int = 0
     live_favourites: int = 0
     last_synced_at: int | None = None
+
 
 class ListingItem(BaseModel):
     id: str

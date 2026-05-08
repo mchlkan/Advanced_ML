@@ -19,6 +19,8 @@ class VLMOutput:
     hidden_state: np.ndarray  # shape (vlm_dim,), dtype float32
     fields: dict               # parsed JSON: brand, category, condition, color, size, title, description, price_eur
     raw_text: str              # raw VLM output text for debugging
+    parse_ok: bool = True      # True when raw_text parsed as valid JSON after light cleanup
+    recovered: bool = False    # True when fields were salvaged from malformed/truncated JSON
 
 
 class VLMBackend(Protocol):

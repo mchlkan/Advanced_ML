@@ -4,7 +4,7 @@ for end-to-end validation."""
 
 from __future__ import annotations
 
-from backend.vlm_backend.util import parse_json_lenient
+from backend.vlm_backend.util import parse_json_lenient, parse_vlm_fields
 
 
 def test_clean_json():
@@ -67,3 +67,23 @@ def test_unicode_brand():
     out = parse_json_lenient('{"brand": "Müller", "color": "schwarz"}')
     assert out["brand"] == "Müller"
     assert out["color"] == "schwarz"
+
+
+def test_truncated_json_recovers_scalar_fields():
+    text = '{"brand": "Zara", "category": "jackets", "size": "M", "description": "Nice jacket'
+    out = parse_vlm_fields(text)
+    assert out.parse_ok is False
+    assert out.recovered is True
+    assert out.fields["brand"] == "Zara"
+    assert out.fields["category"] == "jackets"
+    assert out.fields["size"] == "M"
+
+
+def test_raw_newline_in_description_recovers_other_fields():
+    text = '{"brand": "Nike", "category": "sneakers", "description": "Line one\nLine two, "price_eur": 40}'
+    out = parse_vlm_fields(text)
+    assert out.parse_ok is False
+    assert out.recovered is True
+    assert out.fields["brand"] == "Nike"
+    assert out.fields["category"] == "sneakers"
+    assert out.fields["price_eur"] == 40

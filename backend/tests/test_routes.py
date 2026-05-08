@@ -28,6 +28,8 @@ def test_upload_round_trip(app_client, jpeg_bytes):
         ident = body[plat]["identification"]
         assert ident["brand"] is not None
         assert ident["category"] is not None
+        assert body[plat]["field_review"]["needs_review"] == ["brand", "size"]
+        assert body[plat]["field_review"]["reasons"]["brand"] == "low_confidence"
     assert 0.0 <= body["vinted"]["sell_probability"] <= 1.0
 
     image_path = app_client.uploads_dir / f"{body['listing_id']}.jpg"
@@ -64,6 +66,10 @@ def test_verify_round_trip(app_client, jpeg_bytes):
     assert body["vinted"]["identification"]["size"] == "L"
     assert body["kleinanzeigen"]["identification"]["brand"] == "Zara"
     assert body["kleinanzeigen"]["identification"]["size"] == "L"
+    assert "brand" not in body["vinted"]["field_review"]["needs_review"]
+    assert "size" not in body["vinted"]["field_review"]["needs_review"]
+    assert body["vinted"]["field_review"]["needs_review"] == []
+    assert body["kleinanzeigen"]["field_review"]["needs_review"] == []
 
 
 def test_publish_round_trip(app_client, jpeg_bytes):

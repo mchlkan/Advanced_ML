@@ -51,7 +51,7 @@ function FieldChip({ label, value, uncertain }: FieldChipProps) {
           fontStyle: uncertain ? "italic" : "normal",
         }}
       >
-        {value ?? "—"}{uncertain ? " ?" : ""}
+        {value ?? "—"}{uncertain ? " · Check" : ""}
       </span>
     </div>
   );
@@ -82,6 +82,7 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
   const [listingDesc, setListingDesc] = useState(activeId.description ?? "");
 
   const wearDetected = data.visual_wear_probability > 0.4;
+  const vintedReview = new Set(data.vinted.field_review?.needs_review ?? []);
 
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault();
@@ -218,14 +219,18 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
             marginBottom: wearDetected ? 14 : 20,
           }}
         >
-          <FieldChip label="Brand" value={data.vinted.identification.brand} />
+          <FieldChip
+            label="Brand"
+            value={data.vinted.identification.brand}
+            uncertain={vintedReview.has("brand")}
+          />
           <FieldChip label="Type" value={data.vinted.identification.category} />
           <FieldChip label="Cond" value={data.vinted.identification.condition} />
           <FieldChip label="Color" value={data.vinted.identification.color} />
           <FieldChip
             label="Size"
             value={data.vinted.identification.size}
-            uncertain={!data.vinted.identification.size}
+            uncertain={vintedReview.has("size") || !data.vinted.identification.size}
           />
         </div>
 

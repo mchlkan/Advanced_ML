@@ -62,6 +62,8 @@ def test_warm_completes_in_one_status_call(jpeg_image):
 
     assert out.fields["brand"] == "Zara"
     assert out.fields["category"] == "jackets"
+    assert out.parse_ok is True
+    assert out.recovered is False
     assert isinstance(out.hidden_state, np.ndarray)
     assert out.hidden_state.shape == (2560,)
     assert out.hidden_state.dtype == np.float32
@@ -195,3 +197,19 @@ def test_payload_includes_b64_image_and_platform(jpeg_image):
     assert body["input"]["hints"] == "brand=Zara"
     assert isinstance(body["input"]["image_b64"], str)
     assert len(body["input"]["image_b64"]) > 100  # non-empty JPEG
+
+
+@respx.mock
+def test_recoverable_json_returns_fields(jpeg_image):
+    raw = '{"brand": "Zara", "category": "jackets", "size": "M", "description": "Nice jacket'
+    respx.post(f"{BASE_URL}/run").mock(return_value=httpx.Response(200, json={"id": JOB_ID, "status": "IN_QUEUE"}))
+    respx.get(f"{BASE_URL}/status/{JOB_ID}").mock(return_value=httpx.Response(200, json=_completed_payload(raw)))
+
+    vlm = RunpodHTTPVLM(timeout_s=10)
+    out = asyncio.run(vlm.predict(jpeg_image, "vinted"))
+
+    assert out.fields["brand"] == "Zara"
+    assert out.fields["category"] == "jackets"
+    assert out.fields["size"] == "M"
+    assert out.parse_ok is False
+    assert out.recovered is True

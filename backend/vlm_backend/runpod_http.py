@@ -26,7 +26,7 @@ from PIL import Image
 from prompts import EXPECTED_HIDDEN_DIM
 
 from . import VLMOutput
-from .util import parse_json_lenient, resize_and_b64
+from .util import parse_vlm_fields, resize_and_b64
 
 
 DEFAULT_TIMEOUT_S = 120
@@ -94,10 +94,13 @@ class RunpodHTTPVLM:
                 f"expected ({EXPECTED_HIDDEN_DIM},)"
             )
         raw_text = output["raw_text"]
+        parsed = parse_vlm_fields(raw_text)
         return VLMOutput(
             hidden_state=hidden,
-            fields=parse_json_lenient(raw_text),
+            fields=parsed.fields,
             raw_text=raw_text,
+            parse_ok=parsed.parse_ok,
+            recovered=parsed.recovered,
         )
 
     async def _poll_until_done(self, client: httpx.AsyncClient, job_id: str) -> dict:

@@ -6,6 +6,11 @@ export interface PriceBand {
   q90: number;
 }
 
+export interface FieldReview {
+  needs_review: string[];
+  reasons: Record<string, string>;
+}
+
 export interface Identification {
   brand: string | null;
   category: string | null;
@@ -21,11 +26,13 @@ export interface VintedBlock {
   price: PriceBand;
   sell_probability: number;
   identification: Identification;
+  field_review: FieldReview;
 }
 
 export interface KleinanzeigenBlock {
   price: PriceBand;
   identification: Identification;
+  field_review: FieldReview;
   qualitative_note: string;
 }
 

@@ -27,6 +27,10 @@ _MOCK_RESULT = {
         },
         "price": {"q10": 0.0, "q50": 0.0, "q90": 0.0},
         "sell_probability": 0.0,
+        "field_review": {
+            "needs_review": ["brand", "size"],
+            "reasons": {"brand": "low_confidence", "size": "low_confidence"},
+        },
     },
     "kleinanzeigen": {
         "identification": {
@@ -35,6 +39,10 @@ _MOCK_RESULT = {
             "description": None, "price_eur": None,
         },
         "price": {"q10": 0.0, "q50": 0.0, "q90": 0.0},
+        "field_review": {
+            "needs_review": ["brand", "size"],
+            "reasons": {"brand": "low_confidence", "size": "low_confidence"},
+        },
     },
     "visual_wear_probability": 0.0,
     "latency_ms": 0,

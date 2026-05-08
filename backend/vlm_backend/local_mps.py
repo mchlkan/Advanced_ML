@@ -32,7 +32,7 @@ from extract_vlm_features import DEFAULT_ADAPTER, DEFAULT_BASE_MODEL, build_inpu
 from prompts import EXPECTED_HIDDEN_DIM, get_prompt
 
 from . import VLMOutput
-from .util import parse_json_lenient
+from .util import parse_vlm_fields
 
 
 MAX_NEW_TOKENS = 256
@@ -128,11 +128,14 @@ class LocalMPSVLM:
         gen = self.model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
         new_tokens = gen[0, inputs["input_ids"].shape[1]:]
         raw_text = self.processor.decode(new_tokens, skip_special_tokens=True).strip()
+        parsed = parse_vlm_fields(raw_text)
 
         return VLMOutput(
             hidden_state=hidden,
-            fields=parse_json_lenient(raw_text),
+            fields=parsed.fields,
             raw_text=raw_text,
+            parse_ok=parsed.parse_ok,
+            recovered=parsed.recovered,
         )
 
     async def predict(self, image: Image.Image, platform: str, hints: str | None = None) -> VLMOutput:
