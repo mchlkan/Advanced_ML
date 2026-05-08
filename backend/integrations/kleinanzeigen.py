@@ -215,7 +215,9 @@ _XML_NS = (
     'xmlns:loc="http://www.ebayclassifiedsgroup.com/schema/location/v1" '
     'xmlns:attr="http://www.ebayclassifiedsgroup.com/schema/attribute/v1" '
     'xmlns:pic="http://www.ebayclassifiedsgroup.com/schema/picture/v1" '
-    'xmlns:medias="http://www.ebayclassifiedsgroup.com/schema/media/v1"'
+    'xmlns:medias="http://www.ebayclassifiedsgroup.com/schema/media/v1" '
+    'xmlns:shipping="http://www.ebayclassifiedsgroup.com/schema/shipping/v1" '
+    'xmlns:payment="http://www.ebayclassifiedsgroup.com/schema/payment/v1"'
 )
 
 
@@ -248,6 +250,16 @@ def build_ad_xml(payload: dict, picture_links: list[dict]) -> str:
         )
         pictures_xml = f"<pic:pictures><pic:picture>{link_xml}</pic:picture></pic:pictures>"
 
+    attributes_xml = ""
+    attrs = payload.get("attributes") or {}
+    if attrs:
+        items = "".join(
+            f'<attr:attribute name="{_xml_escape(name)}"><attr:value>{_xml_escape(value)}</attr:value></attr:attribute>'
+            for name, value in attrs.items()
+            if value
+        )
+        attributes_xml = f"<attr:attributes>{items}</attr:attributes>"
+
     imprint_block = f"<ad:imprint>{imprint}</ad:imprint>" if imprint else ""
     contact_block = f"<ad:contact-name>{contact_name}</ad:contact-name>" if contact_name else ""
 
@@ -270,6 +282,9 @@ def build_ad_xml(payload: dict, picture_links: list[dict]) -> str:
         f"</ad:price>"
         f"<medias:medias />"
         f"{pictures_xml}"
+        f"{attributes_xml}"
+        f"<shipping:shipping-options />"
+        f'<payment:buy-now selected="false" />'
         f"</ad:ad>"
     )
 
