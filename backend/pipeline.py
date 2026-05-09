@@ -20,6 +20,7 @@ from PIL import Image
 from build_price_dataset import canon_brand
 
 from .bootstrap import LoadedModels, dinov2_embed
+from .description import generate_description
 from .vlm_backend import VLMBackend, VLMOutput
 
 
@@ -170,18 +171,35 @@ async def run_pipeline(
 
     v_q10, v_q50, v_q90 = local["vinted_price"]
     k_q10, k_q50, k_q90 = local["ka_price"]
+
+    vinted_review = _field_review(vinted_vlm, field_overrides)
+    ka_review = _field_review(ka_vlm, field_overrides)
+
+    # Model #6: generate descriptions in parallel, one per platform.
+    # Replaces Model #1's raw description with grounded LLM copy.
+    vinted_desc, ka_desc = await asyncio.gather(
+        generate_description(
+            vinted_vlm.fields, "vinted",
+            local["visual_wear_probability"], vinted_review,
+        ),
+        generate_description(
+            ka_vlm.fields, "kleinanzeigen",
+            local["visual_wear_probability"], ka_review,
+        ),
+    )
+
     return {
         "visual_wear_probability": local["visual_wear_probability"],
         "vinted": {
             "price": {"q10": v_q10, "q50": v_q50, "q90": v_q90},
             "sell_probability": local["sell_prob"],
-            "identification": vinted_vlm.fields,
-            "field_review": _field_review(vinted_vlm, field_overrides),
+            "identification": {**vinted_vlm.fields, "description": vinted_desc},
+            "field_review": vinted_review,
         },
         "kleinanzeigen": {
             "price": {"q10": k_q10, "q50": k_q50, "q90": k_q90},
-            "identification": ka_vlm.fields,
-            "field_review": _field_review(ka_vlm, field_overrides),
+            "identification": {**ka_vlm.fields, "description": ka_desc},
+            "field_review": ka_review,
         },
         "latency_ms": int((time.perf_counter() - started) * 1000),
         "vlm_call_count": 2,
