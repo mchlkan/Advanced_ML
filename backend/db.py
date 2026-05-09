@@ -469,29 +469,6 @@ async def get_inventory_rows(db_path: Path | None = None) -> list[dict]:
         rows = await (await conn.execute(_INVENTORY_QUERY)).fetchall()
         return [dict(r) for r in rows]
 
-async def get_all_listings(db_path: Path | None = None) -> list[dict]:
-    """Return all listings ordered newest-first, with published platforms and latest fields."""
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
-        conn.row_factory = aiosqlite.Row
-        rows = await (await conn.execute(
-            """
-            SELECT
-                l.id,
-                l.created_at,
-                l.image_path,
-                p.english_fields,
-                GROUP_CONCAT(DISTINCT pub.platform) AS platforms
-            FROM listings l
-            LEFT JOIN predictions p
-                ON p.listing_id = l.id
-                AND p.id = (SELECT MAX(id) FROM predictions WHERE listing_id = l.id)
-            LEFT JOIN publishes pub ON pub.listing_id = l.id
-            GROUP BY l.id
-            ORDER BY l.created_at DESC
-            """
-        )).fetchall()
-        return [dict(row) for row in rows]
-
 
 async def delete_listing(listing_id: str, db_path: Path | None = None) -> str | None:
     """Delete a listing and all related rows. Returns the image_path if found, else None."""

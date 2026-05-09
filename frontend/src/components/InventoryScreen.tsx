@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { ListingItem } from "@/types/api";
+import type { InventoryItem } from "@/types/api";
 import { BASE, fetchInventory, markAsSold } from "@/api/inventory";
 
 interface Props {
@@ -60,14 +60,14 @@ function SkeletonCard() {
 }
 
 export default function InventoryScreen({ onBack }: Props) {
-  const [listings, setListings] = useState<ListingItem[]>([]);
+  const [listings, setListings] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selling, setSelling] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetchInventory()
-      .then((res) => setListings(res.listings))
+      .then((res) => setListings(res.items))
       .catch(() => setError("Could not load listings. Is the backend running?"))
       .finally(() => setLoading(false));
   }, []);
@@ -76,7 +76,7 @@ export default function InventoryScreen({ onBack }: Props) {
     setSelling((s) => new Set(s).add(id));
     try {
       await markAsSold(id);
-      setListings((prev) => prev.filter((item) => item.id !== id));
+      setListings((prev) => prev.filter((item) => item.listing_id !== id));
     } catch {
       // keep button visible so user can retry
     } finally {
@@ -183,95 +183,105 @@ export default function InventoryScreen({ onBack }: Props) {
           </div>
         )}
 
-        {listings.map((item) => (
-          <div
-            key={item.id}
-            style={{
-              display: "flex",
-              gap: 14,
-              padding: "16px 0",
-              borderBottom: "1px solid var(--color-border)",
-              alignItems: "center",
-              opacity: 1,
-            }}
-          >
-            {/* Thumbnail */}
-            <img
-              src={`${BASE}${item.image_url}`}
-              alt={item.title ?? "listing"}
+        {listings.map((item) => {
+          const fields = item.prediction?.english_fields ?? {};
+          const title = (fields.title as string) ?? null;
+          const brand = (fields.brand as string) ?? null;
+          const category = (fields.category as string) ?? null;
+          const publishedPlatforms = [
+            item.vinted && "vinted",
+            item.kleinanzeigen && "kleinanzeigen",
+          ].filter(Boolean) as string[];
+          return (
+            <div
+              key={item.listing_id}
               style={{
-                width: 64,
-                height: 64,
-                objectFit: "cover",
-                flexShrink: 0,
-                backgroundColor: "var(--color-bg-card)",
+                display: "flex",
+                gap: 14,
+                padding: "16px 0",
+                borderBottom: "1px solid var(--color-border)",
+                alignItems: "center",
+                opacity: 1,
               }}
-            />
+            >
+              {/* Thumbnail */}
+              <img
+                src={`${BASE}${item.thumbnail_url}`}
+                alt={title ?? "listing"}
+                style={{
+                  width: 64,
+                  height: 64,
+                  objectFit: "cover",
+                  flexShrink: 0,
+                  backgroundColor: "var(--color-bg-card)",
+                }}
+              />
 
-            {/* Details */}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p
-                style={{
-                  margin: "0 0 3px",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  letterSpacing: "-0.2px",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {item.title ?? "Untitled"}
-              </p>
-              <p
-                style={{
-                  margin: "0 0 6px",
-                  fontSize: 12,
-                  color: "var(--color-ink-secondary)",
-                }}
-              >
-                {[item.brand, item.category].filter(Boolean).join(" · ") || "—"}
-              </p>
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {item.published_platforms.map((p) => (
-                  <PlatformBadge key={p} platform={p} />
-                ))}
-                {item.published_platforms.length === 0 && (
-                  <span
-                    style={{
-                      fontSize: 10,
-                      color: "var(--color-ink-tertiary)",
-                      letterSpacing: "0.3px",
-                    }}
-                  >
-                    not published
-                  </span>
-                )}
+              {/* Details */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p
+                  style={{
+                    margin: "0 0 3px",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    letterSpacing: "-0.2px",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {title ?? "Untitled"}
+                </p>
+                <p
+                  style={{
+                    margin: "0 0 6px",
+                    fontSize: 12,
+                    color: "var(--color-ink-secondary)",
+                  }}
+                >
+                  {[brand, category].filter(Boolean).join(" · ") || "—"}
+                </p>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {publishedPlatforms.map((p) => (
+                    <PlatformBadge key={p} platform={p} />
+                  ))}
+                  {publishedPlatforms.length === 0 && (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: "var(--color-ink-tertiary)",
+                        letterSpacing: "0.3px",
+                      }}
+                    >
+                      not published
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Sold action */}
+              <div style={{ flexShrink: 0, marginLeft: 8 }}>
+                <button
+                  onClick={() => handleMarkSold(item.listing_id)}
+                  disabled={selling.has(item.listing_id)}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    padding: "6px 12px",
+                    border: "1.5px solid var(--color-border)",
+                    backgroundColor: "transparent",
+                    color: "var(--color-ink)",
+                    cursor: selling.has(item.listing_id) ? "default" : "pointer",
+                    opacity: selling.has(item.listing_id) ? 0.5 : 1,
+                    letterSpacing: "-0.1px",
+                  }}
+                >
+                  {selling.has(item.listing_id) ? "…" : "Mark sold"}
+                </button>
               </div>
             </div>
-
-            {/* Sold action */}
-            <div style={{ flexShrink: 0, marginLeft: 8 }}>
-              <button
-                onClick={() => handleMarkSold(item.id)}
-                disabled={selling.has(item.id)}
-                style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  padding: "6px 12px",
-                  border: "1.5px solid var(--color-border)",
-                  backgroundColor: "transparent",
-                  color: "var(--color-ink)",
-                  cursor: selling.has(item.id) ? "default" : "pointer",
-                  opacity: selling.has(item.id) ? 0.5 : 1,
-                  letterSpacing: "-0.1px",
-                }}
-              >
-                {selling.has(item.id) ? "…" : "Mark sold"}
-              </button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </main>
     </div>
   );

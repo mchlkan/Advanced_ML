@@ -81,16 +81,49 @@ export interface HealthzResponse {
   device: string;
 }
 
-export interface ListingItem {
-  id: string;
-  created_at: number;
-  image_url: string;
+export type PricingStatus = "underpriced" | "ok" | "overpriced" | "unknown";
+
+export interface PredictionSummary {
+  english_fields: Record<string, unknown>;
+  vinted: PriceBand | null;
+  vinted_sell_probability: number;
+  kleinanzeigen: PriceBand | null;
+  visual_wear_probability: number;
+}
+
+export interface VintedLiveSnapshot {
+  fetched_at: number;
   title: string | null;
-  brand: string | null;
-  category: string | null;
-  published_platforms: string[];
+  price_eur: number | null;
+  views: number | null;
+  favourites: number | null;
+  primary_photo_url: string | null;
+  is_sold_or_removed: boolean;
+  pricing_status: PricingStatus;
+  delta_vs_q50_pct: number | null;
+}
+
+export type JobStatus = "pending" | "running" | "posted" | "failed";
+
+export interface PlatformPublishState {
+  publish_id: number;
+  status: JobStatus;
+  platform_listing_id: string | null;
+  platform_listing_url: string | null;
+  error: string | null;
+  live: VintedLiveSnapshot | null;
+}
+
+export interface InventoryItem {
+  listing_id: string;
+  created_at: number;
+  thumbnail_url: string;
+  prediction: PredictionSummary | null;
+  vinted: PlatformPublishState | null;
+  kleinanzeigen: PlatformPublishState | null;
 }
 
 export interface InventoryResponse {
-  listings: ListingItem[];
+  items: InventoryItem[];
+  last_synced_at: number | null;
 }

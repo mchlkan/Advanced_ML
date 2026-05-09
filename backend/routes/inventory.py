@@ -25,7 +25,7 @@ import traceback
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from backend import db
 from backend.integrations import vinted as vinted_integration
@@ -144,6 +144,18 @@ async def get_inventory() -> InventoryResponse:
 async def get_inventory_summary() -> InventorySummary:
     items, last_synced_at = await _load_inventory()
     return _summarize(items, last_synced_at)
+
+
+@router.post("/listings/{listing_id}/sold", status_code=204, response_class=Response)
+async def mark_sold(listing_id: str) -> Response:
+    image_path = await db.delete_listing(listing_id)
+    if image_path is None:
+        raise HTTPException(status_code=404, detail=f"listing {listing_id} not found")
+    try:
+        Path(image_path).unlink(missing_ok=True)
+    except Exception:
+        pass
+    return Response(status_code=204)
 
 
 @router.get("/listings/{listing_id}/image")

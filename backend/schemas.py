@@ -269,15 +269,3 @@ class InventorySummary(BaseModel):
     last_synced_at: int | None = None
 
 
-class ListingItem(BaseModel):
-    id: str
-    created_at: int
-    image_url: str
-    title: str | None
-    brand: str | None
-    category: str | None
-    published_platforms: list[str]
-
-
-class ListingsResponse(BaseModel):
-    listings: list[ListingItem]
