@@ -303,7 +303,7 @@ The frontend renders brand and size fields with a `Check` badge until confirmed.
 
 ### 4.1 Model #6 — Grounded Description Generator
 
-**Owner:** Michael. **Status:** design complete, implementation pending.
+**Owner:** Michael. **Status:** shipped (`backend/description.py`, commit `f2e69ab`).
 
 **Problem:** Model #1's description output has BLEU-4 of 0.031 and produces generic,
 non-platform-appropriate text. The fundamental issue is that the VLM must generate
@@ -350,9 +350,17 @@ Three targeted improvements:
    Brand labels, size tags, and wear flaws are often not visible in the hero image.
    Expected improvement: brand accuracy and size accuracy.
    Blocked on: clean `listing_id → [photo_paths]` mapping from the dataset.
-3. **KA prompt engineering:** improve KA JSON parse rate (currently 40.9%) through
-   better instruction formatting and explicit schema constraints in the inference prompt,
-   without retraining.
+3. **KA parse rate fix — baked into retraining (not a prompt patch):** root cause of
+   the 40.9% KA parse rate is the `description` field: the model generates multi-sentence
+   prose inside a JSON string and emits literal newlines, which breaks the parser.
+   Patching the inference prompt alone won't help — the model was trained to emit
+   `description` and will likely continue doing so regardless of the instruction.
+   Fix: remove `description` from the training target JSON in `train_vlm.py` and from
+   `get_prompt()`. `price_eur` is removed from inference output only — it is kept in
+   the training target as an auxiliary task that improves the quality of the VLM pooled
+   hidden state consumed by Model #4. After retraining, Model #1 emits 6 short scalar
+   fields only (brand, category, condition, color, size, title), eliminating the
+   primary parse failure mode. Expected outcome: KA parse rate substantially above 40.9%.
 
 **Interface contract with Model #6:** Model #1's output schema after retraining must
 continue to include `brand`, `category`, `condition`, `color`, `size`, `title`.
