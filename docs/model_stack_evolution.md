@@ -297,6 +297,32 @@ The frontend renders brand and size fields with a `Check` badge until confirmed.
 
 **Verification:** `pytest backend/tests/test_local_mps.py backend/tests/test_runpod_http.py backend/tests/test_routes.py` — all pass.
 
+#### Post-recovery eval (re-run on locked test set, 2026-05-09)
+
+Re-ran `parse_vlm_fields()` over the saved `qwen_field_predictions.parquet` raw text
+to measure the effective parse rate with recovery in place, without re-running VLM inference.
+
+| | Clean parse | Recovered | Hard failures |
+|---|---|---|---|
+| Vinted (n=368) | 96.5% | 3.5% | **0%** |
+| Kleinanzeigen (n=132) | 40.9% | 59.1% | **0%** |
+| Overall (n=500) | 81.8% | 18.2% | **0%** |
+
+Key finding: hard failure rate dropped from 59.1% on KA to 0% across all 500 items.
+Every listing now returns a usable draft — no more blank result pages. Field accuracy
+is unchanged (recovery salvages structure, not prediction quality):
+
+| Field | Accuracy |
+|---|---|
+| Category | 96.8% |
+| Condition | 65.6% |
+| Color | 72.2% |
+| Brand | 48.2% |
+| Size | 24.0% |
+
+Pitch framing: KA coverage is now "every listing returns an editable draft; field
+accuracy improves with the retrained model" rather than "6 in 10 KA items return nothing".
+
 ---
 
 ## 4. Planned Improvements (Round 2)
