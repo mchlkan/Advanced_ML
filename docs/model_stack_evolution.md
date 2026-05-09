@@ -355,12 +355,31 @@ Three targeted improvements:
    prose inside a JSON string and emits literal newlines, which breaks the parser.
    Patching the inference prompt alone won't help — the model was trained to emit
    `description` and will likely continue doing so regardless of the instruction.
-   Fix: remove `description` from the training target JSON in `train_vlm.py` and from
-   `get_prompt()`. `price_eur` is removed from inference output only — it is kept in
-   the training target as an auxiliary task that improves the quality of the VLM pooled
-   hidden state consumed by Model #4. After retraining, Model #1 emits 6 short scalar
-   fields only (brand, category, condition, color, size, title), eliminating the
-   primary parse failure mode. Expected outcome: KA parse rate substantially above 40.9%.
+   Two concrete code changes required before the training run:
+
+   **`models/train_vlm.py` — training target (the JSON the model learns to emit):**
+   Remove the `description` key from the `build_target()` dict. Keep `price_eur` —
+   it is an auxiliary task that improves the VLM hidden state quality for Model #4.
+   ```python
+   # remove this line:
+   "description": row["description_en"],
+   # keep this line:
+   "price_eur": float(row["price"]),
+   ```
+
+   **`shared/prompts.py` — inference prompt only (`get_prompt()`):**
+   Remove both `description` and `price_eur` from the format block. The model
+   should not emit them at inference time — Model #6 handles description, Model #4
+   handles price. Add a concrete filled-in JSON example directly in the prompt
+   (one per platform) so the model has a complete valid example to anchor on,
+   not just an abstract template.
+   Note: `get_prompt()` is imported by `train_vlm.py` for the chat template wrapper,
+   but the training *target* JSON is built separately in `build_target()` — removing
+   fields from `get_prompt()` does not affect what the model is trained to predict.
+
+   After retraining, Model #1 emits 6 short scalar fields only (brand, category,
+   condition, color, size, title), eliminating the primary parse failure mode.
+   Expected outcome: KA parse rate substantially above 40.9%.
 
 **Interface contract with Model #6:** Model #1's output schema after retraining must
 continue to include `brand`, `category`, `condition`, `color`, `size`, `title`.
