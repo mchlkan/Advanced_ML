@@ -660,6 +660,72 @@ not just the median.
 
 ---
 
+### 4.4 Multi-image v3 retrain — KA-inclusive manifest (planned, queued)
+
+**Status:** queued, will execute next session. **Owner:** Michael.
+
+**Why a v3:** the v2 field-eval surfaced a real performance split — KA size_acc 7.6%
+vs Vinted 45.9% on the same adapter, and similar gaps on KA condition (50.0% vs 65.5%)
+and color (48.5% vs 74.7%). Root cause is **a pipeline gap, not a data gap**: the KA
+scrape captured ~4,000 listings with an average of 4.7 photos each (92.6% have ≥2
+photos, 43% have ≥5), but those photos were never run through CLIP for
+garment-vs-label classification. As a result, `scripts/build_manifest.py` is hardcoded
+Vinted-only (its docstring even says *"Vinted-only: the multi-image scraper only
+scrapes Vinted"*) and v1/v2 trained on **zero KA listings**. v3 closes that gap.
+
+**What v3 changes vs v2:**
+
+1. **CLIP classification on KA scrapes.** Run `scripts/reclassify_clip.py --margin 0.0`
+   over the 18,864 images in `data/data_leon/raw/ka_clothing_*`. The `--margin 0.0`
+   flag is required for KA — the script's default `--margin 0.05` on a 2-class output
+   forces all-uncertain photos into the "garment" bucket and gives 0% label-rate (this
+   gotcha was diagnosed during v1 manifest building).
+2. **Manifest builder extension.** Generalise `scripts/build_manifest.py` to load both
+   `vinted_clothing_combined.parquet` and `kleinanzeigen_clothing_combined.parquet`,
+   join with platform-specific scrape paths, and emit a single combined manifest.
+3. **Retrain Model #1** with the KA-inclusive manifest → adapter
+   `mchlkan/qwen3vl4b-resell-adapter-multi-v3`. Same hyperparameters as v2 (LR 1e-4,
+   eff batch 8, 2 epochs, LoRA r=16 α=32). Same prompt and target schema as v2 (no
+   `description`; `price_eur` auxiliary in target only).
+4. **Re-extract VLM features** with the v3 adapter, **retrain price head** (v3), run
+   field-eval on the locked Vinted + KA test slices.
+
+**Expected outcomes:**
+
+- **KA size accuracy:** large lift from 7.6%. Order-of-magnitude estimate: somewhere
+  between Vinted's 45.9% (if KA care-label photos are comparably useful) and the
+  Rengo33 v0 KA baseline of 21.2% (if KA labels are typically lower-quality). The
+  truthful answer comes from the eval, not a guess.
+- **KA condition / color / brand:** modest lifts; metadata-saturated fields (category)
+  already near ceiling.
+- **Vinted metrics:** expected to hold roughly steady. Mixing KA into training adds
+  data diversity but also distracts the LoRA from Vinted-specific patterns. Within
+  ±2 pp on Vinted brand/size is the realistic target.
+- **Price head:** the v2 result already showed that better calibration sometimes costs
+  median accuracy. v3's price head will be retrained and measured the same way; we'll
+  ship whichever quantile profile is more defensible.
+
+**Cost estimate:** ~1 day wall time. ~$2 in GPU spend (1–2 h CLIP on KA + ~30 min
+manifest code/eval + ~3.5 h LoRA train + ~1 h feature extraction + ~5 min price head).
+
+**Why v3 instead of just documenting the limitation:** the gap is structurally
+obvious — same model, same prompt, same evaluation script, but Vinted is trained-on
+and KA is generalised-to. A reviewer reading §5.4 will ask "why didn't you train on
+both?" and the honest answer is "the manifest pipeline didn't support it" — which is
+exactly the kind of pipeline gap a careful ML execution closes. The fix is well-scoped
+and the result is a single number (KA size_acc) that either lifts or doesn't. Worth
+running.
+
+**What does NOT change in v3:**
+- Sell head (Model #5) — still metadata-only, `vlm_dim=0`.
+- Flaw head (Model #2) — still DINOv2-based, independent.
+- Description generator (Model #6) — field-schema contract unchanged.
+- Frontend — no API changes.
+- Backend deploy: only the `ADAPTER_ID` env var and `models/checkpoints/price_head.pt`
+  need to swap, identical to the v2 ship procedure.
+
+---
+
 ## 5. Final Stack (2026-05-10) — Report-Ready Summary
 
 This section is the canonical snapshot of what was actually shipped. Use it as the
@@ -719,16 +785,16 @@ vs GPT-4o-mini single-shot baseline on the same test slice: MAE €21.50, MAPE 1
 
 ### 5.4 Known limitations (worth flagging in the report)
 
-1. **KA size accuracy is poor (7.6%).** Root cause is a *pipeline gap*, not a data gap: the KA scrape captured ~4,000 listings with an average of 4.7 photos/listing (92.6% have 2+ photos), but those photos were never run through CLIP for garment-vs-label classification. As a result, the multi-image manifest (`scripts/build_manifest.py`) is hardcoded Vinted-only, and the v2 LoRA was trained on zero KA listings. Fix scope: ~half a day — run `scripts/reclassify_clip.py --margin 0.0` on the 18,864 KA images, extend `build_manifest.py` to load the KA canonical parquet, retrain. Out of scope for the 7-day project.
-2. **KA condition / color accuracy lower than Vinted** (50.0% / 48.5% vs Vinted 65.5% / 74.7%). Same root cause — Vinted-only training distribution.
-3. **Sell head is a directional signal, not a calibrated probability.** AUC 0.605 reflects right-censoring (items listed close to scrape date have less observation time and are treated as negatives), seller-withdrawal noise, and a small positive class. The frontend treats it as a likelihood ribbon, not a percentage.
-4. **Single LoRA adapter for both platforms.** A more principled architecture would route Vinted to a multi-image adapter and KA to a single-image adapter (or platform-specific LoRAs). Cost-of-time vs marginal benefit didn't justify the split for the demo.
+1. **KA field accuracy lower than Vinted** (size 7.6%, condition 50.0%, color 48.5%, vs Vinted 45.9% / 65.5% / 74.7% on the same v2 adapter). Root cause is a *pipeline gap*, not a data gap: the KA scrape captured ~4,000 listings with an average of 4.7 photos/listing (92.6% have ≥2 photos), but those photos were never run through CLIP for garment-vs-label classification. As a result, the multi-image manifest (`scripts/build_manifest.py`) is hardcoded Vinted-only, and the v2 LoRA was trained on zero KA listings. **Being addressed in v3 (see §4.4) — queued, ~1 day of work.**
+2. **Sell head is a directional signal, not a calibrated probability.** AUC 0.605 reflects right-censoring (items listed close to scrape date have less observation time and are treated as negatives), seller-withdrawal noise, and a small positive class. The frontend treats it as a likelihood ribbon, not a percentage.
+3. **Single LoRA adapter for both platforms.** A more principled architecture would route Vinted to a multi-image adapter and KA to a single-image adapter (or platform-specific LoRAs). Cost-of-time vs marginal benefit didn't justify the split for the demo. v3's KA-inclusive training is the lighter alternative — adapt one adapter to both distributions rather than maintain two.
 
 ### 5.5 Suggested next steps (if the project continues)
 
 In rough priority order:
 
-1. **Extend the multi-image manifest to KA** (see Limitation #1). Closes most of the KA size/condition gap with no architectural change.
-2. **Calibrate the sell head** (Platt scaling or isotonic regression on the val set) so the frontend can show real probabilities rather than rank-only scores.
-3. **Size string normalisation** (e.g., map `"Medium"` ↔ `"M"`, `"EU 40"` ↔ `"40"`) before scoring `size_acc` — a meaningful slice of current "errors" are format mismatches, not true model failures.
-4. **Larger base VLM (Qwen3-VL-7B/9B).** Speculative; useful only if the 4B model is genuinely bottlenecked on capacity rather than data.
+1. **Calibrate the sell head** (Platt scaling or isotonic regression on the val set) so the frontend can show real probabilities rather than rank-only scores.
+2. **Size string normalisation** (e.g., map `"Medium"` ↔ `"M"`, `"EU 40"` ↔ `"40"`) before scoring `size_acc` — a meaningful slice of current "errors" are format mismatches, not true model failures.
+3. **Larger base VLM (Qwen3-VL-7B/9B).** Speculative; useful only if the 4B model is genuinely bottlenecked on capacity rather than data.
+
+(The previous top item — "extend the multi-image manifest to KA" — has been promoted out of "next steps" into the active v3 retrain, see §4.4.)
