@@ -382,9 +382,9 @@ class VintedClient:
         return items
 
     def delete_draft(self, item_id: int | str) -> None:
-        """Delete a Vinted listing or draft. Same endpoint works for both
-        published listings and unpublished drafts. Raises VintedError on any
-        non-2xx response so callers can surface a meaningful failure."""
+        """Delete an UNPUBLISHED draft via the draft URL. Returns 403
+        access_denied for items that have already been published live —
+        for those use ``delete_live_item`` instead."""
         self._ensure_fresh()
         resp = self.http.delete(
             f"{self.base_url}/api/v2/item_upload/drafts/{item_id}",
@@ -397,6 +397,20 @@ class VintedClient:
         if resp.status_code == 404:
             raise VintedError(f"delete: item {item_id} not found")
         raise _classify_error(resp, "delete")
+
+    def delete_live_item(self, item_id: int | str) -> None:
+        """Delete a published live item. Endpoint discovered via probe
+        (scripts/probe_vinted_delete.py): the draft URL 403s on live
+        items; this POST endpoint is the one Vinted's UI uses for
+        in-place deletion. Returns 200 with body
+        ``{"code":0,"message":"Ok","message_code":"ok"}`` on success."""
+        self._ensure_fresh()
+        resp = self._post(f"/api/v2/items/{item_id}/delete")
+        if resp.status_code in (200, 204):
+            return
+        if resp.status_code == 404:
+            raise VintedError(f"delete: item {item_id} not found")
+        raise _classify_error(resp, "delete (live)")
 
     def fetch_item_details(self, item_id: int | str) -> dict:
         """GET the live item's full details — needed to extract existing
@@ -647,8 +661,10 @@ def seed_from_env() -> dict | None:
 
 
 async def delete_listing(item_id: int | str) -> None:
-    """Async wrapper around VintedClient.delete_draft. Reads the persisted
-    session and writes back the rotated DataDome cookie afterward."""
+    """Delete a Vinted listing — works for both posted live items and
+    unpublished drafts. Tries the live-item endpoint first
+    (``/api/v2/items/{id}/delete``); falls back to the draft URL for
+    drafts that never reached the published state."""
 
     def _do() -> None:
         path = _session_path()
@@ -656,7 +672,14 @@ async def delete_listing(item_id: int | str) -> None:
         if session is None:
             raise VintedNotConfigured(f"no session file at {path}")
         client = VintedClient(session)
-        client.delete_draft(item_id)
+        try:
+            client.delete_live_item(item_id)
+        except VintedError as exc:
+            # Drafts 404 on the live-item URL — fall through to draft delete.
+            if "not found" in str(exc).lower():
+                client.delete_draft(item_id)
+            else:
+                raise
         save_session(client.session, path)
 
     await asyncio.to_thread(_do)
