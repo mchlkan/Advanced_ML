@@ -5,9 +5,10 @@ import { useRef } from "react";
 interface Props {
   onFileSelected: (file: File, imageUrl: string) => void;
   onInventory: () => void;
+  error?: string | null;
 }
 
-export default function UploadScreen({ onFileSelected, onInventory }: Props) {
+export default function UploadScreen({ onFileSelected, onInventory, error }: Props) {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const libraryInputRef = useRef<HTMLInputElement>(null);
 
@@ -118,19 +119,44 @@ export default function UploadScreen({ onFileSelected, onInventory }: Props) {
             marginBottom: 24,
           }}
         >
-          {/* Guideline */}
-          <p
+          {/* Guidelines */}
+          <div
             style={{
-              fontSize: 12,
-              color: "var(--color-ink-tertiary)",
-              letterSpacing: "0.5px",
-              textTransform: "uppercase",
-              margin: "0 0 20px",
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "6px 12px",
+              marginBottom: 20,
             }}
           >
-            Center the item · plain background · good light · one piece per
-            photo
-          </p>
+            {["Center the item", "Plain background", "Good light", "One piece per photo"].map((tip) => (
+              <span
+                key={tip}
+                style={{
+                  fontSize: 11,
+                  color: "var(--color-ink-tertiary)",
+                  letterSpacing: "0.4px",
+                  textTransform: "uppercase",
+                }}
+              >
+                {tip}
+              </span>
+            ))}
+          </div>
+
+          {error && (
+            <p
+              style={{
+                fontSize: 13,
+                color: "#c0392b",
+                margin: "0 0 16px",
+                padding: "10px 12px",
+                backgroundColor: "#fdf0ee",
+                borderLeft: "3px solid #c0392b",
+              }}
+            >
+              {error}
+            </p>
+          )}
 
           {/* Camera button */}
           <button

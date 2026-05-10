@@ -69,9 +69,31 @@ export interface PublishRequest {
 }
 
 export interface PublishResponse {
+  job_id: number;
+  status: JobStatus;
   listing_id: string;
   platform: Platform;
+}
+
+export interface PublishStatusResponse {
+  job_id: number;
+  status: JobStatus;
+  listing_id: string;
+  platform: Platform;
+  retry_count: number;
+  next_attempt_at: number | null;
+  platform_listing_id: string | null;
+  platform_listing_url: string | null;
   prefill_url: string;
+  error: string | null;
+  updated_at: number;
+}
+
+export interface DraftResponse {
+  draft_id: number;
+  draft_url: string;
+  listing_id: string;
+  platform: Platform;
 }
 
 export interface HealthzResponse {

@@ -1,13 +1,14 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { Identification, Platform, PublishResponse, UploadResponse } from "@/types/api";
+import type { Identification, Platform, UploadResponse } from "@/types/api";
 import { uploadImage } from "@/api/upload";
-import { publishListing } from "@/api/publish";
+import { draftListing } from "@/api/publish";
 import UploadScreen from "@/components/UploadScreen";
 import AnalyzingScreen from "@/components/AnalyzingScreen";
 import ResultsScreen from "@/components/ResultsScreen";
 import PublishedScreen from "@/components/PublishedScreen";
+import PublishingScreen from "@/components/PublishingScreen";
 import InventoryScreen from "@/components/InventoryScreen";
 
 type AppState =
@@ -15,55 +16,57 @@ type AppState =
   | { screen: "inventory" }
   | { screen: "analyzing"; imageUrl: string; file: File }
   | { screen: "results"; imageUrl: string; data: UploadResponse }
+  | { screen: "publishing"; imageUrl: string; data: UploadResponse; platform: Platform }
   | {
       screen: "published";
       platform: Platform;
-      publishResponse: PublishResponse;
+      listingUrl: string;
       results: UploadResponse;
     };
 
 export default function Page() {
   const [state, setState] = useState<AppState>({ screen: "upload" });
+  const [uploadError, setUploadError] = useState<string | null>(null);
   // Incremented on every reset so a stale upload promise doesn't clobber state
   const uploadGenRef = useRef(0);
 
   async function handleFileSelected(file: File, imageUrl: string) {
     const gen = ++uploadGenRef.current;
+    setUploadError(null);
     setState({ screen: "analyzing", imageUrl, file });
     try {
       const data = await uploadImage(file);
       if (gen !== uploadGenRef.current) return;
       setState({ screen: "results", imageUrl, data });
-    } catch {
+    } catch (err) {
       if (gen !== uploadGenRef.current) return;
+      setUploadError(
+        err instanceof Error ? err.message : "Could not analyze photo. Is the backend running?"
+      );
       setState({ screen: "upload" });
     }
   }
 
   async function handlePublish(platform: Platform, finalFields: Identification) {
     if (state.screen !== "results") return;
-    const { data } = state;
+    const { data, imageUrl } = state;
+    setState({ screen: "publishing", imageUrl, data, platform });
     try {
-      const publishResponse = await publishListing({
+      const draft = await draftListing({
         listing_id: data.listing_id,
         platform,
         final_fields: finalFields,
       });
-      // Open the prefill URL immediately before state update
-      window.open(publishResponse.prefill_url, "_blank");
-      setState({
-        screen: "published",
-        platform,
-        publishResponse,
-        results: data,
-      });
+      window.open(draft.draft_url, "_blank");
+      setState({ screen: "published", platform, listingUrl: draft.draft_url, results: data });
     } catch {
-      // Stay on results if publish fails
+      setState({ screen: "results", imageUrl, data });
     }
   }
 
   function handleReset() {
     uploadGenRef.current++; // invalidate any in-flight upload
+    setUploadError(null);
     setState({ screen: "upload" });
   }
 
@@ -76,6 +79,7 @@ export default function Page() {
       <UploadScreen
         onFileSelected={handleFileSelected}
         onInventory={() => setState({ screen: "inventory" })}
+        error={uploadError}
       />
     );
   }
@@ -100,11 +104,15 @@ export default function Page() {
     );
   }
 
+  if (state.screen === "publishing") {
+    return <PublishingScreen platform={state.platform} />;
+  }
+
   if (state.screen === "published") {
     return (
       <PublishedScreen
         platform={state.platform}
-        publishResponse={state.publishResponse}
+        listingUrl={state.listingUrl}
         results={state.results}
         onReset={handleReset}
       />

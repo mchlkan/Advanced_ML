@@ -21,32 +21,26 @@ UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "uploads"
 _MOCK_RESULT = {
     "vinted": {
         "identification": {
-            "brand": None, "category": None, "condition": None,
-            "color": None, "size": None, "title": None,
-            "description": None, "price_eur": None,
+            "brand": "[MOCK] brand", "category": "[MOCK] category", "condition": "[MOCK] condition",
+            "color": "[MOCK] color", "size": "[MOCK] size", "title": "[MOCK] title",
+            "description": "[MOCK] description — SKIP_ML=1, no real inference", "price_eur": -1,
         },
-        "price": {"q10": 0.0, "q50": 0.0, "q90": 0.0},
-        "sell_probability": 0.0,
-        "field_review": {
-            "needs_review": ["brand", "size"],
-            "reasons": {"brand": "low_confidence", "size": "low_confidence"},
-        },
+        "price": {"q10": -1.0, "q50": -1.0, "q90": -1.0},
+        "sell_probability": -1.0,
+        "field_review": {"needs_review": [], "reasons": {}},
     },
     "kleinanzeigen": {
         "identification": {
-            "brand": None, "category": None, "condition": None,
-            "color": None, "size": None, "title": None,
-            "description": None, "price_eur": None,
+            "brand": "[MOCK] brand", "category": "[MOCK] category", "condition": "[MOCK] condition",
+            "color": "[MOCK] color", "size": "[MOCK] size", "title": "[MOCK] title",
+            "description": "[MOCK] description — SKIP_ML=1, no real inference", "price_eur": -1,
         },
-        "price": {"q10": 0.0, "q50": 0.0, "q90": 0.0},
-        "field_review": {
-            "needs_review": ["brand", "size"],
-            "reasons": {"brand": "low_confidence", "size": "low_confidence"},
-        },
+        "price": {"q10": -1.0, "q50": -1.0, "q90": -1.0},
+        "field_review": {"needs_review": [], "reasons": {}},
     },
-    "visual_wear_probability": 0.0,
-    "latency_ms": 0,
-    "vlm_call_count": 0,
+    "visual_wear_probability": -1.0,
+    "latency_ms": -1,
+    "vlm_call_count": -1,
 }
 
 
