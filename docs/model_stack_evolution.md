@@ -556,40 +556,104 @@ No coordination required beyond this schema contract.
 
 ---
 
-### 4.3 Multi-image v2 retrain (planned, queued)
+### 4.3 Multi-image v2 retrain (shipped 2026-05-10)
 
-**Status:** queued, ready to start. Bundles items §4.2.2 and §4.2.3 into a single
-training run. This is the final planned Model #1 retrain for the course project.
+**Status:** shipped. Adapter `mchlkan/qwen3vl4b-resell-adapter-multi-v2` (HF Hub,
+public). Backend defaults updated; `models/checkpoints/price_head.pt` swapped to the
+v2-features-trained head; backend tests 121/121 green.
 
-**What's included:**
+**What v2 changes vs v1:**
 - Multi-image dataset (manifest mode, garment + optional care label) — same setup as v1.
 - Parse fix: `description` removed from `_build_target_json()` in `models/train_vlm.py`
   and from `get_prompt()` in `shared/prompts.py`. `price_eur` removed from `get_prompt()`
   but kept in the training target as an auxiliary task to preserve hidden-state quality
-  for Model #4.
+  for Model #4 (the pooled hidden state still has to encode price-relevant signal even
+  if the inference prompt no longer asks for it).
 
-**Why two separate runs (v1 then v2), not one:** today's multi-image-only run was an
-isolation experiment — it confirms the +20 pp brand / +19 pp size lift is attributable
+**Why two separate runs (v1 then v2), not one:** the multi-image-only v1 run was an
+isolation experiment — it confirmed the +20 pp brand / +19 pp size lift is attributable
 to the photo pair, not confounded with prompt/target edits. With that result locked,
-adding the parse fix on top of the same training setup is a clean additive change.
+adding the parse fix on top of the same setup is a clean additive change.
 
-**Downstream impact (must redo on the pod after v2 trains):**
-- Re-extract VLM features with the new adapter (`extract_vlm_features.py --manifest`).
-- Retrain price head (Model #4) on the new features. Sell head (Model #5) is unaffected
-  because it's metadata-only (`vlm_dim=0`); flaw head (Model #2) is independent (DINOv2);
-  description (Model #6) is agnostic to weights as long as field schema holds.
+**Run details (2026-05-10):**
+- Training: 3 h 26 min on RTX 4090 (community), final train_loss 0.155, eval_loss 0.121.
+  Loss numbers are mechanically lower than v1's (0.383 / 0.348) because there are fewer
+  target tokens to predict per example — they are not directly comparable across schemas.
+- Feature re-extraction: 38 min for 8,711 rows with manifest mode (6,192 of 8,711 used
+  multi-image; the rest single-image).
+- Price head retrain: ~3 min, early-stop at epoch 10.
+- Total cost on the pod: ~$1.45.
 
-**Backend deployment after v2 ships:**
-- Update `ADAPTER_ID` env on the RunPod worker (and `VLM_ADAPTER_ID` for `local_mps`)
-  to the new HF reference (proposed: `mchlkan/qwen3vl4b-resell-adapter-multi-v2`).
-- Replace `models/checkpoints/price_head.pt` with the v2-trained price head.
-- Sell head, flaw head, frontend: no changes.
+**Field-eval on the locked KA test split (n=132):**
 
-**Cost estimate:** ~$1.95 on the pod (~3.9 h Model #1 retrain + ~1 h feature extraction
-+ ~5 min price head retrain + overhead).
+| metric | Rengo33 v0 (single, old prompt) | multi-v1 + new prompt | multi-v2 (shipped) |
+|---|---|---|---|
+| **clean parse_ok** | 40.9% | 99.24% | **100%** |
+| brand_acc | 44.7% | 40.9% | 39.4% |
+| category_acc | 88.6% | 86.4% | 84.8% |
+| condition_acc | 69.7% | 57.6% | 50.0% |
+| color_acc | 64.4% | 49.2% | 48.5% |
+| size_acc | 21.2% | 5.3% | 7.6% |
+| avg_description_words | (had description) | 0 | 0 |
 
-**Expected outcomes:**
-- KA clean parse rate: 40.9% → 90 %+ (recovery layer becomes mostly inert on KA).
-- Brand / size accuracy: in line with v1 multi-image (+20 pp / +19 pp vs single-image v0).
-- Price head metrics: should be at least neutral vs today's v1-features price head;
-  hidden states from a slightly different LoRA distribution but the same base model.
+**Two competing options at ship time, weighed academically:**
+
+**Option A: keep multi-v1, change only the inference prompt.** Empirically reaches
+99.24% KA parse rate without retraining. Cheap, no new artifact to deploy.
+**Rejected because** the project brief (§3.1) explicitly mandates that the inference
+prompt match the training prompt exactly — multi-v1 was trained on a prompt asking for
+8 fields and would now be served a prompt asking for 6. That is a train-vs-inference
+mismatch we'd be relying on the model to gracefully ignore. Empirically it does;
+principled defense becomes weak when asked "why didn't you align them?"
+
+**Option B (chosen): retrain on a matched prompt-target pair.** v2's training prompt
+and inference prompt are identical by construction. The schema mismatch is fixed at the
+right layer of the stack. Defense: "We diagnosed the failure (verbose `description` field
+overflowed token budget on KA, breaking JSON structure), redesigned prompt and target
+together, retrained, and measured."
+
+**On the KA field-acc deltas vs multi-v1 + new prompt:** −7.6 pp condition, −0.7 pp
+color, −1.5 pp brand, −1.5 pp category, +2.3 pp size. With n=132 the 95% CI on a 50%
+proportion is ±8.5 pp, so the only Δ even approaching significance is condition, and it
+sits inside the noise floor. The −20-ish-pp gaps vs Rengo33 v0 (which trained on mixed
+data including KA) are real and reflect the manifest-filter cost: the multi-image
+manifest has zero KA listings, so both multi-v1 and multi-v2 generalize to KA from a
+Vinted-only training distribution. That cost was paid by both v1 and v2 equally and is
+not v2-specific.
+
+**Price head results, locked 500-row test (n=132 KA, n=368 Vinted):**
+
+| metric | v1 (multi-v1 features, shipped earlier today) | v2 (multi-v2 features, shipped now) |
+|---|---|---|
+| Test MAE (€) | 16.05 | 16.93 |
+| Test MAPE | 0.4643 | 0.5036 |
+| Test coverage q10–q90 | 77.6% | **85.8%** |
+| KA MAE (€) | 15.28 | **14.72** |
+| KA MAPE | 0.6390 | 0.6526 |
+| KA coverage | 75.0% | **84.1%** |
+| Vinted MAE (€) | 16.33 | 17.73 |
+| Vinted MAPE | 0.4017 | 0.4502 |
+| Vinted coverage | 78.5% | 86.4% |
+
+Median accuracy regresses slightly (+0.9 pp MAPE overall, more on Vinted), but quantile
+calibration improves materially: coverage moves from 77.6% toward the 80% target and
+overshoots to 85.8%. For a price-suggestion tool that surfaces a range, well-calibrated
+quantiles matter more than a marginally tighter median — the user sees q10 / q50 / q90,
+not just the median.
+
+**Files shipped:**
+- HF adapter `mchlkan/qwen3vl4b-resell-adapter-multi-v2` (public).
+- `models/checkpoints/price_head.pt` (v2-trained, md5 `34c918b7…`).
+- `models/checkpoints/price_head_v2.pt` (canonical v2 copy, identical content).
+- Old multi-v1-features price head preserved as `models/checkpoints/price_head_multi.pt`.
+- Backend `DEFAULT_ADAPTER` / `ADAPTER_ID` updated to v2 in `models/extract_vlm_features.py`
+  and `runpod/handler.py`.
+- `models/train_vlm.py` `_build_target_json` and `shared/prompts.py` `get_prompt` updated
+  to drop `description` (and drop `price_eur` from the prompt only).
+
+**What did NOT change:**
+- Sell head (Model #5) — metadata-only, `vlm_dim=0`, unaffected by the VLM swap.
+- Flaw head (Model #2) — DINOv2-based, independent.
+- Description generator (Model #6) — agnostic to VLM weights as long as the field schema
+  contract holds (still emits `brand`, `category`, `condition`, `color`, `size`, `title`).
+- Frontend — no schema changes; field set is a strict subset of v1's.

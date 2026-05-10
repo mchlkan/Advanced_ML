@@ -35,7 +35,7 @@ from prompts import EXPECTED_HIDDEN_DIM, SUPPORTED_PLATFORMS, get_prompt  # noqa
 
 
 BASE_MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-VL-4B-Instruct")
-ADAPTER_ID = os.environ.get("ADAPTER_ID", "mchlkan/qwen3vl4b-resell-adapter-multi-v1")
+ADAPTER_ID = os.environ.get("ADAPTER_ID", "mchlkan/qwen3vl4b-resell-adapter-multi-v2")
 MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "256"))
 HF_TOKEN = os.environ.get("HF_TOKEN")
 

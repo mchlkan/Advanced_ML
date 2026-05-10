@@ -7,20 +7,20 @@ listing prompt, and caches one 2560-dim vector per row.
 RunPod smoke test:
 
     python models/extract_vlm_features.py \
-        --adapter-id mchlkan/qwen3vl4b-resell-adapter-multi-v1 \
+        --adapter-id mchlkan/qwen3vl4b-resell-adapter-multi-v2 \
         --load-in-4bit \
         --limit 5
 
 Full single-image run:
 
     python models/extract_vlm_features.py \
-        --adapter-id mchlkan/qwen3vl4b-resell-adapter-multi-v1 \
+        --adapter-id mchlkan/qwen3vl4b-resell-adapter-multi-v2 \
         --load-in-4bit
 
 Full multi-image run (feeds the care-label photo when available):
 
     python models/extract_vlm_features.py \
-        --adapter-id mchlkan/qwen3vl4b-resell-adapter-multi-v1 \
+        --adapter-id mchlkan/qwen3vl4b-resell-adapter-multi-v2 \
         --manifest /workspace/data/manifest.parquet \
         --load-in-4bit
 """
@@ -51,10 +51,10 @@ from prompts import get_prompt  # noqa: E402
 
 
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
-# Multi-image v1 (2026-05-10). Trained on garment + optional care label;
-# brand +20pp, size +19pp vs the single-image v1 adapter
-# (Rengo33/qwen3vl4b-resell-adapter). See docs/model_stack_evolution.md §3.3.
-DEFAULT_ADAPTER = "mchlkan/qwen3vl4b-resell-adapter-multi-v1"
+# Multi-image v2 (2026-05-10). Same multi-image setup as v1, plus the parse-fix
+# retrain: prompt and target both drop `description` (KA parse rate 40.9% → 100%).
+# `price_eur` kept in the training target as an auxiliary task. See §4.3.
+DEFAULT_ADAPTER = "mchlkan/qwen3vl4b-resell-adapter-multi-v2"
 DEFAULT_OUTPUT = REPO_ROOT / "data" / "embeddings" / "vlm_pooled_combined.npy"
 DEFAULT_INDEX = REPO_ROOT / "data" / "embeddings" / "vlm_pooled_combined_index.parquet"
 DEFAULT_VINTED = REPO_ROOT / "data" / "vinted_clothing_combined.parquet"
