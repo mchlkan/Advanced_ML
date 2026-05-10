@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { InventoryItem } from "@/types/api";
 import { BASE, fetchInventory, markAsSold } from "@/api/inventory";
+import SmallCaps from "./ui/SmallCaps";
 
 interface Props {
   onBack: () => void;
@@ -26,14 +27,13 @@ function PlatformBadge({ platform }: { platform: string }) {
       style={{
         fontSize: 10,
         fontWeight: 600,
-        letterSpacing: "0.4px",
+        letterSpacing: "0.12em",
         textTransform: "uppercase",
         color: accent,
         backgroundColor: soft,
         padding: "3px 7px",
         borderRadius: 999,
         border: `1px solid ${accent}33`,
-        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
       }}
     >
       {platform}
@@ -299,17 +299,7 @@ export default function InventoryScreen({ onBack }: Props) {
                     <PlatformBadge key={p} platform={p} />
                   ))}
                   {publishedPlatforms.length === 0 && (
-                    <span
-                      style={{
-                        fontSize: 10,
-                        color: "#9b9c99",
-                        letterSpacing: "0.3px",
-                        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      not published
-                    </span>
+                    <SmallCaps size={10}>not published</SmallCaps>
                   )}
                 </div>
               </div>

@@ -2,6 +2,7 @@
 
 import { useRef } from "react";
 import type { Platform, UploadResponse } from "@/types/api";
+import SmallCaps from "./ui/SmallCaps";
 
 interface Props {
   platform: Platform;
@@ -39,14 +40,6 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
       tabRef.current = window.open(listingUrl, "_blank") ?? null;
     }
   }
-
-  const receiptRows: [string, string][] = [
-    ["Platform", PLATFORM_LABEL[platform]],
-    ["Suggested", fmt(activeBlock.price.q50)],
-    ["Title", activeBlock.identification.title ?? "—"],
-    ["Listing ID", `#${shortId(results.listing_id)}`],
-    ["Drafted", `${(results.latency_ms / 1000).toFixed(1)}s`],
-  ];
 
   return (
     <div
@@ -104,11 +97,6 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
               display: "flex",
               alignItems: "center",
               gap: 10,
-              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-              fontSize: 10.5,
-              color: "#9b9c99",
-              textTransform: "uppercase",
-              letterSpacing: "1.4px",
               marginBottom: 18,
             }}
           >
@@ -121,7 +109,7 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
                 boxShadow: "0 0 0 4px oklch(0.62 0.15 145 / 0.15)",
               }}
             />
-            Listing opened
+            <SmallCaps size={10.5}>Listing opened</SmallCaps>
           </div>
 
           <h2
@@ -148,49 +136,32 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
             {PLATFORM_LABEL[platform]} itself. We don&apos;t post on your behalf.
           </p>
 
-          {/* Receipt rows */}
+          {/* Summary */}
           <div
             style={{
               marginTop: 22,
               paddingTop: 18,
-              borderTop: "1px dashed #e7e5e0",
-              display: "grid",
-              gap: 10,
-              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-              fontSize: 12,
+              borderTop: "1px solid #efece6",
+              fontSize: 14,
               color: "#3a3b3a",
+              lineHeight: 1.5,
             }}
           >
-            {receiptRows.map(([k, v]) => (
-              <div
-                key={k}
-                style={{ display: "flex", justifyContent: "space-between", gap: 16 }}
-              >
-                <span
-                  style={{
-                    color: "#9b9c99",
-                    textTransform: "uppercase",
-                    letterSpacing: "1px",
-                    flexShrink: 0,
-                  }}
-                >
-                  {k}
-                </span>
-                <span
-                  style={{
-                    color: "#0e0f0e",
-                    fontWeight: 500,
-                    textAlign: "right",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    maxWidth: "60%",
-                  }}
-                >
-                  {v}
-                </span>
-              </div>
-            ))}
+            <div style={{ color: "#0e0f0e", fontWeight: 500 }}>
+              {PLATFORM_LABEL[platform]} · {fmt(activeBlock.price.q50)} · drafted in{" "}
+              {(results.latency_ms / 1000).toFixed(1)}s
+            </div>
+            <div
+              style={{
+                marginTop: 4,
+                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                fontSize: 11,
+                color: "#9b9c99",
+                letterSpacing: "0.06em",
+              }}
+            >
+              #{shortId(results.listing_id)}
+            </div>
           </div>
 
           {/* Reopen button */}

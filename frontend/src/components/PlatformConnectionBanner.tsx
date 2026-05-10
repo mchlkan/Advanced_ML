@@ -1,6 +1,7 @@
 "use client";
 
 import type { OnboardingStatus, Platform } from "@/types/api";
+import SmallCaps from "./ui/SmallCaps";
 
 interface Props {
   status: OnboardingStatus | null;
@@ -10,6 +11,11 @@ interface Props {
 const LABEL: Record<Platform, string> = {
   vinted: "Vinted",
   kleinanzeigen: "Kleinanzeigen",
+};
+
+const PLATFORM_DOT: Record<Platform, string> = {
+  vinted: "oklch(0.55 0.08 195)",
+  kleinanzeigen: "oklch(0.62 0.13 55)",
 };
 
 function isDisconnected(state: string): boolean {
@@ -27,8 +33,8 @@ export default function PlatformConnectionBanner({ status, onConnect }: Props) {
   return (
     <div
       style={{
-        backgroundColor: "oklch(0.96 0.04 80)",
-        borderBottom: "1px solid oklch(0.86 0.10 80)",
+        backgroundColor: "#fff",
+        borderBottom: "1px solid #e7e5e0",
         padding: "10px 24px",
         display: "flex",
         flexWrap: "wrap",
@@ -36,42 +42,41 @@ export default function PlatformConnectionBanner({ status, onConnect }: Props) {
         gap: 12,
         fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
         fontSize: 13,
-        color: "#3d3a2a",
+        color: "#3a3b3a",
       }}
     >
-      <span
-        style={{
-          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-          fontSize: 10.5,
-          letterSpacing: "1.2px",
-          textTransform: "uppercase",
-          color: "oklch(0.45 0.08 75)",
-        }}
-      >
-        Reconnect
-      </span>
+      <SmallCaps size={10.5}>Reconnect</SmallCaps>
       {disconnected.map((p) => (
         <button
           key={p}
           type="button"
           onClick={() => onConnect(p)}
+          title="Identification still works while disconnected — only publishing is blocked."
           style={{
-            padding: "6px 12px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "5px 11px",
             borderRadius: 999,
-            border: "1px solid oklch(0.62 0.15 145)",
+            border: "1px solid #e7e5e0",
             backgroundColor: "#fff",
-            color: "oklch(0.45 0.12 145)",
+            color: "#0e0f0e",
             fontSize: 12,
-            fontWeight: 600,
+            fontWeight: 500,
             cursor: "pointer",
           }}
         >
-          Connect {LABEL[p]}
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 6,
+              background: PLATFORM_DOT[p],
+            }}
+          />
+          {LABEL[p]}
         </button>
       ))}
-      <span style={{ marginLeft: "auto", fontSize: 12, color: "#6b6c69" }}>
-        Identification still works while disconnected — only publishing is blocked.
-      </span>
     </div>
   );
 }

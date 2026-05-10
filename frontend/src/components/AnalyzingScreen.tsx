@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import SmallCaps from "./ui/SmallCaps";
 
 interface Props {
   imageUrl: string;
@@ -15,12 +16,13 @@ export default function AnalyzingScreen({ imageUrl, onCancel }: Props) {
 
   useEffect(() => {
     const id = setInterval(() => {
-      setElapsed(Date.now() - startRef.current);
+      const next = Date.now() - startRef.current;
+      setElapsed(next);
+      if (next > 5000) clearInterval(id);
     }, 100);
     return () => clearInterval(id);
   }, []);
 
-  const seconds = (elapsed / 1000).toFixed(1);
   const elapsedSec = elapsed / 1000;
 
   function stepState(idx: number): "done" | "active" | "pending" {
@@ -88,11 +90,11 @@ export default function AnalyzingScreen({ imageUrl, onCancel }: Props) {
               position: "absolute",
               left: 16,
               bottom: 14,
-              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
               fontSize: 11,
+              fontWeight: 600,
               color: "#fff",
               textTransform: "uppercase",
-              letterSpacing: "1.2px",
+              letterSpacing: "0.12em",
               display: "flex",
               alignItems: "center",
               gap: 8,
@@ -195,31 +197,10 @@ export default function AnalyzingScreen({ imageUrl, onCancel }: Props) {
                 >
                   {s.label}
                 </div>
-                <div
-                  style={{
-                    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                    fontSize: 11,
-                    color: "#9b9c99",
-                    textTransform: "uppercase",
-                    letterSpacing: "1px",
-                    marginTop: 2,
-                  }}
-                >
+                <SmallCaps style={{ display: "block", marginTop: 2 }}>
                   {s.detail}
-                </div>
+                </SmallCaps>
               </div>
-              {state === "active" && (
-                <div
-                  style={{
-                    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                    fontSize: 11,
-                    color: ACCENT,
-                    letterSpacing: "0.6px",
-                  }}
-                >
-                  {seconds}s
-                </div>
-              )}
             </div>
           );
         })}

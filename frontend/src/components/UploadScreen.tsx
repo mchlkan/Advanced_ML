@@ -58,17 +58,6 @@ export default function UploadScreen({ onFileSelected, onInventory, error }: Pro
         <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.2px" }}>
           Resell Copilot
         </span>
-        <span
-          style={{
-            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-            fontSize: 10.5,
-            color: "#9b9c99",
-            textTransform: "uppercase",
-            letterSpacing: "1.2px",
-          }}
-        >
-          v0.1 · demo
-        </span>
         <button
           onClick={onInventory}
           style={{
@@ -145,28 +134,8 @@ export default function UploadScreen({ onFileSelected, onInventory, error }: Pro
               opacity: 0.7,
             }}
           />
-          {/* Corner brackets */}
-          {[
-            { top: 14, left: 14, borderTopWidth: 2, borderLeftWidth: 2 } as React.CSSProperties & { top?: number; left?: number; right?: number; bottom?: number },
-            { top: 14, right: 14, borderTopWidth: 2, borderRightWidth: 2 } as React.CSSProperties & { top?: number; left?: number; right?: number; bottom?: number },
-            { bottom: 14, left: 14, borderBottomWidth: 2, borderLeftWidth: 2 } as React.CSSProperties & { top?: number; left?: number; right?: number; bottom?: number },
-            { bottom: 14, right: 14, borderBottomWidth: 2, borderRightWidth: 2 } as React.CSSProperties & { top?: number; left?: number; right?: number; bottom?: number },
-          ].map((p, i) => (
-            <div
-              key={i}
-              style={{
-                position: "absolute",
-                width: 22,
-                height: 22,
-                borderColor: "#0e0f0e",
-                borderStyle: "solid",
-                borderWidth: 0,
-                ...p,
-              }}
-            />
-          ))}
 
-          {/* Camera icon + helper */}
+          {/* Helper text */}
           <div
             style={{
               position: "relative",
@@ -175,40 +144,16 @@ export default function UploadScreen({ onFileSelected, onInventory, error }: Pro
               padding: 20,
             }}
           >
-            <div
-              style={{
-                width: 62,
-                height: 62,
-                borderRadius: 31,
-                background: "#0e0f0e",
-                color: "#fff",
-                margin: "0 auto 18px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                boxShadow: "0 6px 16px rgba(14,15,14,0.18)",
-              }}
-            >
-              <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
-                <path
-                  d="M3 8a2 2 0 012-2h2.5l1.5-2h8l1.5 2H21a2 2 0 012 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinejoin="round"
-                />
-                <circle cx="13" cy="14" r="4.2" stroke="currentColor" strokeWidth="1.6" />
-              </svg>
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 600, color: "#0e0f0e", marginBottom: 4 }}>
+            <div style={{ fontSize: 17, fontWeight: 600, color: "#0e0f0e", marginBottom: 6 }}>
               Center the item
             </div>
             <div
               style={{
                 fontSize: 13,
                 color: "#6b6c6a",
-                maxWidth: 220,
+                maxWidth: 240,
                 margin: "0 auto",
-                lineHeight: 1.4,
+                lineHeight: 1.45,
               }}
             >
               Plain background · good light · one piece per photo

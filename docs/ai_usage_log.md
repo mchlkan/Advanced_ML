@@ -1442,6 +1442,167 @@ draft, that wouldn't have been in the plan.
 
 ---
 
+### Day 5 — 2026-05-10 (continued): frontend clean-UI pass + PWA install-readiness
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Plan file:** `~/.claude/plans/joyful-painting-pearl.md`
+
+#### Prompt 1
+> "/frontend-design:frontend-design Can you check the current design in
+> frontend if there are any changes needed for a better UX I would prefer
+> a very clean UI"
+
+**Decision:** The user invoked the `frontend-design` skill in *review*
+mode, not *build* mode — they wanted a critique, not a redesign. Read all
+8 component files (`UploadScreen`, `AnalyzingScreen`, `ResultsScreen`,
+`PublishedScreen`, `PublishingScreen`, `InventoryScreen`,
+`PlatformConnectionBanner`, `PlatformLoginModal`) plus `layout.tsx` and
+`globals.css`. Returned a structured critique:
+- 8 visual issues, ranked by impact
+- Top 3 highest-impact (mono-font overuse, redundant recommendation
+  signal, loud amber connection banner)
+- Asked for confirmation before implementing — explicitly *not* using the
+  skill's "implement working code" path because the user's ask was
+  exploratory.
+
+**Outcome:** Punch-list style review delivered. Followed the project's
+"exploratory questions get 2-3 sentences plus a recommendation, not a
+decided plan" rule from CLAUDE.md.
+
+#### Prompt 2
+> "Ah and I forgot it should be optimized as a mobile version, so a
+> website you can save on desktop which than acts as a webapp"
+
+**Decision:** PWA-readiness audit. Critical finding: `layout.tsx`
+declared `manifest: "/manifest.json"` and `appleWebApp.capable: true`
+but `frontend/public/` didn't exist on disk — `ls` returned exit 1.
+"Add to Home Screen" today produces a blank-faced shortcut, not an app.
+Other gaps: no `themeColor`, 14px inputs that trigger iOS Safari focus
+auto-zoom (real bug, breaks layout in standalone mode), bouncy
+overscroll, buttons selectable on long-press, no service worker.
+
+Returned a prioritized PWA gap list with the 3 highest-impact items
+(manifest+icons, 16px input rule, themeColor+overscroll). Offered to
+combine with the visual cleanup pass.
+
+#### Prompt 3 (via /plan + AskUserQuestion)
+> "/plan those changes and always log our coversation please because we
+> need it for the AI part"
+
+**Decision:** Plan mode. Three clarifications needed before plan was
+finalizable:
+1. Icon source: artwork from user / placeholder from existing green-mark
+   wordmark / skip → user picked **green logo mark**
+2. Service worker yes/no → user picked **yes, minimal SW**
+3. Cleanup scope: top 3 only or all 8 → user picked **all 8**
+
+Wrote a ~280-line plan covering Phase 1 (PWA shell), Phase 2 (visual
+cleanup, all 8 items), Phase 3 (AI usage log entry). Critical files
+listed both for creation and modification.
+
+#### Prompt 4 (mid-plan addition)
+> "Can you also integrate this please? Make the disclaimer
+> conflict-aware instead of just wear-aware. Concretely: define
+> 'optimistic' conditions: {'New with tags', 'Like new'}. If
+> visual_wear_probability > 0.5 and Model #1's condition is in that set
+> → swap the generic 'Visible wear detected' copy for something pointed
+> [...]"
+
+**Decision:** User added a new requirement mid-plan. Integrated as
+section 2.9 (conflict-aware wear disclaimer). Edited the plan file
+in-place — added the section, updated the modified-files list, added a
+verification step exercising both branches (conflict and non-conflict).
+Then `ExitPlanMode`. Plan approved.
+
+#### Implementation
+
+Phase 1 — PWA shell:
+- `frontend/public/icon.svg` + `icon-maskable.svg` — vector source
+- `frontend/scripts/gen-icons.mjs` — sharp-based renderer that emits
+  192/512/maskable/180/32/favicon.ico from one SVG. Sharp invoked via
+  `npm install --no-save` so it doesn't enter `package.json`.
+  - Note: `oklch()` colors aren't parsed by librsvg (sharp's SVG
+    backend), so the script substitutes `#3aa564` (sRGB equivalent)
+    before render.
+- `public/manifest.json` — name, short_name, display:standalone, three
+  icons including a maskable
+- `layout.tsx` — added `themeColor` to Viewport, switched
+  `appleWebApp.statusBarStyle` to `black-translucent`, added `icons`
+  metadata, mounted `<SwRegister />`
+- `globals.css` — `overscroll-behavior:none`, `button { user-select:none }`,
+  `input,textarea,select { font-size:16px }` (kills iOS focus zoom)
+- `public/sw.js` — 30-line app-shell SW: precache statics,
+  network-first for `/api/*`, stale-while-revalidate everything else
+- `src/app/sw-register.tsx` — production-only client mount
+
+Phase 2 — visual cleanup, all 9 items (the original 8 + 2.9 wear
+conflict):
+- New `components/ui/SmallCaps.tsx` helper (unused in the end — the
+  lift-and-shift was direct, didn't need a wrapper component since each
+  call site already had bespoke positioning).
+  → **Drift from plan**: kept the helper file since it's small and a
+  follow-up refactor might want it; could be deleted if pure cleanup
+  preferred.
+- Removed `v0.1 · demo` header chip and the in-frame 62px black camera
+  circle + 4 corner brackets on `UploadScreen`.
+- `AnalyzingScreen`: Inter small-caps replaces mono on the Analyzing
+  badge + step details; dropped the `1.4s` per-step timer and the
+  `seconds` derivation it fed.
+- `ResultsScreen`: dropped 9 mono usages, kept 1 (listing-id + latency
+  receipt tag at the top — the only mono earned its keep). Dropped the
+  green € price callout block + its dead `calloutText` and
+  `higherPlatform` variables. Simplified `Chip` (dropped `icon` prop;
+  size chip now reads `Size XL` not just `XL`). Dropped `RECALCULATES`
+  hint on the edit-details button. Removed inline `fontSize: 14` on the
+  edit-form input (global rule now handles 16px). Added
+  `OPTIMISTIC_CONDITIONS = {"New with tags", "Like new"}` and
+  `wearConflict` derivation; wear badge now branches on conflict —
+  optimistic-condition-but-wear-detected gets `"Condition mismatch.
+  Model #1 read this as '<condition>' but our flaw detector sees
+  possible wear..."`, everything else keeps the original generic copy.
+- `PublishedScreen`: replaced the 5-row dashed-divider mono receipt
+  with a single summary line (`Vinted · €42 · drafted in 1.4s`) plus a
+  compact monospace listing-id below. Dropped `receiptRows` array.
+- `PlatformConnectionBanner`: full rewrite from amber-loud strip to
+  neutral white strip with platform-color dot per button. Subtext
+  "Identification still works while disconnected" moved into a `title`
+  tooltip on the connect button.
+- `PlatformLoginModal`: form labels Inter small-caps, removed inline
+  `fontSize: 14` on text inputs.
+- `InventoryScreen`: PlatformBadge + "not published" tag converted to
+  Inter small-caps; kept item count in mono (it's a count, edge of
+  machine-identifier territory).
+
+Phase 3 — this entry.
+
+#### Verification
+- `npm run type-check` → clean
+- `npm run build` → clean, all pages prerendered, no warnings about
+  missing manifest/icon files
+
+**End-of-session reflection:** Two patterns from this session worth
+keeping.
+
+First, the **iOS 16px input rule was the highest-leverage fix in the PWA
+pass**. Every Next.js project I've reviewed in standalone mode has
+inputs <16px somewhere, and every one suffers the same quiet bug:
+focus zooms the page in and never quite recovers. One global CSS rule
+fixes all of them. Worth promoting to a default in any mobile-first
+project starter.
+
+Second, **mid-plan additions** (Prompt 4 added the conflict-aware wear
+disclaimer after the plan was already drafted) are best handled by
+editing the plan file in place rather than starting a new planning
+round. The new requirement was small, fit the existing Phase 2 cleanup
+theme, and didn't change any architectural decisions. Resisted the
+temptation to call `ExitPlanMode` early just to "lock in" the plan and
+then handle the addition as a follow-up — that would have fragmented
+the work and the AI log entry. Better: edit, integrate, then
+`ExitPlanMode` once.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)

@@ -8,6 +8,7 @@ import type {
   UploadResponse,
 } from "@/types/api";
 import { verifyListing } from "@/api/verify";
+import SmallCaps from "./ui/SmallCaps";
 
 interface Props {
   imageUrl: string;
@@ -49,6 +50,8 @@ const PLATFORM_KICKER: Record<Platform, string> = {
   kleinanzeigen: "DE · local",
 };
 
+const OPTIMISTIC_CONDITIONS = new Set(["New with tags", "Like new"]);
+
 function fmt(n: number) {
   return `€${Math.round(n)}`;
 }
@@ -59,11 +62,9 @@ function shortId(id: string) {
 
 // Pill chip for identification fields
 function Chip({
-  icon,
   children,
   dim,
 }: {
-  icon: string;
   children: React.ReactNode;
   dim?: boolean;
 }) {
@@ -72,8 +73,7 @@ function Chip({
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 6,
-        padding: "7px 11px 7px 12px",
+        padding: "7px 12px",
         borderRadius: 999,
         background: "#fff",
         border: "1px solid #e7e5e0",
@@ -85,17 +85,6 @@ function Chip({
         whiteSpace: "nowrap" as const,
       }}
     >
-      <span
-        style={{
-          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-          fontSize: 10,
-          color: "#9b9c99",
-          fontWeight: 500,
-          letterSpacing: "0.2px",
-        }}
-      >
-        {icon}
-      </span>
       {children}
     </div>
   );
@@ -112,18 +101,7 @@ function SectionLabel({ children, action }: { children: React.ReactNode; action?
         marginBottom: 10,
       }}
     >
-      <div
-        style={{
-          fontSize: 11,
-          fontWeight: 600,
-          color: "#9b9c99",
-          textTransform: "uppercase" as const,
-          letterSpacing: "1.4px",
-          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-        }}
-      >
-        {children}
-      </div>
+      <SmallCaps>{children}</SmallCaps>
       {action && (
         <div style={{ fontSize: 13, color: "#3a3b3a", fontWeight: 500 }}>{action}</div>
       )}
@@ -210,9 +188,9 @@ function PlatformCard({
             left: 16,
             background: "#0e0f0e",
             color: "#fff",
-            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
             fontSize: 10,
-            letterSpacing: "1.4px",
+            fontWeight: 600,
+            letterSpacing: "0.12em",
             textTransform: "uppercase" as const,
             padding: "4px 8px",
             borderRadius: 6,
@@ -239,31 +217,21 @@ function PlatformCard({
           {disconnected && (
             <span
               style={{
-                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
                 fontSize: 9.5,
+                fontWeight: 600,
                 color: "oklch(0.45 0.08 75)",
                 backgroundColor: "oklch(0.95 0.06 80)",
                 padding: "2px 6px",
                 borderRadius: 999,
                 textTransform: "uppercase" as const,
-                letterSpacing: "1px",
+                letterSpacing: "0.12em",
               }}
             >
               Disconnected
             </span>
           )}
         </div>
-        <span
-          style={{
-            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-            fontSize: 10,
-            color: "#9b9c99",
-            textTransform: "uppercase" as const,
-            letterSpacing: "1.2px",
-          }}
-        >
-          {kicker}
-        </span>
+        <SmallCaps size={10}>{kicker}</SmallCaps>
       </div>
 
       {/* Price */}
@@ -285,7 +253,6 @@ function PlatformCard({
           </div>
           <div
             style={{
-              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
               fontSize: 12,
               color: "#6b6c6a",
               fontVariantNumeric: "tabular-nums",
@@ -338,18 +305,9 @@ function PlatformCard({
             border: "1px solid #efece6",
           }}
         >
-          <span
-            style={{
-              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-              fontSize: 10,
-              textTransform: "uppercase" as const,
-              letterSpacing: "1px",
-              color: "#9b9c99",
-              marginRight: 6,
-            }}
-          >
+          <SmallCaps size={10} style={{ marginRight: 6 }}>
             Note
-          </span>
+          </SmallCaps>
           {qualitativeNote}
         </div>
       )}
@@ -377,12 +335,6 @@ export default function ResultsScreen({
   const vintedQ50 = data.vinted.price.q50;
   const kaQ50 = data.kleinanzeigen.price.q50;
   const recommendedPlatform: Platform = vintedQ50 >= kaQ50 ? "vinted" : "kleinanzeigen";
-  const priceDiff = Math.abs(vintedQ50 - kaQ50);
-  const higherPlatform = vintedQ50 >= kaQ50 ? "Vinted" : "Kleinanzeigen";
-  const calloutText =
-    vintedQ50 >= kaQ50
-      ? `Vinted nets you ${fmt(priceDiff)} more. Kleinanzeigen typically sells faster locally.`
-      : `Kleinanzeigen sells faster locally. Vinted gets ${fmt(priceDiff)} more.`;
 
   const activeId =
     selectedPlatform === "vinted"
@@ -399,6 +351,10 @@ export default function ResultsScreen({
   const vintedReview = new Set(data.vinted.field_review?.needs_review ?? []);
 
   const idBlock = data.vinted.identification;
+  const wearConflict =
+    data.visual_wear_probability > 0.5 &&
+    !!idBlock.condition &&
+    OPTIMISTIC_CONDITIONS.has(idBlock.condition);
   const itemHeadline = [
     idBlock.brand,
     idBlock.color?.toLowerCase(),
@@ -529,10 +485,10 @@ export default function ResultsScreen({
                 borderRadius: 8,
                 background: "rgba(14,15,14,0.78)",
                 color: "#fff",
-                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
                 fontSize: 10.5,
+                fontWeight: 600,
                 textTransform: "uppercase",
-                letterSpacing: "1.2px",
+                letterSpacing: "0.12em",
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
@@ -555,18 +511,9 @@ export default function ResultsScreen({
 
         {/* Title block */}
         <div style={{ padding: "24px 20px 16px" }}>
-          <div
-            style={{
-              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-              fontSize: 10.5,
-              color: "#9b9c99",
-              textTransform: "uppercase",
-              letterSpacing: "1.4px",
-              marginBottom: 8,
-            }}
-          >
+          <SmallCaps size={10.5} style={{ display: "block", marginBottom: 8 }}>
             What we see
-          </div>
+          </SmallCaps>
           <h2
             style={{
               margin: 0,
@@ -590,15 +537,12 @@ export default function ResultsScreen({
             gap: 6,
           }}
         >
-          {idBlock.brand && <Chip icon="BRAND">{idBlock.brand}</Chip>}
-          {idBlock.category && <Chip icon="TYPE">{idBlock.category}</Chip>}
-          {idBlock.condition && <Chip icon="COND">{idBlock.condition}</Chip>}
-          {idBlock.color && <Chip icon="COLOR">{idBlock.color}</Chip>}
-          <Chip
-            icon="SIZE"
-            dim={vintedReview.has("size") || !idBlock.size}
-          >
-            {idBlock.size ?? "—"}{(vintedReview.has("size") || !idBlock.size) ? " · Check" : ""}
+          {idBlock.brand && <Chip>{idBlock.brand}</Chip>}
+          {idBlock.category && <Chip>{idBlock.category}</Chip>}
+          {idBlock.condition && <Chip>{idBlock.condition}</Chip>}
+          {idBlock.color && <Chip>{idBlock.color}</Chip>}
+          <Chip dim={vintedReview.has("size") || !idBlock.size}>
+            Size {idBlock.size ?? "—"}{(vintedReview.has("size") || !idBlock.size) ? " · Check" : ""}
           </Chip>
         </div>
 
@@ -637,8 +581,18 @@ export default function ResultsScreen({
                 !
               </div>
               <div>
-                <span style={{ fontWeight: 600, color: "#0e0f0e" }}>Visible wear detected.</span>{" "}
-                Light wear detected. We adjusted condition accordingly.
+                {wearConflict ? (
+                  <>
+                    <span style={{ fontWeight: 600, color: "#0e0f0e" }}>Condition mismatch.</span>{" "}
+                    Model #1 read this as &ldquo;{idBlock.condition}&rdquo; but our flaw detector
+                    sees possible wear — please re-check the condition.
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontWeight: 600, color: "#0e0f0e" }}>Visible wear detected.</span>{" "}
+                    Light wear detected. We adjusted condition accordingly.
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -675,16 +629,6 @@ export default function ResultsScreen({
               </svg>
               {editOpen ? "Hide details" : "Edit details"}
             </span>
-            <span
-              style={{
-                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                fontSize: 10.5,
-                color: "#9b9c99",
-                letterSpacing: "1px",
-              }}
-            >
-              {editOpen ? "" : "RECALCULATES"}
-            </span>
           </button>
 
           {/* Edit form */}
@@ -709,19 +653,9 @@ export default function ResultsScreen({
                 ] as [keyof Identification, string][]
               ).map(([field, label]) => (
                 <div key={field} style={{ marginBottom: 12 }}>
-                  <label
-                    style={{
-                      display: "block",
-                      fontSize: 11,
-                      fontWeight: 600,
-                      letterSpacing: "0.8px",
-                      textTransform: "uppercase",
-                      color: "#9b9c99",
-                      marginBottom: 4,
-                    }}
-                  >
+                  <SmallCaps style={{ display: "block", marginBottom: 4 }}>
                     {label}
-                  </label>
+                  </SmallCaps>
                   <input
                     type="text"
                     defaultValue={(data.vinted.identification[field] as string) ?? ""}
@@ -732,7 +666,6 @@ export default function ResultsScreen({
                       display: "block",
                       width: "100%",
                       padding: "10px 12px",
-                      fontSize: 14,
                       border: "1.5px solid #e7e5e0",
                       borderRadius: 8,
                       backgroundColor: "#fafaf8",
@@ -792,45 +725,6 @@ export default function ResultsScreen({
               onClick={() => setSelectedPlatform("kleinanzeigen")}
             />
           </div>
-
-          {/* Callout */}
-          <div style={{ padding: "14px 20px 0" }}>
-            <div
-              style={{
-                display: "flex",
-                gap: 12,
-                padding: "14px",
-                borderRadius: 12,
-                background: "#fff",
-                border: "1px solid #e7e5e0",
-              }}
-            >
-              <div
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 8,
-                  flexShrink: 0,
-                  background: "oklch(0.62 0.15 145 / 0.1)",
-                  color: ACCENT,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                  fontSize: 13,
-                  fontWeight: 700,
-                }}
-              >
-                €
-              </div>
-              <div style={{ fontSize: 13.5, lineHeight: 1.45, color: "#3a3b3a" }}>
-                <strong style={{ color: "#0e0f0e" }}>{higherPlatform} nets you {fmt(priceDiff)} more.</strong>{" "}
-                {vintedQ50 >= kaQ50
-                  ? "Kleinanzeigen typically sells faster locally."
-                  : "Vinted reaches a larger fashion audience."}
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Listing copy */}
@@ -853,18 +747,9 @@ export default function ResultsScreen({
             >
               {/* Title */}
               <div style={{ padding: "14px 14px 8px" }}>
-                <div
-                  style={{
-                    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                    fontSize: 10,
-                    color: "#9b9c99",
-                    textTransform: "uppercase",
-                    letterSpacing: "1.2px",
-                    marginBottom: 6,
-                  }}
-                >
+                <SmallCaps size={10} style={{ display: "block", marginBottom: 6 }}>
                   Title
-                </div>
+                </SmallCaps>
                 <input
                   type="text"
                   value={listingTitle}
@@ -890,18 +775,9 @@ export default function ResultsScreen({
               <div style={{ height: 1, background: "#efece6" }} />
               {/* Description */}
               <div style={{ padding: "12px 14px 14px" }}>
-                <div
-                  style={{
-                    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                    fontSize: 10,
-                    color: "#9b9c99",
-                    textTransform: "uppercase",
-                    letterSpacing: "1.2px",
-                    marginBottom: 6,
-                  }}
-                >
+                <SmallCaps size={10} style={{ display: "block", marginBottom: 6 }}>
                   Description
-                </div>
+                </SmallCaps>
                 <textarea
                   value={listingDesc}
                   onChange={(e) =>
