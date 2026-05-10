@@ -44,7 +44,13 @@ data/*.db
 data/splits/*.parquet
 data/translations/
 data/resell-copilot-artifacts/
+data/data_leon/
+data/clothing_*/
 !data/splits/.gitkeep
+
+# Phase 1 verification artifacts
+notebooks/samples/
+notebooks/clip_tag_verification_summary.json
 *.cache/
 *.h5
 *.hdf5

@@ -325,6 +325,81 @@ accuracy improves with the retrained model" rather than "6 in 10 KA items return
 
 ---
 
+### 3.3 Model #1 Multi-Image Retraining (Round 2)
+
+**Owner:** Michael. **Status:** shipped 2026-05-10.
+**Adapter:** `mchlkan/qwen3vl4b-resell-adapter-multi-v1` (HF Hub, public).
+Local copy: `models/checkpoints/qwen3vl4b-resell-multi-v1/`.
+
+**Problem:** the v1 single-image adapter (`Rengo33/qwen3vl4b-resell-adapter`) has
+to guess brand and size from the cover photo alone. Cover shots rarely show the
+care label, so brand sat at 47–49% and size at ~24–27% — the two weakest
+extraction fields, and both directly tied to information that is printed on the
+sewn-in label rather than visible on the garment.
+
+**Hypothesis:** feed the model both photos at training and inference time —
+the cover shot for category/color/condition, the care-label shot for
+brand/size — and the field accuracies tied to label text should jump while
+the rest stays flat.
+
+**Data pipeline (new code):**
+- `scripts/reclassify_clip.py` — CLIP zero-shot tagger for scrapes that lack
+  per-photo `garment` / `label` tags. Run once on the no-CLIP scrape
+  (`clothing_2026-05-05_1146`). Pass `--margin 0.0` for 2-class output;
+  default `0.05` defaults uncertain photos to garment which collapses the
+  label class.
+- `scripts/build_manifest.py` — joins raw scrape directories (multiple photos
+  per listing + CLIP type tags) with `data/vinted_clothing_combined.parquet`
+  and `data/splits/*_ids.json`, producing one row per listing with
+  `garment_path`, optional `label_path`, `target_text`, and inherited split.
+  Vinted-only — Kleinanzeigen scrapes don't carry multi-photo data.
+- `src/multi_image_dataset.py` — `VintedMultiImageDataset` +
+  `MultiImageVLMCollator`. Mixed-mode: returns 1 image when no label exists,
+  2 when it does. `max_length` raised from 2048 → 3072 to fit the second
+  image's patch tokens.
+- `models/train_vlm.py` — added `--manifest` and `--max-images` flags. When
+  `--manifest` is passed the trainer switches to the multi-image dataset
+  and collator; the single-image path still works unchanged.
+
+**Manifest stats:** 6,408 listings (5,436 train / 604 val / 368 test).
+96% of train rows carry a label photo; the rest fall back to garment-only
+through the same dataset class.
+
+**Training:** identical hyperparameters to v1 (LR 1e-4, eff batch 8, 2 epochs,
+LoRA r=16 α=32, QLoRA 4-bit). 3.94 hours on a single RTX 4090 (community
+cloud). Final train_loss 0.383, eval_loss 0.348 (no overfit).
+
+**Evaluation — same 368-row test slice, single- vs multi-image:**
+
+| Metric | Single-image v1 | Multi-image v1 | Δ |
+|---|---|---|---|
+| **Brand (exact)** | 49.2% | **69.3%** | **+20.1 pp** |
+| **Size (exact)** | 26.9% | **45.9%** | **+19.0 pp** |
+| Condition (exact) | 64.1% | 65.5% | +1.4 |
+| Color (exact) | 74.5% | 74.7% | +0.2 |
+| Category (exact) | 99.5% | 99.7% | +0.3 |
+| Parse OK | 97.6% | 97.8% | +0.2 |
+| Avg latency (warm) | 12.0 s | 12.3 s | +0.2 s |
+| n | 368 | 368 | — |
+
+Hypothesis confirmed: brand and size — the fields that come straight off the
+care label — moved together by ~20 pp. The non-label-derived fields didn't
+shift, which is the right pattern (no regression, no spurious gain).
+Latency cost of the second image is ~200 ms warm.
+
+**Test set scope note:** the multi-image manifest test slice is 368 rows
+rather than the 500 rows of the original locked test set, because not every
+locked-test listing has multi-image scrape data available. Both rows in the
+table above are scored on the same 368 rows for an apples-to-apples
+comparison; cross-checking against the broader 500-row v1 numbers in §1
+gives the same direction at slightly different absolute levels.
+
+**Next:** Model #4 / #5 may benefit from re-extracting VLM features with the
+new adapter so the price and sell-likelihood heads see better embeddings.
+Optional, not blocking.
+
+---
+
 ## 4. Planned Improvements (Round 2)
 
 ### 4.1 Model #6 — Grounded Description Generator
@@ -367,15 +442,15 @@ at effectively zero price. Net: roughly neutral cost, substantially better quali
 
 ### 4.2 Model #1 Retraining (Owner: Leon)
 
-**Status:** design complete, implementation pending.
+**Status:** design complete, partially shipped.
 
 Three targeted improvements:
 1. **Larger base model:** evaluate Qwen3-VL-7B or Qwen3-VL-9B as base. Larger models
    may improve brand recognition and condition inference where the 4B model underperforms.
-2. **Multi-photo input:** use 3–5 photos per listing instead of hero shot only.
-   Brand labels, size tags, and wear flaws are often not visible in the hero image.
-   Expected improvement: brand accuracy and size accuracy.
-   Blocked on: clean `listing_id → [photo_paths]` mapping from the dataset.
+2. **Multi-photo input:** ~~design~~ **shipped 2026-05-10 — see §3.3.** Brand +20 pp,
+   size +19 pp on the 368-row multi-image test slice. Used 2 photos (garment + care
+   label) rather than 3–5; the label photo carries the brand/size text the cover shot
+   can't.
 3. **KA parse rate fix — baked into retraining (not a prompt patch):** root cause of
    the 40.9% KA parse rate is the `description` field: the model generates multi-sentence
    prose inside a JSON string and emits literal newlines, which breaks the parser.

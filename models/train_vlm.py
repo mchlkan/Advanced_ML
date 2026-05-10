@@ -218,9 +218,16 @@ def attach_lora(model, r: int = 16, alpha: int = 32, dropout: float = 0.05):
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--train-path", type=Path, default=DEFAULT_TRAIN,
-                   help="Train split parquet (canonical English columns).")
+                   help="Train split parquet (canonical English columns). Single-image mode.")
     p.add_argument("--val-path", type=Path, default=DEFAULT_VAL,
                    help="Val split parquet for per-epoch eval loss. Pass empty string to disable.")
+    # Multi-image mode: when --manifest is given, --train-path / --val-path
+    # are ignored and the dataset is filtered from the manifest by `split`.
+    p.add_argument("--manifest", type=Path, default=None,
+                   help="Multi-image manifest parquet (output of scripts/build_manifest.py). "
+                        "When set, switches to multi-image training and ignores --train-path/--val-path.")
+    p.add_argument("--max-images", type=int, default=2,
+                   help="Multi-image mode: max photos per listing fed to the model (1 or 2).")
     p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT,
                    help="Where to save the LoRA adapter + processor.")
     p.add_argument("--model-id", default=MODEL_ID)
@@ -242,10 +249,7 @@ def parse_args():
     return p.parse_args()
 
 
-def main():
-    args = parse_args()
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-
+def _build_single_image_datasets(args):
     train_df = load_split(args.train_path)
     if args.max_train_rows > 0 and len(train_df) > args.max_train_rows:
         train_df = train_df.sample(n=args.max_train_rows,
@@ -260,12 +264,57 @@ def main():
         val_df = load_split(args.val_path)
         val_ds = to_chat_dataset(val_df)
         print(f"val rows:   {len(val_ds)}")
+    return train_ds, val_ds
+
+
+def _build_multi_image_datasets(args):
+    """Build train/val from manifest. Returns torch Datasets, not HF Datasets."""
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from multi_image_dataset import VintedMultiImageDataset  # noqa: E402
+
+    train_ds = VintedMultiImageDataset(
+        manifest_path=args.manifest, split="train", max_images=args.max_images,
+    )
+    if args.max_train_rows > 0 and len(train_ds) > args.max_train_rows:
+        # Cap by sampling listing_ids deterministically.
+        train_ds.df = train_ds.df.sample(
+            n=args.max_train_rows, random_state=args.seed,
+        ).reset_index(drop=True)
+        print(f"capped to {len(train_ds)} train rows for smoke run")
+    print(f"train rows: {len(train_ds)}  (multi-image, max_images={args.max_images})")
+
+    val_ds = VintedMultiImageDataset(
+        manifest_path=args.manifest, split="val", max_images=args.max_images,
+    )
+    if len(val_ds) == 0:
+        val_ds = None
+    else:
+        print(f"val rows:   {len(val_ds)}")
+    return train_ds, val_ds
+
+
+def main():
+    args = parse_args()
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    multi_image = args.manifest is not None
+    if multi_image:
+        train_ds, val_ds = _build_multi_image_datasets(args)
+    else:
+        train_ds, val_ds = _build_single_image_datasets(args)
 
     model, processor = load_model_and_processor(args.model_id)
     model = attach_lora(model,
                         r=args.lora_r, alpha=args.lora_alpha,
                         dropout=args.lora_dropout)
     model.config.use_cache = False  # required when grad-ckpt is on
+
+    if multi_image:
+        sys.path.insert(0, str(REPO_ROOT / "src"))
+        from multi_image_dataset import MultiImageVLMCollator  # noqa: E402
+        collator = MultiImageVLMCollator(processor)
+    else:
+        collator = VLMCollator(processor)
 
     training_args = TrainingArguments(
         output_dir=str(args.out_dir),
@@ -289,7 +338,7 @@ def main():
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         report_to="none",
-        remove_unused_columns=False,  # keep `messages` / `image` through Trainer
+        remove_unused_columns=False,  # keep `messages` / `image[s]` through Trainer
         dataloader_num_workers=2,
         seed=args.seed,
     )
@@ -299,7 +348,7 @@ def main():
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=val_ds,
-        data_collator=VLMCollator(processor),
+        data_collator=collator,
     )
     trainer.train()
 

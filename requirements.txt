@@ -4,7 +4,7 @@ uvicorn[standard]>=0.29.0
 python-multipart>=0.0.9
 
 # VLM & fine-tuning
-transformers>=4.41.0
+transformers>=4.56,<5
 torch>=2.3.0
 torchvision>=0.18.0
 peft>=0.11.0
