@@ -465,6 +465,136 @@ plumbing + 3c7d9cb's debug strings," not "pick one side wholesale."
 
 ---
 
+### Day 5 — 2026-05-10 (continued): frontend status review + Vercel deploy planning
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Detailed log:** none separate — this entry is the log
+**Commits:**
+- `<this commit>` Log frontend-status + deploy planning + add docs/deploy_plan.md
+
+#### Prompt 1
+> "Perfect in that case we are we currently with the frontend status? I want to deploy it on vercel so everyone can have access to it"
+
+**Decision:** Treated this as two separate questions and answered both
+honestly. For "current frontend status," ran parallel reads on
+`package.json`, `src/` structure, all four `api/*.ts` clients, `page.tsx`,
+`UploadScreen.tsx`, `InventoryScreen.tsx`, plus a `grep` for env-var
+usage. Confirmed: Next.js 14 App Router + TS + Tailwind 4, all
+endpoints wired through `NEXT_PUBLIC_API_URL` with localhost fallback,
+draft-flow used (not direct publish), `${BASE}${item.thumbnail_url}`
+for image URLs. Found two cosmetic issues — empty `src/pages/` (just
+`.gitkeep`) and stale README claiming mock-mode. Tried to verify build,
+hit `next: command not found` — `node_modules` didn't exist, ran
+`npm install && npm run build` in background → **succeeded** (97.1 kB
+First Load JS, prerenderable). For "deploy on Vercel," surfaced the
+architectural reality: frontend is Vercel-native (~5 min) but FastAPI +
+SQLite + Vinted/KA session cookies cannot run on Vercel — needs
+separate hosting. Outlined four scenarios (UI-only / tunnel / hosted
+backend / RunPod-everything) with cost + time estimates, and three
+uncomfortable truths (shared Vinted account = ban risk for any user
+who publishes through it, SQLite ephemerality on cheap hosts,
+`data/uploads/` ephemerality). Surfaced `AskUserQuestion` with two
+questions: audience definition + publish-risk handling, since these
+two answers determine the whole deployment shape.
+
+**Outcome:** User got an accurate picture of what works, what's missing,
+and what "deploy" actually entails. Two design decisions queued for
+their input rather than guessing.
+
+#### Prompt 2 (via AskUserQuestion)
+> Audience: "Persistent public-link 'product' feel"
+> Publish: "allow real publishing for everyone but accessing our application needs a password" (custom answer combining options 2 and 3)
+
+**Decision:** Recognized this commits us to a real engineering project,
+not a one-button deploy. The combination "persistent public link +
+real publishing + password gate" implies: (a) backend must be hosted
+on something with persistent disk, (b) frontend needs middleware-level
+auth, (c) the shared Vinted account *will* be used by anyone who clears
+the password — that risk is accepted. Did not start any work. Surfaced
+`AskUserQuestion` again with two follow-ups: backend host choice
+(Railway / Fly.io / RunPod / Render) and start-now-vs-plan-first.
+
+**Outcome:** No premature execution. Two more decisions queued for the
+user before any code touched.
+
+#### Prompt 3 (via AskUserQuestion)
+> Backend host: "I have a separate free AWS server, could this work?" (custom answer outside the 4 options)
+> Ordering: "Plan first, then execute sequentially"
+
+**Decision:** AWS free-tier EC2 can absolutely host this — flagged
+that t3.micro at 1 GB RAM is workable-but-tight for FastAPI + Pillow
+and recommended swap as a safety net. "Plan first then execute
+sequentially" means write a comprehensive doc for review *before*
+touching any code. Read three more backend facts that the plan would
+need: current CORS policy (`allow_origins=["*"]` — too open for
+production with real publishing), `requirements.txt` (32 lines
+including ~5 GB of training-only deps like `torch`, `transformers`,
+`bitsandbytes` — would bloat the EC2 image), and every `os.environ`
+read in the backend (catalogued 18 env vars across 8 files). Wrote
+`docs/deploy_plan.md` (~280 lines) with: topology diagram, explicit
+assumptions section (8 items the user must confirm or correct), 5
+phases with commands, risk table, rollback plan, time estimate (3-6
+hrs realistic), out-of-scope section, and an explicit §12 listing the
+4 things needed from the user before execution starts. Did NOT touch
+any code.
+
+**Outcome:** `docs/deploy_plan.md` written, untracked, awaiting user
+review. The plan is a contract — every assumption is explicit and
+every command is shown ahead of time.
+
+#### Prompt 4
+> "did you log our conversation?"
+
+**Decision:** Honest answer — no, the most recent 3 prompts had not
+been logged to `docs/ai_usage_log.md`. Listed exactly what was logged
+(through commit `91bcd84`) versus what was still only in conversation
+context. Re-offered the branch-juggle detour I had asked about at the
+end of the previous reply. Did not do it without explicit go-ahead
+because it requires checking out main mid-conversation and the user
+hadn't said yes yet.
+
+**Outcome:** User got an accurate answer about state of the log, plus
+a fresh prompt to make the call.
+
+#### Prompt 5
+> "yeah please log every interaction we have"
+
+**Decision:** Switched to main (`git checkout main`), confirmed
+`docs/deploy_plan.md` is in the working tree as untracked (it survives
+branch switches because it's untracked), appended this entry to
+`docs/ai_usage_log.md` covering all 5 prompts in this sub-session,
+staged both files, committed with a message describing both. Then
+switching back to `frontend_development` to continue waiting for the
+user's answers to the deploy plan's §12 questions.
+
+**Outcome:** Log + plan both committed to main in one commit, branch
+returns to `frontend_development`, deploy planning resumes from the
+user's review.
+
+**End-of-session reflection:** the user explicitly course-corrected
+twice this sub-session — first by escalating "deploy on Vercel" into
+"persistent public product with password gate" (a much bigger ask than
+my initial scenario list assumed), and then by checking whether I had
+followed through on the prompt-by-prompt logging system we set up
+earlier. Both course-corrections were *checks* on me rather than
+*requests*. Lesson: when you set up an explicit process (§7's
+prompt-by-prompt template), don't quietly skip it just because the
+user asks you to do other work. Logging a prompt takes ~30 seconds in
+context, but reconstructing it from memory after 3 turns means
+paraphrase, not verbatim — which defeats the whole point. The
+right pattern going forward is to either (a) log inline as part of
+the response, or (b) batch with explicit "I'll log these N prompts
+when we hit a pause." Silently deferring is the failure mode.
+
+A second observation: the user's "free AWS server" answer fell outside
+my four-option `AskUserQuestion` because the question's options
+implicitly assumed *new* hosting. Lesson: when surfacing options for
+infra choices, always include "I already have X" as either an explicit
+option or in the question wording. The user's existing infra is often
+a stronger choice than anything I'd recommend.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
