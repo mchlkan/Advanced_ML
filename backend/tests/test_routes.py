@@ -95,3 +95,42 @@ def test_publish_round_trip(app_client, jpeg_bytes):
 def test_upload_rejects_non_image(app_client):
     r = app_client.post("/upload", files={"image": ("evil.bin", b"\x00\x01\x02not an image", "application/octet-stream")})
     assert r.status_code == 400
+
+
+def test_upload_with_label_image_persists_both(app_client, jpeg_bytes):
+    """Multi-image upload: cover + care label both saved, label_image_path tracked in DB."""
+    r = app_client.post(
+        "/upload",
+        files={
+            "image": ("hero.jpg", jpeg_bytes, "image/jpeg"),
+            "label_image": ("label.jpg", jpeg_bytes, "image/jpeg"),
+        },
+    )
+    assert r.status_code == 200, r.text
+    listing_id = r.json()["listing_id"]
+
+    cover = app_client.uploads_dir / f"{listing_id}.jpg"
+    label = app_client.uploads_dir / f"{listing_id}_label.jpg"
+    assert cover.exists()
+    assert label.exists()
+
+    conn = sqlite3.connect(app_client.db_path)
+    row = conn.execute(
+        "SELECT image_path, label_image_path FROM listings WHERE id = ?",
+        (listing_id,),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row[0].endswith(f"{listing_id}.jpg")
+    assert row[1] is not None and row[1].endswith(f"{listing_id}_label.jpg")
+
+    # Both image and label endpoints should serve the saved JPEGs.
+    assert app_client.get(f"/listings/{listing_id}/image").status_code == 200
+    assert app_client.get(f"/listings/{listing_id}/label").status_code == 200
+
+
+def test_upload_without_label_image_404s_label_endpoint(app_client, jpeg_bytes):
+    r = app_client.post("/upload", files={"image": ("hero.jpg", jpeg_bytes, "image/jpeg")})
+    listing_id = r.json()["listing_id"]
+    assert app_client.get(f"/listings/{listing_id}/image").status_code == 200
+    assert app_client.get(f"/listings/{listing_id}/label").status_code == 404

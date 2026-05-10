@@ -148,13 +148,17 @@ async def get_inventory_summary() -> InventorySummary:
 
 @router.post("/listings/{listing_id}/sold", status_code=204, response_class=Response)
 async def mark_sold(listing_id: str) -> Response:
-    image_path = await db.delete_listing(listing_id)
-    if image_path is None:
+    deleted = await db.delete_listing(listing_id)
+    if deleted is None:
         raise HTTPException(status_code=404, detail=f"listing {listing_id} not found")
-    try:
-        Path(image_path).unlink(missing_ok=True)
-    except Exception:
-        pass
+    image_path, label_image_path = deleted
+    for path_str in (image_path, label_image_path):
+        if path_str is None:
+            continue
+        try:
+            Path(path_str).unlink(missing_ok=True)
+        except Exception:
+            pass
     return Response(status_code=204)
 
 
@@ -171,6 +175,24 @@ async def get_listing_image(listing_id: str) -> FileResponse:
     # code, so reject anything outside the upload root before opening.
     if not raw_path.is_relative_to(uploads_root) or not raw_path.is_file():
         raise HTTPException(status_code=404, detail="image not found")
+    return FileResponse(raw_path, media_type="image/jpeg")
+
+
+@router.get("/listings/{listing_id}/label")
+async def get_listing_label_image(listing_id: str) -> FileResponse:
+    """Return the care-label photo for the listing, or 404 if none was uploaded."""
+    record = await db.get_listing(listing_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="listing not found")
+
+    label_path_str = record.get("label_image_path")
+    if not label_path_str:
+        raise HTTPException(status_code=404, detail="label image not uploaded")
+
+    raw_path = Path(label_path_str).resolve()
+    uploads_root = upload_route.UPLOADS_DIR.resolve()
+    if not raw_path.is_relative_to(uploads_root) or not raw_path.is_file():
+        raise HTTPException(status_code=404, detail="label image not found")
     return FileResponse(raw_path, media_type="image/jpeg")
 
 

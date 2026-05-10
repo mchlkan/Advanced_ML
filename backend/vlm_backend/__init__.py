@@ -27,7 +27,13 @@ class VLMBackend(Protocol):
     name: str
 
     async def warmup(self) -> None: ...
-    async def predict(self, image: Image.Image, platform: str, hints: str | None = None) -> VLMOutput: ...
+    async def predict(
+        self,
+        image: Image.Image,
+        platform: str,
+        hints: str | None = None,
+        label_image: Image.Image | None = None,
+    ) -> VLMOutput: ...
 
 
 def get_backend() -> VLMBackend:

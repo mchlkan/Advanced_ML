@@ -31,12 +31,19 @@ _BRANDS = ["Zara", "H&M", "Nike", "Adidas", "Levi's", "Uniqlo"]
 _COLORS = ["black", "white", "blue", "red", "green", "grey"]
 
 
-def _seeded_rng(image: Image.Image, platform: str, hints: str | None) -> np.random.Generator:
+def _seeded_rng(
+    image: Image.Image,
+    platform: str,
+    hints: str | None,
+    label_image: Image.Image | None = None,
+) -> np.random.Generator:
     h = hashlib.sha256()
     h.update(image.tobytes())
     h.update(platform.encode())
     if hints:
         h.update(hints.encode())
+    if label_image is not None:
+        h.update(label_image.tobytes())
     seed = int.from_bytes(h.digest()[:8], "big") & 0xFFFFFFFF
     return np.random.default_rng(seed)
 
@@ -47,8 +54,14 @@ class StubVLM:
     async def warmup(self) -> None:
         pass
 
-    async def predict(self, image: Image.Image, platform: str, hints: str | None = None) -> VLMOutput:
-        rng = _seeded_rng(image, platform, hints)
+    async def predict(
+        self,
+        image: Image.Image,
+        platform: str,
+        hints: str | None = None,
+        label_image: Image.Image | None = None,
+    ) -> VLMOutput:
+        rng = _seeded_rng(image, platform, hints, label_image)
         cats = VINTED_CATEGORIES_EN if platform == "vinted" else KLEINANZEIGEN_CATEGORIES_EN
         cat = cats[rng.integers(len(cats))]
         cond = CONDITION_VALUES_EN[rng.integers(len(CONDITION_VALUES_EN))]

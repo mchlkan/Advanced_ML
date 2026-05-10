@@ -23,10 +23,11 @@ DEFAULT_DB_PATH = REPO_ROOT / "data" / "resell.db"
 #   failed   — terminal, gave up after max retries or hit a permanent error
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS listings (
-  id          TEXT PRIMARY KEY,
-  created_at  INTEGER NOT NULL,
-  image_path  TEXT NOT NULL,
-  vlm_backend TEXT NOT NULL
+  id                TEXT PRIMARY KEY,
+  created_at        INTEGER NOT NULL,
+  image_path        TEXT NOT NULL,
+  label_image_path  TEXT,
+  vlm_backend       TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS predictions (
@@ -119,6 +120,10 @@ _PUBLISH_MIGRATIONS = [
     "ALTER TABLE publishes ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
 ]
 
+_LISTINGS_MIGRATIONS = [
+    "ALTER TABLE listings ADD COLUMN label_image_path TEXT",
+]
+
 
 def now_ms() -> int:
     return int(time.time() * 1000)
@@ -144,6 +149,14 @@ async def init_db(db_path: Path | None = None) -> None:
             col = stmt.split("ADD COLUMN ", 1)[1].split()[0]
             if col not in existing:
                 await conn.execute(stmt)
+        existing_listings = {
+            row[1]
+            for row in await (await conn.execute("PRAGMA table_info(listings)")).fetchall()
+        }
+        for stmt in _LISTINGS_MIGRATIONS:
+            col = stmt.split("ADD COLUMN ", 1)[1].split()[0]
+            if col not in existing_listings:
+                await conn.execute(stmt)
         # Created after the migrations above so existing DBs that lack the
         # `status` column at SCHEMA-eval time don't fail. (Fresh DBs already
         # have the column from CREATE TABLE.)
@@ -158,11 +171,19 @@ async def log_listing(
     image_path: Path,
     vlm_backend: str,
     db_path: Path | None = None,
+    label_image_path: Path | None = None,
 ) -> None:
     async with aiosqlite.connect(_resolve(db_path)) as conn:
         await conn.execute(
-            "INSERT INTO listings(id, created_at, image_path, vlm_backend) VALUES (?, ?, ?, ?)",
-            (listing_id, now_ms(), str(image_path), vlm_backend),
+            "INSERT INTO listings(id, created_at, image_path, label_image_path, vlm_backend) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                listing_id,
+                now_ms(),
+                str(image_path),
+                str(label_image_path) if label_image_path is not None else None,
+                vlm_backend,
+            ),
         )
         await conn.commit()
 
@@ -226,7 +247,7 @@ async def get_listing(
     async with aiosqlite.connect(_resolve(db_path)) as conn:
         conn.row_factory = aiosqlite.Row
         listing_row = await (await conn.execute(
-            "SELECT image_path FROM listings WHERE id = ?", (listing_id,)
+            "SELECT image_path, label_image_path FROM listings WHERE id = ?", (listing_id,)
         )).fetchone()
         if listing_row is None:
             return None
@@ -237,6 +258,7 @@ async def get_listing(
         )).fetchone()
         return {
             "image_path": listing_row["image_path"],
+            "label_image_path": listing_row["label_image_path"],
             "last_english_fields": json.loads(latest["english_fields"]) if latest else {},
         }
 
@@ -470,11 +492,12 @@ async def get_inventory_rows(db_path: Path | None = None) -> list[dict]:
         return [dict(r) for r in rows]
 
 
-async def delete_listing(listing_id: str, db_path: Path | None = None) -> str | None:
-    """Delete a listing and all related rows. Returns the image_path if found, else None."""
+async def delete_listing(listing_id: str, db_path: Path | None = None) -> tuple[str, str | None] | None:
+    """Delete a listing and all related rows. Returns ``(image_path, label_image_path)``
+    if found, else None. ``label_image_path`` is None when no label was uploaded."""
     async with aiosqlite.connect(_resolve(db_path)) as conn:
         row = await (await conn.execute(
-            "SELECT image_path FROM listings WHERE id = ?", (listing_id,)
+            "SELECT image_path, label_image_path FROM listings WHERE id = ?", (listing_id,)
         )).fetchone()
         if row is None:
             return None
@@ -483,4 +506,4 @@ async def delete_listing(listing_id: str, db_path: Path | None = None) -> str | 
         await conn.execute("DELETE FROM publishes WHERE listing_id = ?", (listing_id,))
         await conn.execute("DELETE FROM listings WHERE id = ?", (listing_id,))
         await conn.commit()
-        return row[0]
+        return row[0], row[1]

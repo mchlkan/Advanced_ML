@@ -44,7 +44,10 @@ from prompts import get_prompt  # noqa: E402
 
 
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
-DEFAULT_ADAPTER = "Rengo33/qwen3vl4b-resell-adapter"
+# Multi-image v1 (2026-05-10). Trained on garment + optional care label;
+# brand +20pp, size +19pp vs the single-image v1 adapter
+# (Rengo33/qwen3vl4b-resell-adapter). See docs/model_stack_evolution.md §3.3.
+DEFAULT_ADAPTER = "mchlkan/qwen3vl4b-resell-adapter-multi-v1"
 DEFAULT_OUTPUT = REPO_ROOT / "data" / "embeddings" / "vlm_pooled_combined.npy"
 DEFAULT_INDEX = REPO_ROOT / "data" / "embeddings" / "vlm_pooled_combined_index.parquet"
 DEFAULT_VINTED = REPO_ROOT / "data" / "vinted_clothing_combined.parquet"
@@ -125,21 +128,29 @@ def model_device(model) -> torch.device:
     return next(model.parameters()).device
 
 
-def build_inputs(processor, image, platform: str, device: torch.device, prompt: str | None = None):
+def build_inputs(
+    processor,
+    image,
+    platform: str,
+    device: torch.device,
+    prompt: str | None = None,
+    label_image=None,
+):
     """Build the VLM chat-template inputs. ``prompt`` overrides ``get_prompt(platform)``
     so callers (e.g. backend with seller hints) can append text without bypassing the
-    canonical prompt prefix."""
+    canonical prompt prefix.
+
+    ``label_image`` (optional) feeds a second photo (the care label) alongside the
+    garment shot — the multi-image adapter was trained on this pairing and uses
+    the label for brand/size. When None, the single-image path is used.
+    """
     if prompt is None:
         prompt = get_prompt(platform)
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image},
-                {"type": "text", "text": prompt},
-            ],
-        }
-    ]
+    content = [{"type": "image", "image": image}]
+    if label_image is not None:
+        content.append({"type": "image", "image": label_image})
+    content.append({"type": "text", "text": prompt})
+    messages = [{"role": "user", "content": content}]
     inputs = processor.apply_chat_template(
         messages,
         add_generation_prompt=True,

@@ -63,14 +63,21 @@ class RunpodHTTPVLM:
         if you want a worker pre-warmed for the demo window."""
         return
 
-    async def predict(self, image: Image.Image, platform: str, hints: str | None = None) -> VLMOutput:
-        payload = {
-            "input": {
-                "image_b64": resize_and_b64(image, max_dim=self.max_image_dim),
-                "platform": platform,
-                "hints": hints,
-            }
+    async def predict(
+        self,
+        image: Image.Image,
+        platform: str,
+        hints: str | None = None,
+        label_image: Image.Image | None = None,
+    ) -> VLMOutput:
+        payload_input: dict = {
+            "image_b64": resize_and_b64(image, max_dim=self.max_image_dim),
+            "platform": platform,
+            "hints": hints,
         }
+        if label_image is not None:
+            payload_input["label_image_b64"] = resize_and_b64(label_image, max_dim=self.max_image_dim)
+        payload = {"input": payload_input}
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             run_resp = await client.post(f"{self._base}/run", json=payload, headers=self._headers)

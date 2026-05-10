@@ -110,13 +110,22 @@ class LocalMPSVLM:
         print(f"LocalMPSVLM loaded {self.base_model} + {self.adapter_id} on {self.device}")
 
     @torch.no_grad()
-    def _predict_sync(self, image: Image.Image, platform: str, hints: str | None) -> VLMOutput:
+    def _predict_sync(
+        self,
+        image: Image.Image,
+        platform: str,
+        hints: str | None,
+        label_image: Image.Image | None,
+    ) -> VLMOutput:
         if self.model is None:
             raise RuntimeError("LocalMPSVLM.warmup() must be awaited before predict()")
         prompt = get_prompt(platform)
         if hints:
             prompt = f"{prompt}\n{hints}"
-        inputs = build_inputs(self.processor, image, platform, self.device, prompt=prompt)
+        inputs = build_inputs(
+            self.processor, image, platform, self.device,
+            prompt=prompt, label_image=label_image,
+        )
 
         out = self.model(**inputs, output_hidden_states=True, return_dict=True)
         hidden = out.hidden_states[-1][0, -1, :].float().cpu().numpy()
@@ -138,5 +147,11 @@ class LocalMPSVLM:
             recovered=parsed.recovered,
         )
 
-    async def predict(self, image: Image.Image, platform: str, hints: str | None = None) -> VLMOutput:
-        return await asyncio.to_thread(self._predict_sync, image, platform, hints)
+    async def predict(
+        self,
+        image: Image.Image,
+        platform: str,
+        hints: str | None = None,
+        label_image: Image.Image | None = None,
+    ) -> VLMOutput:
+        return await asyncio.to_thread(self._predict_sync, image, platform, hints, label_image)

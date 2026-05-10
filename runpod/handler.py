@@ -35,7 +35,7 @@ from prompts import EXPECTED_HIDDEN_DIM, SUPPORTED_PLATFORMS, get_prompt  # noqa
 
 
 BASE_MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-VL-4B-Instruct")
-ADAPTER_ID = os.environ.get("ADAPTER_ID", "Rengo33/qwen3vl4b-resell-adapter")
+ADAPTER_ID = os.environ.get("ADAPTER_ID", "mchlkan/qwen3vl4b-resell-adapter-multi-v1")
 MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "256"))
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
@@ -73,16 +73,12 @@ _device = next(_model.parameters()).device
 print(f"[boot] Model ready on {_device}", flush=True)
 
 
-def _build_inputs(image: Image.Image, platform: str, prompt: str):
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image},
-                {"type": "text", "text": prompt},
-            ],
-        }
-    ]
+def _build_inputs(image: Image.Image, platform: str, prompt: str, label_image: Image.Image | None = None):
+    content = [{"type": "image", "image": image}]
+    if label_image is not None:
+        content.append({"type": "image", "image": label_image})
+    content.append({"type": "text", "text": prompt})
+    messages = [{"role": "user", "content": content}]
     inputs = _processor.apply_chat_template(
         messages,
         add_generation_prompt=True,
@@ -97,6 +93,7 @@ def _build_inputs(image: Image.Image, platform: str, prompt: str):
 def handler(event):
     body = event.get("input", {})
     img_b64 = body.get("image_b64")
+    label_b64 = body.get("label_image_b64")  # optional second photo
     platform = body.get("platform")
     hints = body.get("hints")
 
@@ -108,11 +105,18 @@ def handler(event):
     except Exception as exc:
         return {"error": f"could not decode image_b64: {type(exc).__name__}: {exc}"}
 
+    label_img = None
+    if label_b64:
+        try:
+            label_img = Image.open(io.BytesIO(base64.b64decode(label_b64))).convert("RGB")
+        except Exception as exc:
+            return {"error": f"could not decode label_image_b64: {type(exc).__name__}: {exc}"}
+
     prompt = get_prompt(platform)
     if hints:
         prompt = f"{prompt}\n{hints}"
 
-    inputs = _build_inputs(img, platform, prompt)
+    inputs = _build_inputs(img, platform, prompt, label_image=label_img)
 
     out = _model(**inputs, output_hidden_states=True, return_dict=True)
     hidden_tensor = out.hidden_states[-1][0, -1, :].float().cpu()

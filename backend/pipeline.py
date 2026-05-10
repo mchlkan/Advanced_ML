@@ -155,12 +155,13 @@ async def run_pipeline(
     vlm: VLMBackend,
     hints: str | None = None,
     field_overrides: dict | None = None,
+    label_image: Image.Image | None = None,
 ) -> dict:
     started = time.perf_counter()
 
     vinted_vlm, ka_vlm = await asyncio.gather(
-        vlm.predict(image, "vinted", hints=hints),
-        vlm.predict(image, "kleinanzeigen", hints=hints),
+        vlm.predict(image, "vinted", hints=hints, label_image=label_image),
+        vlm.predict(image, "kleinanzeigen", hints=hints, label_image=label_image),
     )
 
     if field_overrides:

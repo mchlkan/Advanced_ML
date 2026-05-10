@@ -67,12 +67,24 @@ async def verify(request: Request, body: VerifyRequest) -> VerifyResponse:
     except UnidentifiedImageError as exc:
         raise HTTPException(status_code=410, detail="Stored image could not be decoded") from exc
 
+    label_image = None
+    label_path_str = rec.get("label_image_path")
+    if label_path_str:
+        label_path = Path(label_path_str)
+        if label_path.exists():
+            try:
+                label_image = Image.open(label_path).convert("RGB")
+            except UnidentifiedImageError:
+                # Stored label is corrupt — fall back to single-image rather than 410ing the whole verify.
+                label_image = None
+
     hint_dict = body.hints.model_dump(exclude_none=True)
 
     result = await run_pipeline(
         image, state.models, state.vlm,
         hints=_format_hints(hint_dict),
         field_overrides=hint_dict or None,
+        label_image=label_image,
     )
 
     changes = _diff_fields(rec["last_english_fields"], hint_dict)
