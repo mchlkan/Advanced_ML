@@ -303,21 +303,50 @@ chmod 600 .env.prod
 
 ### 5.6 Build + run
 
+The canonical build + run lives in `scripts/ec2_rebuild.sh`. After the repo
+is cloned at `/opt/resell/app` (§5.5), make the scripts executable once:
+
 ```bash
-docker build -t resell-backend .
-docker run -d \
-  --name resell-backend \
-  --restart unless-stopped \
-  -p 127.0.0.1:8000:8000 \
-  --env-file .env.prod \
-  -v /opt/resell/data:/app/data \
-  -v /opt/resell/checkpoints:/app/models/checkpoints:ro \
-  resell-backend
+chmod +x /opt/resell/app/scripts/ec2_*.sh
 ```
 
-`-p 127.0.0.1:8000:8000` binds only to localhost — nginx will reverse-proxy to
-this. Backend is NOT exposed to the public internet directly. The checkpoints
-volume is mounted read-only since the heads aren't retrained at inference time.
+Then trigger the full rebuild:
+
+```bash
+/opt/resell/app/scripts/ec2_rebuild.sh
+```
+
+That script does `git pull` → `docker build` → `docker rm -f` → `docker run`
+with the canonical flag set, then polls `/health` until the container is
+ready. The flag set:
+
+- `-p 127.0.0.1:8000:8000` — bound to localhost only; nginx (§5.7) reverse-proxies
+- `--env-file /opt/resell/app/.env.prod` — secrets
+- `-v /opt/resell/app/{backend,shared,models}:/app/<same>:ro` — application code
+  bind-mounted from the host's git checkout. The image itself doesn't bake the
+  code in (it's a "Python + deps" runtime shell), so `git pull && docker
+  restart` is enough to deploy code changes — see §5.6b.
+- `-v /opt/resell/data:/app/data` — read/write persistent dir for SQLite + uploads + DINOv2 cache
+- `-v /opt/resell/checkpoints:/app/models/checkpoints:ro` — read-only mount for
+  the head MLP checkpoints (gitignored, scp'd from Mac per §5.4). Nested under
+  the broader `/app/models` mount; Docker handles nested binds.
+
+### 5.6b Subsequent code-only deploys (~10 sec)
+
+For changes to Python files in `backend/`, `shared/`, or `models/` (everything
+except `requirements-prod.txt` + `Dockerfile`), use the fast path:
+
+```bash
+/opt/resell/app/scripts/ec2_redeploy.sh
+```
+
+That script does `git pull` → `docker restart resell-backend`. No image
+rebuild, no container recreation. The bind mounts mean the running uvicorn
+process imports from the host's filesystem; restart re-runs the imports +
+lifespan startup so the new code takes effect.
+
+When `requirements-prod.txt` or the `Dockerfile` itself changes, fall back
+to `ec2_rebuild.sh`.
 
 ### 5.7 nginx reverse proxy
 
@@ -438,15 +467,23 @@ If a deploy goes bad:
 
 ## 11. Time estimate
 
+Initial deploy (one-time):
+
 | Phase | Time | Status |
 |---|---|---|
-| 1. Frontend prep | 30 min | ✅ **DONE** — middleware, login page, README, vercel.json all on `feature/deploy-prep` |
-| 2. Backend code changes + Dockerfile | 1 hr | ✅ **DONE** — `requirements-prod.txt`, `Dockerfile`, `.dockerignore`, CORS env var, `/health`, session JSON materialization on `feature/deploy-prep` |
-| 1.6. Vercel deploy | 30 min | ⏳ User runs `vercel login` + `vercel --prod` interactively |
-| 3. AWS EC2 setup | 1-2 hrs | ⏳ User runs SSH commands from §5; I guide |
-| 4. Wire FE → BE | 10 min | ⏳ Set NEXT_PUBLIC_API_URL on Vercel, redeploy |
-| 5. Smoke tests + iteration | 30 min - 2 hrs | ⏳ Depends on DataDome behaviour |
-| **Remaining total** | **2-4 hrs realistic** | |
+| 1. Frontend prep | 30 min | ✅ **DONE** |
+| 2. Backend code changes + Dockerfile | 1 hr | ✅ **DONE** |
+| 1.6. Vercel deploy | 30 min | ✅ **DONE** |
+| 3. AWS EC2 setup | 1-2 hrs | ✅ **DONE** |
+| 4. Wire FE → BE | 10 min | ✅ **DONE** |
+| 5. Smoke tests + iteration | 30 min - 2 hrs | ✅ **DONE** |
+
+Per-deploy ongoing:
+
+| Path | Time | Trigger |
+|---|---|---|
+| **Code-only redeploy** (`ec2_redeploy.sh`) | **~10 sec** | Python file changes in `backend/`, `shared/`, `models/` |
+| Full rebuild (`ec2_rebuild.sh`) | ~3-5 min | `requirements-prod.txt`, `Dockerfile`, or apt deps changed |
 
 ---
 

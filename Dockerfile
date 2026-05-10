@@ -29,14 +29,12 @@ RUN apt-get purge -y gcc python3-dev \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Application code. Model checkpoints (models/checkpoints/) are bind-mounted
-# at runtime — see .dockerignore.
-COPY backend/ ./backend/
-COPY shared/ ./shared/
-COPY models/ ./models/
-
-# Runtime data dir (SQLite + uploads + HF cache). Bind-mounted at runtime.
-RUN mkdir -p /app/data/uploads
+# Application code is bind-mounted at runtime, not baked in. The container
+# expects /app/{backend,shared,models} to be mounted from the host's git
+# checkout. See scripts/ec2_rebuild.sh for the canonical run flags and
+# docs/deploy_plan.md §5.6 for the rationale (code-only deploys become
+# `git pull && docker restart` instead of a full rebuild).
+RUN mkdir -p /app/backend /app/shared /app/models /app/data/uploads
 
 ENV PYTHONUNBUFFERED=1
 # Keep DINOv2 weights inside the persistent volume so they're cached
