@@ -2891,6 +2891,151 @@ gone), and fall through to local cleanup.
 
 ---
 
+### Day 5 — 2026-05-10 (continued): wrap-up — price-change verification, dev guide, merge to main
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep` → also `main` after merge
+**Commits:**
+- `14b80f2` Add docs/development.md — practical handover guide
+- (no new commit) merge of feature/deploy-prep → main, fast-forward push
+
+This is the last working session of Day 5. Three small artifacts +
+the deployment merge.
+
+#### Prompt 1
+> "log the conversation after that investigate price changes"
+
+**Decision:** Same approach as the delete debug session — check
+production state first, then code-walk if needed. Pulled the
+predictions table: only `source='upload'` rows for the 4 surviving
+listings, no `source='edit'` ever. The 2 PATCH attempts visible in
+container logs were against listings the user later deleted (both
+cascaded via `db.delete_listing`).
+
+**Probe 1 — local store path:** `curl -X PATCH …/listings/{id}/fields
+{"price_eur": 12}` against a no-publish listing. Returned `{"stored":
+true, "pushed": {}}` and `pred=13 source='edit' price_eur=12.0` was
+written to the DB, with the original `pred=5 source='upload'
+price_eur=10.0` preserved (append-only). Reverted to 10.
+
+**Probe 2 — live-push code path:** Direct call to
+`vinted.update_listing("8876957698", payload)` from inside the
+container. Item 8876957698 had been deleted, so we got the cleanest
+possible structured error: `VintedError: fetch item details: HTTP
+404 — Artikel kann nicht mehr gefunden werden`. Confirms the error
+chain works end-to-end:
+
+```
+vinted.update_listing → raises VintedError on 404
+  → _push_edit propagates
+    → _push_one catches Exception, returns {ok: False, error: ...}
+      → PATCH route response includes pushed.vinted.error
+        → PriceEditModal renders ✗ Vinted: ...
+```
+
+**Why no live-push success test:** All previously-posted listings
+are gone (Vinted 8876957698 + 8878582905 + KA 3405034173 all
+404/DELETED). The integration is structurally sound; verifying the
+happy path requires posting a fresh listing first. Reported this to
+the user clearly with reproduction steps.
+
+#### Prompt 2
+> "okay enough for today last thing I want is to describe the backend and frontend lgoic and how you can push changes"
+
+**Decision:** Wrote `docs/development.md` (510 lines) — the practical
+handover guide. Distinct from `docs/technical_report.md` (which is
+the engineering retrospective for the business report) — this one is
+for the next dev who picks up the project. Structure:
+
+1. **Quick deploy reference** — single-table cheatsheet at the top
+   so anyone can find the right command in 5 seconds.
+2. **Backend logic** — startup sequence, every route surface,
+   pipeline diagram (parallel VLM × 2 + parallel description × 2 +
+   heads), publish runner state machine, integrations summary, DB
+   schema with one-liner per table.
+3. **Frontend logic** — stack, screen state-machine ASCII diagram,
+   per-component table, API client list, the multi-platform push
+   pattern walked through end-to-end.
+4. **How to push changes** — six labelled scenarios (A backend code,
+   B backend deps, C frontend, D `.pt` checkpoint, E VLM adapter,
+   F secrets) with the exact copy-paste commands.
+5. **Common debug operations** — live logs, prod DB queries via
+   `docker exec ... python`, probe-script-in-container pattern,
+   local frontend dev pointed at prod.
+6. **Repo map** + **TL;DR**.
+
+#### Prompt 3
+> "commit and push to main"
+
+**Decision:** Surveyed the diff. Local main had 3 stale commits not
+on origin/main (left over from earlier in the day before I started
+working on `feature/deploy-prep`); origin/main had 6 commits not on
+local main (Mike's multi-v2 work). Both sets were already in
+feature/deploy-prep's history (since I'd merged origin/main →
+feature/deploy-prep on commit 4305713 earlier). So the safe
+sequence:
+
+```
+git checkout main
+git reset --hard origin/main      # drop the 3 stale local commits (all preserved in feature/deploy-prep)
+git merge --ff-only feature/deploy-prep
+git push origin main
+git checkout feature/deploy-prep
+```
+
+Fast-forward succeeded — `af66cf9..14b80f2`, 68 files, +12,018
+lines, -1,317 lines. `main` and `feature/deploy-prep` now point at
+the same commit on both local and origin.
+
+**What I learned:**
+1. **"Investigate X" maps cleanly to the same recipe.** Whether the
+   user is debugging delete or price-change or anything else, the
+   shape is: pull prod logs/DB → identify the failure mode (or
+   confirm structure) → if structural is needed, run a synthetic
+   probe via direct integration call → report findings with explicit
+   reproduction steps for what's untestable. This recipe has paid
+   off three times today.
+2. **"Documentation as deliverable" benefits from audience clarity.**
+   Three docs, three audiences, three lengths — `technical_report.md`
+   for the business writer (722 lines, retrospective tone),
+   `development.md` for the next dev (510 lines, operational tone),
+   `ai_usage_log.md` for the course AI-usage submission
+   (~3000 lines, prompt-by-prompt narrative). Each one would have
+   been a hot mess if I'd tried to make a single doc serve all
+   three.
+3. **`git reset --hard origin/<branch>` is the right tool when
+   local-only commits are already preserved elsewhere.** The 3 stale
+   commits on local main were unsynced versions of Day 5 morning
+   work (logs + deploy plan) that had already been integrated into
+   feature/deploy-prep history. Resetting was a non-destructive
+   alignment, not a deletion. Good rule of thumb: a git destructive
+   action is safe when its content survives in the reflog of another
+   branch you can name.
+
+#### End-of-day state
+
+Both branches at `14b80f2`. All systems live in production:
+
+- Inventory actions: Open / Change price / Relist / Mark sold /
+  Delete — with platform-side push for both Vinted (live-item
+  endpoint discovered today via probe) and KA.
+- Multi-v2 VLM adapter pulled in (KA parse rate 100% upstream of
+  any RunPod worker rebuild Mike does).
+- 4 documentation artifacts in `docs/`: `deploy_plan.md`,
+  `technical_report.md`, `development.md`, `ai_usage_log.md`.
+- 4 probe scripts in `scripts/probe_*.py` documenting the API
+  discovery patterns for KA categories, KA edit, Vinted edit,
+  Vinted delete.
+- 123/123 backend tests green.
+
+Tomorrow (or whenever Day 6 happens): the v3 KA-inclusive manifest
+retrain Mike has queued on `docs/model_stack_evolution.md` §4.4 is
+the next big upstream change to expect. Backend is structured to
+absorb that without code changes (RunPod worker rebuild on Mike's
+side; our backend just keeps talking to the same endpoint).
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
