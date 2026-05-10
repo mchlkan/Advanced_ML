@@ -944,6 +944,85 @@ login` step.
 
 ---
 
+### Day 5 — 2026-05-10 (continued): Vercel deployed + .env.prod gitignore fix
+
+**AI tool:** Claude Code Opus 4.7 (1M context) + Vercel CLI (rengo33)
+**Branch:** `feature/deploy-prep`
+**Commits:**
+- `9afac18` Broaden .gitignore to cover .env.prod and other .env.* files
+- `<this commit>` Log Vercel deploy + secret-file safety fix
+
+#### Prompt 1
+> [via bash-stdout: `vercel login` succeeded] "autorization done you can continue,, I also created a new file .env.prod with all required secrets"
+
+**Decision:** Two parallel things to handle: drive the Vercel deploy
+(now that CLI is authenticated as `rengo33`), and find + use the user's
+`.env.prod`. Ran `vercel whoami` (✓ `rengo33`) + searched for `.env.prod`
+in repo root, frontend/, and on EC2 — found it only at the local repo
+root (`./env.prod`, 4530 bytes).
+
+**Critical safety check before doing anything else:** ran `git
+check-ignore -v .env.prod` — **NOT ignored**. The existing `.gitignore`
+patterns `.env` and `*.env` don't match `.env.prod` because the `.env`
+is in the middle of the filename, not the end. If I had `git add`'d
+anything broadly (e.g. `git add -A`) the secrets would have leaked into
+the commit. Patched `.gitignore` to include `.env.*` (with explicit
+`!.env.example` exceptions for templates), verified ignore works,
+committed as `9afac18`.
+
+Then in parallel:
+- `scp` the `.env.prod` to EC2 at `/opt/resell/app/.env.prod` with
+  `chmod 600`
+- `vercel link --yes --project resell-copilot` from `frontend/` →
+  linked as `leon-werner-schmidts-projects/resell-copilot`
+- `printf "Advanced_ML" | vercel env add RESELL_ACCESS_PASSWORD production` ✓
+- `printf "https://resell-copilot.duckdns.org" | vercel env add NEXT_PUBLIC_API_URL production` ✓
+- `vercel --prod` → **deployed in 47s** to
+  `https://resell-copilot-three.vercel.app` (alias) +
+  `https://resell-copilot-knygvhi8u-leon-werner-schmidts-projects.vercel.app`
+  (deployment-specific URL)
+
+Verified externally: `curl -I https://resell-copilot-three.vercel.app`
+→ **HTTP/2 307 redirect to /login**. Password middleware works.
+
+After scp'd to EC2, audited the variable names in `.env.prod`
+(without exposing values — `grep '^[A-Z_]+=' | cut -d= -f1`). Found:
+- ✅ `GROQ_API_KEY`, `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`,
+  `VINTED_ANON_ID`, `VINTED_DATADOME_SEED`, `VINTED_DEVICE_TOKEN`,
+  `VINTED_DEVICE_UUID`
+- ⚠️ `VINTED_SESSION_PATH=...` — points at a Mac path; won't resolve
+  on EC2
+- ❌ `VLM_BACKEND` missing — defaults to `stub`, no real ML
+- ❌ `VINTED_SESSION_JSON` missing — needed instead of the path
+- ❌ `KA_SESSION_JSON` (or KA_SESSION_PATH+file) missing entirely
+- ❌ `CORS_ORIGINS` missing — defaults to `*` (works but unsafe)
+- ℹ️ `GH_TOKEN`, `OPENAI_API_KEY` — extras, harmless
+
+Surfaced the gaps to the user with two repair options (inline JSON via
+`*_SESSION_JSON` env vars, or scp the actual session files). Did NOT
+proceed with `docker run` because it would just start a stub backend
+that returns `[STUB]` strings — no point until secrets are right.
+
+**Outcome:** Vercel live at `https://resell-copilot-three.vercel.app`
+with password gate working. EC2 image built, `.env.prod` scp'd but
+needs fixes before `docker run` is meaningful. `.gitignore` hardened
+against future `.env.*` leaks.
+
+**Reflection:** the most valuable thing I did this turn was **the
+gitignore audit before the scp**. Catching that `.env.prod` wasn't
+ignored was a near-miss — if the user had run `git add -A` (or worse,
+if I had as part of an unrelated commit), the secrets would have
+been committed and pushed. The shape of the bug is subtle: the existing
+patterns *look* like they cover env files, but the literal pattern
+matching doesn't catch `.env.prod`. Lesson: when a sensitive file
+appears in `git status --short` as `??` (untracked), always run
+`git check-ignore -v` before any `git add` to confirm it's actually
+gitignored. This is a one-line safety check that prevents a
+hard-to-undo mistake (force-pushing to expunge committed secrets is
+ugly, and the secrets are still in the reflog of every clone).
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
