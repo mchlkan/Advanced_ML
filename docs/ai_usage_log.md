@@ -2000,6 +2000,91 @@ the same branch, **always pull before pushing** as a habit. (A simple
 
 ---
 
+### Day 5 — 2026-05-10 (continued): Vinted publish failure — IP-block hypothesis disproved, parent-catalog mapping bug found
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commits:** `<this commit>` Fix Vinted catalog mapping + log session
+**Diagnostic scripts:** `/tmp/resell-test/` (test_publish.py, inspect_item.py, check_wardrobe.py, explore_catalogs.py, analyze_catalogs.py, test_pair.py, test_via_publish.py — kept locally for next debug session)
+
+#### Prompt 1
+> "can you just chekc backend logs on the server why the vinted listing failed?/Users/leonschmidt/Downloads/Resell_Copilot.pem"
+
+**Decision:** SSH'd to EC2 (13.49.21.29), tailed `docker logs resell-backend`. Found `/upload` endpoint hitting RunPod 120s timeouts (separate, throttling). For `/publish`, queried the `publishes` SQLite table directly via `docker exec resell-backend python -c ...` (sqlite3 binary not in image). Result: one publish row, `status=posted`, `platform_listing_id=8876957698`, `error=null`. Backend believed the publish succeeded. Reported to user.
+
+#### Prompt 2
+> "its throteled, but if I open https://www.vinted.fr/items/8876957698 I get 404"
+
+**Decision:** Read `backend/integrations/vinted.py:456-510` (the 3-step draft flow). Found a silent fallback at line 508: `body.get("item", body.get("draft", {})).get("id", draft_id)` — if Vinted's completion response is missing both `item.id` and `draft.id`, it silently uses the pre-publish `draft_id` and stores that as the listing URL. Hypothesised this was the bug. Proposed three small fixes (log response, raise on missing item.id, post-publish verification GET).
+
+#### Prompt 3
+> "could it also be that the server ip is somehow blocked?"
+
+**Decision:** Probed Vinted from EC2 with curl. Result: 200 + 2.3MB body, `cf-ray: …-ARN` (Stockholm Cloudflare edge), `set-cookie: datadome=; Max-Age=-1` (DD cookie being expired). Edge isn't blackholing, but eu-north-1 (`13.49.0.0/16`) is well-known datacenter range. Reported "plausible, not proven" with two diagnostics: log response body, OR run from residential IP.
+
+#### Prompt 4
+> "yes please" → user agreed to the response-body logging diagnostic
+
+**Decision:** Edited `backend/integrations/vinted.py:507-525` to log completion response keys/preview at WARNING level. Committed (`fd12d29`), pushed. About to redeploy to EC2 when user interrupted with new info.
+
+#### Prompt 5
+> "ah nvm revert your changes my girlfriend also has a server with aws and that isnt blocked on vinted."
+
+**Decision:** Reverted via `git revert --no-edit fd12d29` (creates new commit `cb3a176`). Chose revert over `reset --hard + force-push` because the diagnostic commit had already been pushed to origin — reverting is non-destructive and preserves an honest audit trail. EC2 was never redeployed in the meantime, so no rollback there.
+
+#### Prompt 6
+> "but maybe our categories are not mappen correctly could that be the case? So I would propose that you try to create a test listing"
+
+**Decision:** This was the right hypothesis. Read `shared/listing_mappings.py:116-130` to see current catalog IDs. SCP'd `vinted_session.json` from EC2 to `/tmp/resell-test/`. Wrote `test_publish.py` that monkey-patches `_post`/`_put`/`_get` on `VintedClient` to print every HTTP request + response body verbatim, then runs `submit_listing_via_draft` end-to-end. First run failed with em-dash in title (Vinted validates titles for special chars). Second run succeeded with sanitized title — got `item_id=8877227453`, `code:0` in completion response.
+
+**This already disproved the parser-fallback hypothesis from Prompt 2** — Vinted returned a real `item.id` field, the parser was correct, the URL stored matched. But the listing's `/items/{id}` endpoint 404'd anyway.
+
+#### Prompt 7
+> "ok to run" → repeat from EC2
+
+**Decision:** Backend container on EC2 was stuck in `Created` state — the recent commit `656195e Speed up backend deploys: bind-mount code instead of baking into image` removed code from the image and bind-mounts `/opt/resell/app:/app`, plus tries to bind `/opt/resell/checkpoints:/app/models/checkpoints`. The checkpoints mount fails because the target path doesn't exist as a writable dir in the now-empty image (`error mounting … read-only file system`). Production backend has been down for an unknown duration.
+
+Worked around by running a one-off `docker run --rm` with `-v /opt/resell/app:/app -v /opt/resell/data:/app/data` (skipping the broken checkpoints mount) and the test script bind-mounted to a non-stdlib-clashing path. Hit a fun footgun: named the script `/inspect.py` initially, which collided with Python's stdlib `inspect` module via `import inspect` from `asyncio` → circular import via my script. Renamed to `/run_inspect.py`.
+
+EC2 result: identical to local. Same 200s at every step, same `item.id` shape, same eventual 404 on /details. Both items eventually reached `code:104, "Artikel kann nicht mehr gefunden werden"`.
+
+#### Prompt 8
+> "yeah try to do it locally here, so we know the script is fine and than move to the server so we can see the ip working"
+
+**Decision:** Wardrobe inspection inverted the hypothesis. The 4 "alive" recent listings I'd been pointing at as "see, jackets/jeans/sneakers work but tshirts don't" all turned out to be `is_hidden=True, status=None` — i.e. **stuck in moderation**, not actually live. Only 5xxxxx items from way back were `is_hidden=False, status=6`. So the IP-vs-category split I'd cited was misleading.
+
+Re-tested with `category="jeans"` (catalog 183). Got the smoking gun: `400 — "Wähle eine Unterkategorie"`. Vinted explicitly told us catalog 183 is a parent, not a leaf. Used vinted-lister's local `config/catalog_flat.json` (2907 entries with parent_path) to verify that **`jackets:1908` and `jeans:183` are both intermediate parents**, while `tshirts:221` and `sneakers:2632` are already leaves.
+
+#### Prompt 9
+> "both pls" — code fix + control tests
+
+**Decision:** Edited `shared/listing_mappings.py`: jeans `183 → 1864` (Sonstiges leaf), jackets `1908 → 1078` (Bomberjacken leaf, since no Sonstiges leaf exists under Jacken). Then ran two control tests:
+
+- T1 (tshirts no-brand): 400 `"Wähle ein Marke"` — catalog 221 requires a brand
+- T2 (sneakers): 400 `"Wähle ein Größe"` — catalog 2632 requires size_id
+
+This surfaced a NEW bug: sneaker sizes use `size_group 7` which `shared/listing_mappings.py:174-182` intentionally leaves unmapped, with a now-incorrect comment claiming the user can pick the size on the Vinted UI post-publish. Reality: completion 400s before the user gets a chance.
+
+Final test: ran tshirts via `vinted.publish()` (the production async path that calls `client.resolve_brand_id` to convert "adidas" → brand_id). **Listing survived 90s with `is_draft=False, is_hidden=False, status_id=2`** — vinted.fr/items/8877515542 is genuinely live. So the original 8876957698 failure was either transient Vinted moderation or content-thinness (very short title/description), NOT a reproducible code bug.
+
+#### Outcome
+- IP-block hypothesis: **disproved**.
+- Parser silent-fallback hypothesis: **disproved** (Vinted returns real `item.id` reliably).
+- Parent-catalog hypothesis: **confirmed for jackets + jeans** (fixed in this commit).
+- Tshirts catalog 221: **works today via production path**; original failure unreproducible.
+- New bug discovered: **sneakers will 400 every time** (size_group 7 unmapped).
+
+#### Reflections
+1. **The IP-block hypothesis felt strong** because of the cf-ray edge difference (-ARN vs -LIS) and the ambient "AWS ranges are flagged" lore. But the wardrobe data showed both IPs producing the same outcome — I should have queried wardrobe state EARLIER instead of assuming "200 + valid-looking item.id = success". The signal was always available; I was looking at the wrong endpoint.
+
+2. **Diagnostic scripts that bypass production code paths can produce different bugs.** My `test_publish.py` called `submit_listing_via_draft` directly to avoid the brand-resolution step, which made me chase phantom failure modes. The right pattern when reproducing a production bug is to mirror the exact entry point (`vinted.publish()` here) before adding instrumentation.
+
+3. **Vinted's mobile API has *very* informative error messages** when validation fails hard at /completion. The shadow-removal case (200 then disappears) is the special problematic one — and even that one has a tell (`is_hidden=True, status=None` immediately after publish vs. eventually `is_hidden=False, status=2` for genuine successes).
+
+4. **The "production container is down because of a recent infra commit" thread was incidental but worth flagging.** Commit `656195e` made `/app/models/checkpoints` an unwritable bind-mount target. The container needs that path to exist (and be writable) in the image — either pre-create with a `mkdir -p` in the Dockerfile, or move the mount out of the read-only overlay path.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)

@@ -109,15 +109,17 @@ NEW_LISTING_URLS: dict[str, str] = {
 }
 
 
-# Vinted catalog IDs picked from vinted-lister/config/categories.yaml. These
-# default to the Damen (women's) catalog because our training data skews that
-# way; if the listing should be in the Herren catalog the user can switch
-# it manually in the Vinted form before submitting.
+# Vinted catalog IDs — must point at LEAF catalogs (no children), otherwise
+# /completion fails with `validation_error: "Wähle eine Unterkategorie"` or,
+# worse, accepts the publish (200) and silently removes the listing. The
+# previous values for jackets (1908) and jeans (183) were both intermediate
+# parents under Damen > Kleidung; this map now uses leaf children. User can
+# switch sub-style or Herren-vs-Damen on the Vinted form before publishing.
 VINTED_CATEGORY_TO_CATALOG_ID: dict[str, int] = {
-    "jackets": 1908,    # Damen Jacken & Mäntel
-    "jeans": 183,       # Damen Jeans
-    "tshirts": 221,     # Damen T-Shirts
-    "sneakers": 2632,   # Damen Sneaker
+    "jackets": 1078,    # Damen > Kleidung > Jacken & Mäntel > Jacken > Bomberjacken
+    "jeans": 1864,      # Damen > Kleidung > Jeans > Sonstiges
+    "tshirts": 221,     # Damen > Kleidung > Tops & T-Shirts > T-Shirts
+    "sneakers": 2632,   # Damen > Schuhe > Sneaker
 }
 
 # Vinted condition IDs (extracted from the mobile-API captures):
@@ -169,8 +171,11 @@ VINTED_COLOR_TO_ID: dict[str, int] = {
 # XS/S/M/L/XL/XXL pattern with size_id 1..6 (size_id=2 verified empirically
 # against catalog 221). Size_group 7's IDs aren't recoverable without
 # creating throwaway live listings, so sneaker sizes are intentionally
-# unmapped here — the integration drops the key and the user picks the
-# size on the Vinted UI before publishing on-platform.
+# unmapped here. NOTE: Vinted /completion hard-rejects sneaker drafts
+# without size_id (400 `Wähle ein Größe`), so every sneaker publish via
+# this codebase currently fails at completion. To unblock: capture the
+# size_group 7 size_ids by creating one throwaway live sneaker listing
+# per size and reading the size_id back from /details.
 VINTED_SIZE_TO_ID: dict[tuple[str, str], int] = {
     ("tshirts", "xs"): 1, ("tshirts", "s"): 2, ("tshirts", "m"): 3,
     ("tshirts", "l"): 4, ("tshirts", "xl"): 5, ("tshirts", "xxl"): 6,
