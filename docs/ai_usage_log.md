@@ -890,6 +890,60 @@ remainder of this session.
 
 ---
 
+### Day 5 — 2026-05-10 (continued): Vercel deploy attempt — MCP OAuth blocked, falling back to CLI
+
+**AI tool:** Claude Code Opus 4.7 (1M context) + Vercel plugin
+**Branch:** `feature/deploy-prep`
+**Commits:** `<this commit>` Log Vercel deploy fallback
+
+#### Prompt 1
+> "Cant you run the vercel part I already installed the vercel plugin, I will cover the secrets"
+
+**Decision:** User wants me to drive the Vercel deploy now that the
+plugin is installed; they'll handle EC2 secrets in parallel. Invoked
+the `vercel:bootstrap` skill to get the canonical workflow. Skill
+returned a 5-step bootstrap procedure designed for Postgres + auth
+bootstrapping — mostly overkill for our case (just need 2 env vars +
+deploy). Adapted to a minimal flow: check CLI installed → check auth
+→ link project → set 2 env vars → `vercel --prod`. Verified locally:
+`/opt/homebrew/bin/vercel` v50.37.0 installed but token invalid (need
+to authenticate). No `.vercel/` linkage yet either.
+
+For auth, tried the MCP route first since the plugin install enables
+it: loaded `mcp__plugin_vercel_vercel__authenticate` schema via
+ToolSearch, called it, got back an OAuth URL with
+`redirect_uri=http://localhost:56784/callback`.
+
+**Outcome:** OAuth URL surfaced for user to visit.
+
+#### Prompt 2
+> [Image attached: Vercel "App configuration error — The app redirect URL is invalid"]
+
+**Decision:** Recognized this as a Vercel-side OAuth allowlist issue —
+the MCP plugin uses a dynamic localhost port for the callback, but
+Vercel's OAuth client config doesn't whitelist arbitrary `localhost:*`
+redirects. Not something I can fix; Vercel needs to update their
+OAuth app config. Pivoted to fallback: have the user run `vercel
+login` from their terminal interactively. Once the local CLI has a
+valid token, I can drive everything else from Bash without needing
+the MCP plugin at all (vercel link, env add, deploy all work from
+the CLI directly).
+
+**Outcome:** Surfaced workaround command for the user to run; waiting
+for "logged in" confirmation before resuming.
+
+**End-of-session reflection (so far):** the Vercel plugin's auth flow
+is broken in a way that's not the user's fault and not mine — Vercel's
+OAuth app config doesn't accept the dynamic localhost callback URL the
+MCP plugin uses. This is the second tooling-side blocker this session
+(after the PyPI torch CUDA bundling). Lesson: when a plugin/integration
+fails on first contact, don't burn time debugging it — fall back to
+the canonical CLI immediately. The MCP plugin would have been ergonomic
+but the CLI gets us to the same destination with one extra `vercel
+login` step.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
