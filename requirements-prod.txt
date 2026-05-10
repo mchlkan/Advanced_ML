@@ -32,3 +32,10 @@ tenacity>=8.0.0
 transformers>=4.56,<5
 numpy>=1.26.0
 huggingface_hub>=0.20.0
+# pandas + scikit-learn + tqdm are imported at module load by the head
+# definition files (models/train_*.py), even though the training-only
+# functions inside them aren't called at inference time. Cheaper to ship
+# the deps than to refactor the head modules.
+pandas>=2.2.0
+scikit-learn>=1.5.0
+tqdm>=4.66.0
