@@ -505,13 +505,15 @@ at effectively zero price. Net: roughly neutral cost, substantially better quali
 
 ---
 
-### 4.2 Model #1 Retraining (Owner: Leon)
+### 4.2 Model #1 Retraining (Owner: Michael)
 
-**Status:** design complete, partially shipped.
+**Status:** design complete, partially shipped. Final retrain queued (`multi-v2`) —
+will bundle parse fix on top of multi-image.
 
 Three targeted improvements:
 1. **Larger base model:** evaluate Qwen3-VL-7B or Qwen3-VL-9B as base. Larger models
    may improve brand recognition and condition inference where the 4B model underperforms.
+   **Out of scope for the course project — speculative, not committed.**
 2. **Multi-photo input:** ~~design~~ **shipped 2026-05-10 — see §3.3.** Brand +20 pp,
    size +19 pp on the 368-row multi-image test slice. Used 2 photos (garment + care
    label) rather than 3–5; the label photo carries the brand/size text the cover shot
@@ -551,3 +553,43 @@ Three targeted improvements:
 continue to include `brand`, `category`, `condition`, `color`, `size`, `title`.
 Model #6 is agnostic to model size, photo count, or hidden state dimension.
 No coordination required beyond this schema contract.
+
+---
+
+### 4.3 Multi-image v2 retrain (planned, queued)
+
+**Status:** queued, ready to start. Bundles items §4.2.2 and §4.2.3 into a single
+training run. This is the final planned Model #1 retrain for the course project.
+
+**What's included:**
+- Multi-image dataset (manifest mode, garment + optional care label) — same setup as v1.
+- Parse fix: `description` removed from `_build_target_json()` in `models/train_vlm.py`
+  and from `get_prompt()` in `shared/prompts.py`. `price_eur` removed from `get_prompt()`
+  but kept in the training target as an auxiliary task to preserve hidden-state quality
+  for Model #4.
+
+**Why two separate runs (v1 then v2), not one:** today's multi-image-only run was an
+isolation experiment — it confirms the +20 pp brand / +19 pp size lift is attributable
+to the photo pair, not confounded with prompt/target edits. With that result locked,
+adding the parse fix on top of the same training setup is a clean additive change.
+
+**Downstream impact (must redo on the pod after v2 trains):**
+- Re-extract VLM features with the new adapter (`extract_vlm_features.py --manifest`).
+- Retrain price head (Model #4) on the new features. Sell head (Model #5) is unaffected
+  because it's metadata-only (`vlm_dim=0`); flaw head (Model #2) is independent (DINOv2);
+  description (Model #6) is agnostic to weights as long as field schema holds.
+
+**Backend deployment after v2 ships:**
+- Update `ADAPTER_ID` env on the RunPod worker (and `VLM_ADAPTER_ID` for `local_mps`)
+  to the new HF reference (proposed: `mchlkan/qwen3vl4b-resell-adapter-multi-v2`).
+- Replace `models/checkpoints/price_head.pt` with the v2-trained price head.
+- Sell head, flaw head, frontend: no changes.
+
+**Cost estimate:** ~$1.95 on the pod (~3.9 h Model #1 retrain + ~1 h feature extraction
++ ~5 min price head retrain + overhead).
+
+**Expected outcomes:**
+- KA clean parse rate: 40.9% → 90 %+ (recovery layer becomes mostly inert on KA).
+- Brand / size accuracy: in line with v1 multi-image (+20 pp / +19 pp vs single-image v0).
+- Price head metrics: should be at least neutral vs today's v1-features price head;
+  hidden states from a slightly different LoRA distribution but the same base model.
