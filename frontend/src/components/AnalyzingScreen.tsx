@@ -99,7 +99,7 @@ export default function AnalyzingScreen({ imageUrl, onCancel }: Props) {
               margin: 0,
             }}
           >
-            Usually 3–10 seconds. Don&apos;t switch apps.
+            May take up to a minute. Don&apos;t switch apps.
           </p>
         </div>
 

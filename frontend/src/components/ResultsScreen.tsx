@@ -78,8 +78,11 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
       ? data.vinted.identification
       : data.kleinanzeigen.identification;
 
-  const [listingTitle, setListingTitle] = useState(activeId.title ?? "");
-  const [listingDesc, setListingDesc] = useState(activeId.description ?? "");
+  const [titleEdits, setTitleEdits] = useState<Partial<Record<Platform, string>>>({});
+  const [descEdits, setDescEdits] = useState<Partial<Record<Platform, string>>>({});
+
+  const listingTitle = titleEdits[selectedPlatform] ?? activeId.title ?? "";
+  const listingDesc = descEdits[selectedPlatform] ?? activeId.description ?? "";
 
   const wearDetected = data.visual_wear_probability > 0.4;
   const vintedReview = new Set(data.vinted.field_review?.needs_review ?? []);
@@ -420,7 +423,7 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
         <input
           type="text"
           value={listingTitle}
-          onChange={(e) => setListingTitle(e.target.value)}
+          onChange={(e) => setTitleEdits((t) => ({ ...t, [selectedPlatform]: e.target.value }))}
           placeholder="Title"
           style={{
             display: "block",
@@ -439,7 +442,7 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
 
         <textarea
           value={listingDesc}
-          onChange={(e) => setListingDesc(e.target.value)}
+          onChange={(e) => setDescEdits((d) => ({ ...d, [selectedPlatform]: e.target.value }))}
           rows={6}
           style={{
             display: "block",

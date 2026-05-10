@@ -1,11 +1,11 @@
 "use client";
 
 import { useRef } from "react";
-import type { Platform, PublishResponse, UploadResponse } from "@/types/api";
+import type { Platform, UploadResponse } from "@/types/api";
 
 interface Props {
   platform: Platform;
-  publishResponse: PublishResponse;
+  listingUrl: string;
   results: UploadResponse;
   onReset: () => void;
 }
@@ -25,7 +25,7 @@ function shortId(id: string) {
 
 export default function PublishedScreen({
   platform,
-  publishResponse,
+  listingUrl,
   results,
   onReset,
 }: Props) {
@@ -41,7 +41,7 @@ export default function PublishedScreen({
     if (tabRef.current && !tabRef.current.closed) {
       tabRef.current.focus();
     } else {
-      tabRef.current = window.open(publishResponse.prefill_url, "_blank") ?? null;
+      tabRef.current = window.open(listingUrl, "_blank") ?? null;
     }
   }
 
@@ -81,7 +81,7 @@ export default function PublishedScreen({
             margin: "0 0 8px",
           }}
         >
-          Listing opened
+          Listed on {PLATFORM_LABEL[activePlatform]}
         </h2>
 
         <p
@@ -92,7 +92,7 @@ export default function PublishedScreen({
             lineHeight: 1.45,
           }}
         >
-          We pre-filled {PLATFORM_LABEL[activePlatform]} in a new tab.
+          Your listing is live — opened in a new tab.
         </p>
 
         <p
@@ -103,8 +103,8 @@ export default function PublishedScreen({
             lineHeight: 1.5,
           }}
         >
-          Switch over to review photos, confirm the price, and hit publish on{" "}
-          {PLATFORM_LABEL[activePlatform]} itself. We don&apos;t post on your behalf.
+          All fields were filled automatically from your photo analysis.
+          You can edit or unpublish the listing directly on {PLATFORM_LABEL[activePlatform]}.
         </p>
 
         {/* Summary table */}

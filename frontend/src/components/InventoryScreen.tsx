@@ -214,6 +214,7 @@ export default function InventoryScreen({ onBack }: Props) {
                   objectFit: "cover",
                   flexShrink: 0,
                   backgroundColor: "var(--color-bg-card)",
+                  imageOrientation: "from-image",
                 }}
               />
 
