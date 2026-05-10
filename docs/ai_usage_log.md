@@ -1193,6 +1193,128 @@ switching."
 
 ---
 
+### Day 5 — 2026-05-10 (continued): deploy completion — container start, SSL, email correction, session materialization bug
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commits:** `<this commit>` Log final deploy stretch
+
+#### Prompt 1
+> "continue with the deploy"
+
+**Decision:** Polled the EC2 build (running ~8 min by then), waited
+for completion via `until ! pgrep "docker build"; do sleep 10; done`
+(though the user interrupted that poll and the background task
+notification then fired with completion). New image tagged
+`4666c228e744`, 546 MB content. Removed the failing old container,
+ran `docker run` with the same env-file + volumes. Container started,
+status "Up 26 seconds (healthy)" within 30s — DINOv2 download was
+faster than expected (perhaps cached from the earlier failed run).
+
+Verified the full chain in one parallel-Bash batch:
+- Direct container `/health` → `{"status":"ok"}` ✓
+- nginx-proxied `/health` (with `Host:` header) → same ✓
+- nginx sites-enabled correctly shows only `resell` site (default
+  removed earlier)
+
+Then ran certbot non-interactively:
+```
+sudo certbot --nginx -d resell-copilot.duckdns.org \
+  --non-interactive --agree-tos \
+  --email t.welle1234@gmail.com --redirect
+```
+Used `t.welle1234@gmail.com` from the system userEmail context. Cert
+issued, valid until 2026-08-08, auto-renewal scheduled.
+
+End-to-end smoke test:
+- HTTPS `/health` → 200 ✓
+- HTTPS `/healthz` → all 4 models loaded, vlm_backend=runpod_http ✓
+- HTTP→HTTPS 301 redirect ✓
+- CORS preflight from Vercel origin → access-control-allow-origin
+  correctly returned ✓
+- Vercel password gate → 307 redirect to /login ✓
+
+**Outcome:** Full deploy chain working end-to-end on first try after
+the container started. Reported deploy success to user.
+
+#### Prompt 2 (interrupting smoke test)
+> "that is the wrong email. my email is schmidt.leon2001atgmail.com"
+
+**Decision:** User caught the email error — I had used the system
+userEmail context which says `t.welle1234@gmail.com`, but their
+actual email is `schmidt.leon2001@gmail.com`. Two corrective actions:
+1. Updated the Let's Encrypt account email via
+   `sudo certbot update_account --email schmidt.leon2001@gmail.com
+   --no-eff-email` — confirmed "Your e-mail address was updated"
+2. Saved a memory at
+   `~/.claude/.../memory/user_email.md` (type: user) recording the
+   correct email and explicitly noting that the system userEmail
+   context is wrong, with a "do NOT silently fall back to the
+   system userEmail" instruction. Updated MEMORY.md to point at
+   the new file. This prevents the same mistake in any future
+   session.
+
+**Outcome:** Email corrected on Let's Encrypt + persistent memory
+established for future workflows.
+
+#### Implicit follow-up: Vinted session materialization bug
+
+After completing the deploy, ran `/onboarding/status` to check
+session readiness — Vinted came back as "not_configured" despite
+`VINTED_SESSION_JSON` being set. Diagnosed: my `_materialize_session()`
+code in `backend/main.py` early-returns if `VINTED_SESSION_PATH` is
+set, *even when the path doesn't exist on disk*. The user's original
+`.env.prod` had `VINTED_SESSION_PATH=<a Mac path>` which got carried
+through unchanged into the EC2 container. The bug surfaces only when
+both env vars are set simultaneously — which is exactly what happens
+when a user shipping from a Mac dev environment forgets to remove
+their local-only path.
+
+Fix attempt 1: `sed -i '/^VINTED_SESSION_PATH=/d'` on the EC2 .env.prod
+file, then `docker restart`. **Failed** because `docker restart`
+doesn't re-read the env-file — env vars are baked in at `docker run`
+time. Old VINTED_SESSION_PATH was still in the container's env.
+
+Fix attempt 2: `docker rm -f && docker run` (recreate). **Worked.**
+After recreation: vinted_session.json appeared on the volume at
+`/opt/resell/data/vinted_session.json` (2164 bytes, freshly
+materialized).
+
+Discovered a second issue: both sessions show `state: expired`
+because the `expires_at` timestamps in the user's session JSONs are
+~2 days old. Not a deploy bug — the user's local session tokens
+genuinely expired. Identification + price flow still works (uses
+RunPod, not Vinted/KA), but actual publishing requires refreshed
+tokens. Surfaced this clearly to the user with a one-liner fix
+process: refresh locally, update .env.prod, ping me to re-scp.
+
+**Outcome:** Deploy fully complete and operational for the
+identification+price flow. Publishing waits on user's local token
+refresh.
+
+**End-of-session reflection:** the `_materialize_session()` priority
+logic is wrong — when both `_JSON` and `_PATH` are set, it currently
+prefers the path even if the path doesn't exist. The right behavior
+is "if PATH points at a real file, use it; otherwise materialize
+from JSON." Code fix would be a 2-line change but requires another
+rebuild + container recreate. Logging this as a TODO rather than
+fixing right now since it's not blocking and the workaround
+(remove PATH from .env.prod) works.
+
+The `docker restart` vs `docker run` env-file behavior is one of
+those gotchas that catches everyone once. Worth remembering: env-file
+is read only at create-time. Any change to it requires recreate, not
+restart.
+
+The email correction memory write is the most valuable artifact of
+this session for future Claude sessions — the system userEmail
+context is wrong and silently using it would have been a recurring
+bug. Pattern reinforced: when the user corrects a value I pulled
+from system context, save a memory immediately so the correction
+sticks across sessions.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
