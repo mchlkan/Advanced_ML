@@ -2786,6 +2786,111 @@ at 40.9% in production even though the backend is ready for the new
 
 ---
 
+### Day 5 — 2026-05-10 (continued): Vinted live-item delete bug — found via prod log inspection
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commit:** `38ef4b3` Fix Vinted live-item deletion — POST
+/api/v2/items/{id}/delete
+
+#### Prompt 1
+> "Okay now recheck deletation etc. is not working on the account level for vinted and kleinanzeigen"
+
+**Decision:** Pulled production logs + DB state for the listings the
+user had recently deleted via the kebab menu. Two telling signals:
+
+```
+DELETE /listings/.../  → 204 No Content        (local delete worked)
+vinted delete failed for 8879631227: HTTP 403 — access_denied
+vinted delete failed for 8878336825: HTTP 403 — access_denied
+```
+
+So Vinted account-level delete was broken — but the local DB delete
+succeeded, leaving a confusing partial state where the app forgot
+about a listing that was still alive on Vinted's side. KA delete had
+no log lines at all (silent on success per my code), so unclear
+whether it worked.
+
+**Verified KA first** by GET-ing the previously-posted KA listing
+3405034173 directly: status 200 with `ad-status: DELETED`. So KA
+delete IS working — silent success was just my logging gap, not a
+real bug.
+
+**Vinted's bug confirmed**: the existing `delete_draft` method (used
+by the public `delete_listing` async wrapper) hits
+`DELETE /api/v2/item_upload/drafts/{item_id}`. That URL works for
+unpublished drafts (a transient state during the publish flow) but
+returns 403 access_denied on PUBLISHED live items. So every "Mark
+sold" / "Delete" action on a listing the user had actually published
+silently failed at the platform level.
+
+#### Prompt 2 (implicit — I just continued)
+
+**Decision:** Wrote `scripts/probe_vinted_delete.py` to find the
+right endpoint. First-pass dry-run probed 3 candidate URLs with
+OPTIONS — all 404 (Vinted doesn't expose preflight). Second pass
+with `--apply` on a real test listing (8878582905) tried all 3 with
+real DELETE — 2× 404 HTML (wrong URL), 1× 403 access_denied
+(known-broken draft URL).
+
+Extended the probe to **8 more verb+path combos**: per-user
+namespaces, soft-close patterns, status-update patterns, POST
+variants. Hit on:
+
+```
+POST /api/v2/items/{item_id}/delete  →  200 {"code":0,"message":"Ok","message_code":"ok"}
+post-action GET /details             →  404 (gone)
+```
+
+That's the endpoint Vinted's mobile app actually uses for in-place
+live-item removal — POST not DELETE, distinct URL from both the
+draft and item-detail spaces.
+
+#### Implementation
+
+Two-method split in `VintedClient`:
+- `delete_draft(item_id)` kept as-is for actual draft cleanup (still
+  the right verb + URL for unpublished drafts).
+- New `delete_live_item(item_id)` POSTs to `/api/v2/items/{id}/delete`
+  for published items.
+- Public `vinted.delete_listing` async wrapper now tries live-item
+  first; on 404 ("not found") falls through to draft delete. Works
+  for both states without needing the caller to know which.
+
+66/66 backend tests still pass. Pushed + EC2 redeploy.
+
+**One side effect**: the test listing 8878582905 was genuinely
+deleted from the user's Vinted account during the `--apply` probe
+— the only safe way to confirm the endpoint without creating
+throwaway listings. Local DB still had it; the next inventory
+delete attempt will hit the new endpoint, 404 cleanly (already
+gone), and fall through to local cleanup.
+
+**What I learned:**
+1. **Production logs are gold for "user reports X doesn't work".**
+   30 seconds of `docker logs | grep` revealed the exact failure
+   mode (403 access_denied with diagnostic body) that probably would
+   have taken 30 minutes of speculation otherwise.
+2. **Silent success in delete operations is a real anti-pattern.**
+   KA delete worked all along but I had no way to know without an
+   independent verification step. The new `delete_live_item` could
+   benefit from a confirmation log even on 200, especially since
+   the response body is so terse.
+3. **Distinct verbs for distinct lifecycle states.** Vinted's API
+   uses DELETE on draft URL for un-posted items and POST on a
+   `/delete` action URL for posted items. Strange but consistent
+   if you think of "draft delete" as a resource removal and "live
+   delete" as an action verb on an existing resource. Worth checking
+   for similar patterns when wiring up new platforms.
+4. **Probing destructively is sometimes the only path.** OPTIONS
+   doesn't return useful preflight data (404 across the board), so
+   I had to actually fire DELETE/POST verbs to learn anything. Did
+   it on the user's listing because they had explicitly asked for
+   the feature to work — context-aware destructive testing OK with
+   user awareness.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
