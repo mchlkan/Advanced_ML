@@ -22,46 +22,37 @@ const TITLE: Record<Platform, string> = {
   kleinanzeigen: "Connect Kleinanzeigen",
 };
 
-function vintedErrorMessage(err: unknown): string {
-  if (err instanceof HTTPError) {
-    if (err.status === 401) return "Wrong email or password.";
-    if (err.status === 429)
-      return "Vinted is rate-limiting us. Try again in a few minutes.";
-    if (err.status === 503)
-      return "Backend is missing seed cookies — admin needs to refresh DataDome.";
-    if (err.detail) return `Login failed: ${err.detail}`;
-  }
-  return "Login failed. Try again.";
-}
+type ErrorMap = Record<number, string>;
 
-function kaInitiateErrorMessage(err: unknown): string {
-  if (err instanceof HTTPError) {
-    if (err.status === 401) return "Wrong email or password.";
-    if (err.status === 502)
-      return "Kleinanzeigen login is being blocked. Try the refresh-token paste fallback.";
-    if (err.status === 503) return "Backend not configured for Kleinanzeigen.";
-    if (err.detail) return `Login failed: ${err.detail}`;
-  }
-  return "Login failed. Try again.";
-}
+const VINTED_ERRORS: ErrorMap = {
+  401: "Wrong email or password.",
+  429: "Vinted is rate-limiting us. Try again in a few minutes.",
+  503: "Backend is missing seed cookies — admin needs to refresh DataDome.",
+};
 
-function kaMfaErrorMessage(err: unknown): string {
-  if (err instanceof HTTPError) {
-    if (err.status === 401) return "Invalid or expired SMS code.";
-    if (err.status === 502) return "Kleinanzeigen rejected the MFA submission.";
-    if (err.detail) return `MFA failed: ${err.detail}`;
-  }
-  return "MFA failed. Try again.";
-}
+const KA_INITIATE_ERRORS: ErrorMap = {
+  401: "Wrong email or password.",
+  502: "Kleinanzeigen login is being blocked. Try the refresh-token paste fallback.",
+  503: "Backend not configured for Kleinanzeigen.",
+};
 
-function kaRefreshErrorMessage(err: unknown): string {
+const KA_MFA_ERRORS: ErrorMap = {
+  401: "Invalid or expired SMS code.",
+  502: "Kleinanzeigen rejected the MFA submission.",
+};
+
+const KA_REFRESH_ERRORS: ErrorMap = {
+  401: "refresh_token rejected — capture a fresh one via mitmproxy.",
+  502: "Auth0 token endpoint failed.",
+};
+
+function mapHttpError(err: unknown, mappings: ErrorMap, prefix: string): string {
   if (err instanceof HTTPError) {
-    if (err.status === 401)
-      return "refresh_token rejected — capture a fresh one via mitmproxy.";
-    if (err.status === 502) return "Auth0 token endpoint failed.";
-    if (err.detail) return `Login failed: ${err.detail}`;
+    const known = mappings[err.status];
+    if (known) return known;
+    if (err.detail) return `${prefix} failed: ${err.detail}`;
   }
-  return "Login failed. Try again.";
+  return `${prefix} failed. Try again.`;
 }
 
 type KaPhase = "credentials" | "mfa" | "refresh-token";
@@ -105,7 +96,7 @@ export default function PlatformLoginModal({ platform, onClose, onSuccess }: Pro
       await loginVinted(email.trim(), password);
       onSuccess();
     } catch (err) {
-      setError(vintedErrorMessage(err));
+      setError(mapHttpError(err, VINTED_ERRORS, "Login"));
       setSubmitting(false);
     }
   }
@@ -127,7 +118,7 @@ export default function PlatformLoginModal({ platform, onClose, onSuccess }: Pro
         onSuccess();
       }
     } catch (err) {
-      setError(kaInitiateErrorMessage(err));
+      setError(mapHttpError(err, KA_INITIATE_ERRORS, "Login"));
       setSubmitting(false);
     }
   }
@@ -145,7 +136,7 @@ export default function PlatformLoginModal({ platform, onClose, onSuccess }: Pro
       });
       onSuccess();
     } catch (err) {
-      setError(kaMfaErrorMessage(err));
+      setError(mapHttpError(err, KA_MFA_ERRORS, "MFA"));
       setSubmitting(false);
     }
   }
@@ -162,7 +153,7 @@ export default function PlatformLoginModal({ platform, onClose, onSuccess }: Pro
       });
       onSuccess();
     } catch (err) {
-      setError(kaRefreshErrorMessage(err));
+      setError(mapHttpError(err, KA_REFRESH_ERRORS, "Login"));
       setSubmitting(false);
     }
   }

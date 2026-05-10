@@ -271,6 +271,12 @@ def _extract_form_state(html: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _extract_form_error(html: str, fallback: str) -> str:
+    """Pull a server-side error blurb from an Auth0 form page."""
+    m = re.search(r'class="[^"]*error[^"]*"[^>]*>([^<]+)', html)
+    return m.group(1).strip() if m else fallback
+
+
 def _extract_oauth_code(url: str) -> str | None:
     """If `url` looks like the OAuth callback, return its `code` query param."""
     parsed = urllib.parse.urlparse(url)
@@ -369,7 +375,10 @@ def password_login_initiate(email: str, password: str) -> dict:
         timeout=30,
         headers={"user-agent": LOGIN_USER_AGENT},
     )
-
+    # Single close path: only the MFA branch keeps the client open (so
+    # complete_mfa_login can reuse it). All other exits (success-no-MFA,
+    # auth failure, transport error) go through the finally and close.
+    keep_client = False
     try:
         # Step 1: bootstrap the OAuth flow.
         r = client.get(
@@ -436,6 +445,7 @@ def password_login_initiate(email: str, password: str) -> dict:
                 "email": email,
                 "created_at": time.time(),
             }
+            keep_client = True
             return {
                 "status": "mfa_required",
                 "challenge_id": challenge_id,
@@ -445,7 +455,6 @@ def password_login_initiate(email: str, password: str) -> dict:
         # Outcome B: skipped MFA — already at the OAuth callback.
         code = _extract_oauth_code(final_url)
         if code:
-            client.close()
             return {
                 "status": "ready",
                 "code": code,
@@ -453,15 +462,16 @@ def password_login_initiate(email: str, password: str) -> dict:
             }
 
         # Outcome C: failure.
-        client.close()
-        err = re.search(r'class="[^"]*error[^"]*"[^>]*>([^<]+)', r.text)
-        msg = err.group(1).strip() if err else "Login rejected by Auth0"
-        raise KAAuthExpired(f"KA login failed: {msg}")
+        raise KAAuthExpired(
+            f"KA login failed: {_extract_form_error(r.text, 'Login rejected by Auth0')}"
+        )
     except KAError:
         raise
     except Exception as exc:
-        client.close()
         raise KAError(f"KA login transport error: {exc}") from exc
+    finally:
+        if not keep_client:
+            client.close()
 
 
 def complete_mfa_login(
@@ -508,9 +518,9 @@ def complete_mfa_login(
     final_url = str(r.url)
     if "mfa-sms-challenge" in final_url:
         client.close()
-        err = re.search(r'class="[^"]*error[^"]*"[^>]*>([^<]+)', r.text)
-        msg = err.group(1).strip() if err else "Invalid or expired SMS code"
-        raise KAAuthExpired(f"MFA failed: {msg}")
+        raise KAAuthExpired(
+            f"MFA failed: {_extract_form_error(r.text, 'Invalid or expired SMS code')}"
+        )
 
     code = _extract_oauth_code(final_url)
     client.close()

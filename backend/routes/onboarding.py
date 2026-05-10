@@ -242,10 +242,15 @@ async def kleinanzeigen_verify_mfa(
 
 @router.get("/status", response_model=OnboardingStatusResponse)
 async def status() -> OnboardingStatusResponse:
-    return OnboardingStatusResponse(
-        vinted=_vinted_status(),
-        kleinanzeigen=_kleinanzeigen_status(),
+    # Both helpers do sync I/O (file read + optional refresh HTTP call).
+    # Run them concurrently in worker threads so /onboarding/status latency
+    # is max(vinted, ka) instead of vinted + ka, and we don't block the
+    # event loop while either platform's refresh is in flight.
+    vinted, ka = await asyncio.gather(
+        asyncio.to_thread(_vinted_status),
+        asyncio.to_thread(_kleinanzeigen_status),
     )
+    return OnboardingStatusResponse(vinted=vinted, kleinanzeigen=ka)
 
 
 def _kleinanzeigen_status() -> PlatformStatus:
