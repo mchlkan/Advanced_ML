@@ -22,6 +22,12 @@ set -euo pipefail
 cd /opt/resell/app
 git pull --ff-only
 
+# The /opt/resell/checkpoints bind needs a mountpoint inside the
+# /opt/resell/app/models read-only mount. The host's models/ dir doesn't
+# include a checkpoints/ subdir (gitignored .pt files), so create it
+# empty so Docker has somewhere to attach the inner mount.
+mkdir -p /opt/resell/app/models/checkpoints
+
 echo "Building image..."
 sudo docker build -t resell-backend .
 
