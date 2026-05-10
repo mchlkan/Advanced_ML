@@ -23,8 +23,11 @@ from fastapi import APIRouter, HTTPException
 from backend.integrations import kleinanzeigen as ka_integration
 from backend.integrations import vinted as vinted_integration
 from backend.schemas import (
+    KleinanzeigenInitiateRequest,
+    KleinanzeigenInitiateResponse,
     KleinanzeigenOnboardingRequest,
     KleinanzeigenOnboardingResponse,
+    KleinanzeigenVerifyMfaRequest,
     OnboardingLoginRequest,
     OnboardingLoginResponse,
     OnboardingStatusResponse,
@@ -117,6 +120,119 @@ async def kleinanzeigen_onboarding(
     ka_integration.save_session(
         session, ka_integration._session_path()
     )
+    return KleinanzeigenOnboardingResponse(
+        status="ready",
+        user_id=session.user_id,
+        expires_at=session.expires_at,
+    )
+
+
+@router.post(
+    "/kleinanzeigen/initiate",
+    response_model=KleinanzeigenInitiateResponse,
+    responses={
+        401: {"description": "credentials rejected by Auth0"},
+        502: {"description": "upstream KA / Auth0 transport error"},
+        503: {"description": "KA_SESSION_PATH env var not set"},
+    },
+)
+async def kleinanzeigen_initiate(
+    body: KleinanzeigenInitiateRequest,
+) -> KleinanzeigenInitiateResponse:
+    """Walk the Auth0 PKCE login chain through the password POST. Returns an
+    MFA challenge_id (the FE then collects the SMS code and calls
+    /verify-mfa) or — rarely — a complete session if Auth0 skipped MFA.
+
+    The whole chain is sync (uses httpx.Client); wrapped in a thread so it
+    doesn't stall the event loop.
+    """
+    if not os.environ.get("KA_SESSION_PATH"):
+        raise HTTPException(
+            status_code=503,
+            detail="KA_SESSION_PATH is not set in the backend env",
+        )
+
+    try:
+        result = await asyncio.to_thread(
+            ka_integration.password_login_initiate, body.email, body.password
+        )
+    except ka_integration.KAAuthExpired as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ka_integration.KAError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if result["status"] == "mfa_required":
+        return KleinanzeigenInitiateResponse(
+            status="mfa_required",
+            challenge_id=result["challenge_id"],
+            phone_hint=result.get("phone_hint"),
+        )
+
+    # status == "ready" — Auth0 skipped MFA. Exchange code → session
+    # immediately, persist with default metadata. The FE never collected
+    # poster_type / imprint / etc, so we use safe defaults; user can edit
+    # them via a future settings page if needed.
+    try:
+        session = await asyncio.to_thread(
+            ka_integration._exchange_code_for_session,
+            code=result["code"],
+            code_verifier=result["code_verifier"],
+            email=body.email,
+            poster_type=ka_integration.POSTER_TYPE_PRIVATE,
+            imprint="",
+            contact_name="",
+            home_location_id=None,
+        )
+    except ka_integration.KAAuthExpired as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ka_integration.KAError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    ka_integration.save_session(session, ka_integration._session_path())
+    return KleinanzeigenInitiateResponse(
+        status="ready",
+        user_id=session.user_id,
+        expires_at=session.expires_at,
+    )
+
+
+@router.post(
+    "/kleinanzeigen/verify-mfa",
+    response_model=KleinanzeigenOnboardingResponse,
+    responses={
+        401: {"description": "SMS code rejected, expired, or challenge not found"},
+        502: {"description": "upstream KA / Auth0 transport error"},
+        503: {"description": "KA_SESSION_PATH env var not set"},
+    },
+)
+async def kleinanzeigen_verify_mfa(
+    body: KleinanzeigenVerifyMfaRequest,
+) -> KleinanzeigenOnboardingResponse:
+    """Complete an MFA-pending Auth0 login by submitting the SMS code +
+    the optional metadata fields the user filled in while waiting."""
+    if not os.environ.get("KA_SESSION_PATH"):
+        raise HTTPException(
+            status_code=503,
+            detail="KA_SESSION_PATH is not set in the backend env",
+        )
+
+    try:
+        session = await asyncio.to_thread(
+            ka_integration.complete_mfa_login,
+            body.challenge_id,
+            body.sms_code,
+            email=body.email,
+            poster_type=body.poster_type,
+            imprint=body.imprint,
+            contact_name=body.contact_name,
+            home_location_id=body.home_location_id,
+        )
+    except ka_integration.KAAuthExpired as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ka_integration.KAError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    ka_integration.save_session(session, ka_integration._session_path())
     return KleinanzeigenOnboardingResponse(
         status="ready",
         user_id=session.user_id,

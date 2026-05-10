@@ -183,6 +183,40 @@ class KleinanzeigenOnboardingResponse(BaseModel):
     expires_at: float
 
 
+class KleinanzeigenInitiateRequest(BaseModel):
+    """Start a full Auth0 + SMS MFA login. Frontend collects email + password
+    only; the metadata fields (poster_type, imprint, ...) come in the
+    follow-up verify-mfa call so the user can edit them while waiting for
+    the SMS."""
+    email: str
+    password: str
+
+
+class KleinanzeigenInitiateResponse(BaseModel):
+    """Either we need the SMS code (mfa_required) or Auth0 skipped MFA and
+    we already have a session (ready)."""
+    status: Literal["mfa_required", "ready"]
+    # Set when status == "mfa_required"; FE returns it on /verify-mfa
+    challenge_id: str | None = None
+    phone_hint: str | None = None
+    # Set when status == "ready" (Auth0 trusted the device's
+    # rememberBrowser cookie and skipped MFA — uncommon)
+    user_id: int | None = None
+    expires_at: float | None = None
+
+
+class KleinanzeigenVerifyMfaRequest(BaseModel):
+    """Complete an MFA-pending KA login. The metadata fields are optional —
+    PRIVATE poster with no imprint / contact_name is the safe default."""
+    challenge_id: str
+    sms_code: str
+    email: str
+    poster_type: Literal["PRIVATE", "COMMERCIAL"] = "PRIVATE"
+    imprint: str = ""
+    contact_name: str = ""
+    home_location_id: int | None = None
+
+
 class PredictionSummary(BaseModel):
     english_fields: dict[str, Any]
     # None means we have no per-platform price quantiles for this listing

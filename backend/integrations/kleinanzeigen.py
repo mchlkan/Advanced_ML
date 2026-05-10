@@ -14,22 +14,28 @@ The Tier-2 JWT comes from POST login.kleinanzeigen.de/oauth/token with
 grant_type=refresh_token. Refresh tokens are single-use — we persist the
 rotated token immediately on each refresh.
 
-Login itself (Auth0 + Akamai BMP + MFA SMS) is intentionally NOT
-implemented here; per docs/ka_endpoints.md it's only viable as
-"capture once, refresh forever". The maintainer captures the initial
-refresh_token via mitmproxy on a real Android device and seeds it into
-the backend via /onboarding/kleinanzeigen.
+Login: two paths supported.
+- ``login_with_refresh`` — bootstrap from a captured refresh_token (via
+  mitmproxy on a real Android device). Used by /onboarding/kleinanzeigen.
+- ``password_login_initiate`` + ``complete_mfa_login`` — full Auth0 PKCE
+  flow with email, password, and SMS MFA. Ported from
+  vinted-lister/src/kleinanzeigen/session.py and adapted to use the
+  mobile OAuth client (so the resulting tokens are compatible with
+  refresh_access_token below).
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import os
 import re
 import secrets
 import time
+import urllib.parse
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
@@ -51,6 +57,16 @@ AUTH0_CLIENT_HEADER = (
     # Same blob the Android app sends; opaque to the server but required
     # ("auth0-client" header).
     "eyJuYW1lIjoiQXV0aDAuQW5kcm9pZCIsImVudiI6eyJhbmRyb2lkIjoiMjYifSwidmVyc2lvbiI6IjMuMTUuMCJ9"
+)
+AUTH0_BASE = "https://login.kleinanzeigen.de"
+ANDROID_REDIRECT_URI = (
+    "https://login.kleinanzeigen.de/android/com.ebay.kleinanzeigen/callback"
+)
+# Browser-shaped UA helps avoid trivially obvious bot rejection by Auth0 +
+# its Akamai layer. Kept identical to vinted-lister/src/kleinanzeigen/session.py.
+LOGIN_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
 )
 
 API_BASE = "https://api.kleinanzeigen.de"
@@ -221,6 +237,297 @@ def login_with_refresh(
         raise KAError(f"could not extract user_id from access_token: {payload}")
     refreshed.user_id = int(user_id)
     return refreshed
+
+
+# --- Auth0 PKCE login (email + password + SMS MFA) ---
+#
+# Ported from vinted-lister/src/kleinanzeigen/session.py. Adapted to use the
+# mobile OAuth client_id (so the resulting access_token + refresh_token work
+# with our refresh_access_token / submit_listing path) instead of lorry's web
+# client which lands on cookie-based session auth.
+
+# In-memory state for the multi-step MFA flow. Keyed by an opaque
+# challenge_id we hand back to the FE; the FE returns it with the SMS code.
+# Single-process FastAPI on EC2 makes this fine; if we ever scale to
+# multiple workers this needs to move to Redis or similar.
+_KA_LOGIN_CHALLENGES: dict[str, dict] = {}
+_KA_LOGIN_CHALLENGE_TTL_S = 300
+
+
+def _pkce_pair() -> tuple[str, str]:
+    """Return (code_verifier, code_challenge) per RFC 7636 §4.2."""
+    verifier = secrets.token_urlsafe(32)
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        .rstrip(b"=")
+        .decode()
+    )
+    return verifier, challenge
+
+
+def _extract_form_state(html: str) -> str | None:
+    """Pull <input name='state' value='...'> from an Auth0 form page."""
+    m = re.search(r'name="state"\s+value="([^"]+)"', html)
+    return m.group(1) if m else None
+
+
+def _extract_oauth_code(url: str) -> str | None:
+    """If `url` looks like the OAuth callback, return its `code` query param."""
+    parsed = urllib.parse.urlparse(url)
+    qs = urllib.parse.parse_qs(parsed.query)
+    codes = qs.get("code")
+    return codes[0] if codes else None
+
+
+def _gc_login_challenges() -> None:
+    """Drop login-challenge entries older than the TTL. Runs on every initiate
+    + complete call so we don't leak httpx clients."""
+    now = time.time()
+    expired = [
+        k for k, v in _KA_LOGIN_CHALLENGES.items()
+        if now - v["created_at"] > _KA_LOGIN_CHALLENGE_TTL_S
+    ]
+    for k in expired:
+        chal = _KA_LOGIN_CHALLENGES.pop(k, None)
+        if chal is not None:
+            try:
+                chal["client"].close()
+            except Exception:
+                pass
+
+
+def _exchange_code_for_session(
+    *,
+    code: str,
+    code_verifier: str,
+    email: str,
+    poster_type: PosterType,
+    imprint: str,
+    contact_name: str,
+    home_location_id: int | None,
+) -> KASession:
+    """POST /oauth/token with grant_type=authorization_code, build a KASession.
+    Mobile client → returns access_token + refresh_token in OAuth response."""
+    headers = {
+        "user-agent": "Kleinanzeigen Android 2026.19.1",
+        "auth0-client": AUTH0_CLIENT_HEADER,
+        "content-type": "application/json; charset=utf-8",
+    }
+    body = {
+        "client_id": OAUTH_CLIENT_ID,
+        "grant_type": "authorization_code",
+        "code": code,
+        "code_verifier": code_verifier,
+        "redirect_uri": ANDROID_REDIRECT_URI,
+    }
+    resp = httpx.post(OAUTH_TOKEN_URL, json=body, headers=headers, timeout=30)
+    if resp.status_code != 200:
+        raise KAAuthExpired(
+            f"OAuth token exchange failed: {resp.status_code} — {resp.text[:200]}"
+        )
+    data = resp.json()
+    payload = _decode_jwt_payload(data["access_token"])
+    user_id = payload.get("https://www.kleinanzeigen.de/user_id")
+    if not isinstance(user_id, int):
+        raise KAError(f"KA access_token missing user_id claim: {payload}")
+    return KASession(
+        access_token=data["access_token"],
+        refresh_token=data.get("refresh_token", ""),
+        expires_at=float(payload.get("exp", time.time() + 3599)),
+        user_id=user_id,
+        email=email,
+        poster_type=poster_type,
+        imprint=imprint,
+        contact_name=contact_name,
+        home_location_id=home_location_id,
+    )
+
+
+def password_login_initiate(email: str, password: str) -> dict:
+    """Walk the Auth0 PKCE login chain through the password POST. Three outcomes:
+
+    - MFA required (SMS):
+        returns {"status": "mfa_required", "challenge_id": str, "phone_hint": str}
+        Call ``complete_mfa_login(challenge_id, sms_code, ...)`` next to finish.
+
+    - Auth0 skipped MFA (rememberBrowser cookie chain):
+        returns {"status": "ready", "code": str, "code_verifier": str}
+        Caller should immediately ``_exchange_code_for_session(...)`` and
+        persist. (In practice the FE always provides the metadata fields
+        through the verify-mfa step, so this path is rare and the no-MFA
+        session uses defaults.)
+
+    - Bad credentials or upstream error: raises KAAuthExpired / KAError.
+    """
+    _gc_login_challenges()
+
+    code_verifier, code_challenge = _pkce_pair()
+    initial_state = secrets.token_urlsafe(16)
+
+    client = httpx.Client(
+        follow_redirects=True,
+        timeout=30,
+        headers={"user-agent": LOGIN_USER_AGENT},
+    )
+
+    try:
+        # Step 1: bootstrap the OAuth flow.
+        r = client.get(
+            f"{AUTH0_BASE}/authorize",
+            params={
+                "response_type": "code",
+                "client_id": OAUTH_CLIENT_ID,
+                "redirect_uri": ANDROID_REDIRECT_URI,
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+                "scope": "openid offline_access",
+                "state": initial_state,
+            },
+        )
+        if r.status_code != 200:
+            raise KAError(f"Auth0 /authorize failed: {r.status_code}")
+        state = _extract_form_state(r.text) or initial_state
+
+        # Step 2: submit identifier (email).
+        r = client.post(
+            f"{AUTH0_BASE}/u/login/identifier",
+            params={"state": state},
+            data={
+                "state": state,
+                "username": email,
+                "js-available": "true",
+                "webauthn-available": "true",
+                "is-brave": "false",
+                "webauthn-platform-available": "true",
+                "action": "default",
+            },
+        )
+        state = _extract_form_state(r.text) or state
+
+        # Step 3: submit password.
+        wenkse = re.search(r'name="ulp-wenkse-session-id"\s+value="([^"]+)"', r.text)
+        wenkse_id = wenkse.group(1) if wenkse else ""
+        r = client.post(
+            f"{AUTH0_BASE}/u/login/password",
+            params={"state": state},
+            data={
+                "state": state,
+                "username": email,
+                "password": password,
+                "ulp-wenkse-session-id": wenkse_id,
+                "action": "default",
+            },
+        )
+
+        final_url = str(r.url)
+
+        # Outcome A: MFA challenge.
+        if "mfa-sms-challenge" in final_url:
+            mfa_state = _extract_form_state(r.text) or state
+            phone_match = re.search(
+                r'authenticator-selector-text[^>]*>([^<]+)', r.text
+            )
+            phone_hint = phone_match.group(1).strip() if phone_match else "your phone"
+            challenge_id = secrets.token_urlsafe(16)
+            _KA_LOGIN_CHALLENGES[challenge_id] = {
+                "client": client,
+                "code_verifier": code_verifier,
+                "state": mfa_state,
+                "email": email,
+                "created_at": time.time(),
+            }
+            return {
+                "status": "mfa_required",
+                "challenge_id": challenge_id,
+                "phone_hint": phone_hint,
+            }
+
+        # Outcome B: skipped MFA — already at the OAuth callback.
+        code = _extract_oauth_code(final_url)
+        if code:
+            client.close()
+            return {
+                "status": "ready",
+                "code": code,
+                "code_verifier": code_verifier,
+            }
+
+        # Outcome C: failure.
+        client.close()
+        err = re.search(r'class="[^"]*error[^"]*"[^>]*>([^<]+)', r.text)
+        msg = err.group(1).strip() if err else "Login rejected by Auth0"
+        raise KAAuthExpired(f"KA login failed: {msg}")
+    except KAError:
+        raise
+    except Exception as exc:
+        client.close()
+        raise KAError(f"KA login transport error: {exc}") from exc
+
+
+def complete_mfa_login(
+    challenge_id: str,
+    sms_code: str,
+    *,
+    email: str,
+    poster_type: PosterType = POSTER_TYPE_PRIVATE,
+    imprint: str = "",
+    contact_name: str = "",
+    home_location_id: int | None = None,
+) -> KASession:
+    """Submit the SMS code to complete an MFA-pending Auth0 login, exchange
+    the resulting OAuth code for tokens, return a fully-formed KASession.
+
+    Raises KAAuthExpired on bad / expired SMS code or expired challenge.
+    """
+    _gc_login_challenges()
+
+    chal = _KA_LOGIN_CHALLENGES.pop(challenge_id, None)
+    if chal is None:
+        raise KAAuthExpired(
+            "MFA challenge expired or unknown. Restart the login flow."
+        )
+
+    client: httpx.Client = chal["client"]
+    state: str = chal["state"]
+    code_verifier: str = chal["code_verifier"]
+
+    try:
+        r = client.post(
+            f"{AUTH0_BASE}/u/mfa-sms-challenge",
+            params={"state": state},
+            data={
+                "state": state,
+                "code": sms_code.strip(),
+                "rememberBrowser": "true",
+            },
+        )
+    except Exception as exc:
+        client.close()
+        raise KAError(f"MFA submission transport error: {exc}") from exc
+
+    final_url = str(r.url)
+    if "mfa-sms-challenge" in final_url:
+        client.close()
+        err = re.search(r'class="[^"]*error[^"]*"[^>]*>([^<]+)', r.text)
+        msg = err.group(1).strip() if err else "Invalid or expired SMS code"
+        raise KAAuthExpired(f"MFA failed: {msg}")
+
+    code = _extract_oauth_code(final_url)
+    client.close()
+    if not code:
+        raise KAError(
+            f"OAuth callback URL has no code after MFA submission: {final_url[:200]}"
+        )
+
+    return _exchange_code_for_session(
+        code=code,
+        code_verifier=code_verifier,
+        email=email,
+        poster_type=poster_type,
+        imprint=imprint,
+        contact_name=contact_name,
+        home_location_id=home_location_id,
+    )
 
 
 # --- XML body construction ---
