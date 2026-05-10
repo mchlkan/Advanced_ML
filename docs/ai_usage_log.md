@@ -2538,6 +2538,254 @@ working all along after `4954ac6`; the user just hadn't noticed the
 
 ---
 
+### Day 5 — 2026-05-10 (continued): edit-API discovery + wire KA/Vinted edit + delete
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Plan file:** none — informal plan via TaskCreate after the user said "yes"
+to the offer to wire it up
+**Commit:** `9ba422f` Push edits to live KA + Vinted listings + KA delete
+
+#### Prompt 1
+> "Can you explore the api to edit directly so you edit the listing directly? because right now nothing happens in the kebab menue"
+
+**Decision:** Two sub-tasks. (a) Diagnose the kebab bug. Pulled the live
+production JS bundle (`page-7b46d3aecc493933.js`) via curl with the
+`resell-auth=ok` cookie, grep'd for the new strings (Open, Change
+price, Relist, Mark sold, Delete this listing, Brand or size tag) —
+all 6 present. So the new code IS shipped; the user's browser is just
+caching the old SPA. Recommended hard-refresh.
+
+(b) Probe the KA edit API. Wrote `scripts/probe_ka_edit.py` that uses
+the live KA mobile session to GET + OPTIONS an existing posted
+listing (`3405034173`). OPTIONS returned **`Allow:
+GET,HEAD,DELETE,PUT,OPTIONS`** on `/api/users/{user_id}/ads/{ad_id}.json`
+— so KA does support both edit (PUT) and delete (DELETE), the
+existing `docs/ka_endpoints.md` just hadn't documented it. GET
+revealed the full ad body (id, title, price, ad-status=ACTIVE,
+last-user-edit-date, category 154 = Damenbekleidung) so we know the
+shape of what to PUT back.
+
+#### Prompt 2
+> "yes but also for vinted please"
+
+**Decision:** Wrote `scripts/probe_vinted_edit.py` and ran it inside
+the EC2 container (Vinted session needs a working .env, EC2 has it,
+local was stale). Local probe: `try_load_or_refresh()` returned
+`needs_login`. EC2 in-container: ran with
+`VINTED_SESSION_PATH=/app/data/vinted_session.json` env override.
+
+Probe iterated candidate URLs:
+- `OPTIONS /api/v2/item_upload/drafts/{id}` → 404 (with PUT body
+  giving 403 access_denied — wrong URL for live items)
+- `OPTIONS /api/v2/items/{id}` → 404 (pure web route)
+- `GET /api/v2/items/{id}/details` → 200 with
+  `can_edit: true, can_delete: true` markers + 30+ field shape
+- **`PUT /api/v2/item_upload/items/{id}`** → 400 with field-by-field
+  validation hints (`brand`, `size`, `color`, `package_size`
+  required) — confirms PUT IS accepted at this URL, just needs full
+  payload. Vinted's own error: "Bestimmte Marken können nur geändert
+  werden, wenn du den Artikel löschst und erneut hochlädst" — brand
+  changes are restricted, but price/title/desc are fine.
+
+Three more PUT shapes tried for partial updates (just price+title,
+just price, nested price object) — all 400. **Vinted requires the
+full payload on PUT, no partial patches.** Strategy: GET live item →
+extract photo IDs + other state → modify changed fields → PUT back.
+
+#### Implementation
+
+Backend integrations:
+- `KAClient.update_listing(ad_id, ad_xml)` — PUT same JAXB body to the
+  per-user ad URL.
+- `KAClient.delete_listing(ad_id)` — DELETE on the same URL,
+  idempotent (200/204/404 all OK).
+- `KAClient.get_listing_picture_links(ad_id)` — GET + recursive JAXB
+  unwrap to extract existing pictures so update_listing can preserve
+  photos without re-upload.
+- Public async `ka.update_listing(ad_id, payload)` — fetches picture
+  links from live, layers session defaults, builds XML, PUTs.
+- Public async `ka.delete_listing(ad_id)`.
+- Extracted `_load_session_or_raise()` + `_layer_session_defaults()`
+  helpers since both publish and update need them.
+- `VintedClient.fetch_item_details(item_id)` — GET to read live state.
+- `VintedClient.update_listing(item_id, payload, photo_ids)` — PUT to
+  the discovered `/item_upload/items/{id}` endpoint.
+- Public async `vinted.update_listing(item_id, payload)` — fetches
+  existing photos, resolves brand_id (cached), PUTs.
+
+Backend routes:
+- `PATCH /listings/{id}/fields` now returns `{stored, pushed:
+  {vinted?: {ok, error?}, kleinanzeigen?: {ok, error?}}}`. After
+  storing locally, builds per-platform payloads via to_vinted /
+  to_kleinanzeigen and pushes to each posted platform. Push failures
+  don't block the response — surfaced per-platform.
+- `DELETE /listings/{id}` now also calls KA delete (was previously
+  logging "skipping platform delete on kleinanzeigen — not
+  implemented").
+
+Frontend:
+- `patchListingFields` returns `PatchFieldsResponse {stored, pushed}`.
+- `PriceEditModal` stays open during save, shows "Saving and pushing
+  to live listings…" status, then per-platform ✓/✗ result lines after
+  the response. Auto-closes 1.2s after a fully successful save; stays
+  open with the error visible if any push failed.
+
+123/123 backend tests pass. Vercel deploy + EC2 redeploy.
+
+**What I learned:**
+1. **OPTIONS is underrated for API discovery.** KA's documentation
+   only mentioned POST (create) and refresh, but OPTIONS revealed the
+   full verb set in one round-trip. Faster than reading the mobile
+   app's traffic capture.
+2. **Validation errors are the cheapest probe.** Sending an empty PUT
+   body to a candidate endpoint gets you either "405 method not
+   allowed" (wrong verb) or "400 missing fields" (right verb, just
+   needs more data). The 400 response from
+   `/api/v2/item_upload/items/{id}` listed every required field by
+   name — instant API spec.
+3. **EC2 sessions trump local sessions for probing.** Local Vinted
+   refresh tokens expire fast; EC2 has the live working session
+   because it actually publishes. Running probes in-container via
+   `docker exec` with the session-path env override was the right
+   pattern.
+4. **Vercel CLI must run from `frontend/`.** Got bitten again — first
+   `vercel deploy --prod --yes` from the wrong cwd auto-detected as
+   FastAPI and 400'd. Worth a Make target or shell alias.
+
+---
+
+### Day 5 — 2026-05-10 (continued): /simplify pass on the edit feature
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commit:** `ccd59e5` Simplify: parallel platform pushes + extract
+Vinted photo helper + drop modal effect
+
+#### Prompt 1
+> /simplify
+
+**Decision:** Captured the diff for `9ba422f` to `/tmp/simplify_diff.txt`
+(excluded the probe scripts — discovery artifacts, not production
+code). Launched 3 Explore agents in parallel: code reuse, code
+quality, efficiency. All three came back with focused findings.
+
+**Aggregated, fixed:**
+1. **Parallel platform pushes** (Efficiency #1) — PATCH route was
+   pushing to Vinted then KA sequentially via two awaits (~6-16s
+   wall-clock). Extracted `_push_edit(platform, id, fields)` helper
+   and ran pushes concurrently via `asyncio.gather`. ~50% latency
+   win for dual-platform listings.
+2. **Vinted photo-id extraction** (Reuse #3) — both
+   `submit_listing_via_draft` and `update_listing` had the same
+   `[int(p["id"]) for p in item.photos if p.id]` comprehension.
+   Extracted `_extract_photo_ids(item)` helper.
+3. **PriceEditModal `useEffect` for auto-close** (Quality #1 +
+   Efficiency #5) — was watching `[result, allOk, onClose]`.
+   `onClose` isn't memoized in the parent so the effect could fire
+   spuriously on parent re-renders. Moved `setTimeout(onClose, 1200)`
+   into the success branch of `doSave` directly. Cleaner intent,
+   fewer deps, eliminates the stability concern.
+
+**Skipped (noted reason):**
+- JAXB `_unwrap_value` extraction — only one production consumer; the
+  duplication with the probe script is OK
+- `PLATFORM_LABEL` hoist across 3 frontend files — existing
+  duplication, not introduced by this commit
+- Push payload-building into integrations — real architectural
+  concern (the runner has the same pattern; would need a coordinated
+  refactor) but out of scope for /simplify
+- KA picture-link caching, SQL DISTINCT dedup, `@with_session`
+  decorator — agent's own "low priority" framing
+
+**What I learned:**
+1. **3-agent /simplify finds different things in parallel.** Reuse
+   agent flagged the photo-id duplication; quality agent flagged the
+   useEffect coupling; efficiency agent flagged the sequential awaits.
+   Each came up with a distinct angle on the same diff — the parallel
+   structure is actually load-bearing for coverage.
+2. **The "agent says do X but actually it's not the right scope" call
+   is a recurring judgment.** Twice this pass I noted "real concern,
+   out of scope". Sticking to the immediate-fix triangle (correctness,
+   small-DRY, latency wins) keeps /simplify a 30-min pass instead of a
+   refactoring epic.
+
+---
+
+### Day 5 — 2026-05-10 (continued): merge origin/main — pull in multi-v2 VLM adapter
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commit:** `4305713` Merge origin/main into feature/deploy-prep —
+pull in multi-v2 VLM adapter
+
+#### Prompt 1
+> "Okay next step can you merge our branch with main and see if their are new commits we need to think about"
+
+**Decision:** `git fetch --all` revealed 6 commits on `origin/main`
+that weren't on `feature/deploy-prep` — all from Mike (the
+modeling/research path), with one being the headline "Ship multi-v2:
+KA parse rate 40.9% → 100%". Diff stat:
+
+| File | Lines |
+|---|---|
+| `docs/model_stack_evolution.md` | +318 |
+| `models/extract_vlm_features.py` | +105 |
+| `models/train_vlm.py` | +10 |
+| `runpod/handler.py` | +2 (ADAPTER_ID default → multi-v2) |
+| `shared/prompts.py` | +15 (drop description + price_eur from VLM output) |
+
+Cross-referenced with my branch's 65-file changeset: **zero file
+overlap → no merge conflicts**. Ran `git merge --no-ff` cleanly.
+
+The semantic concern was the prompt change: VLM no longer emits
+`description` or `price_eur`. Confirmed via grep that
+`backend/description.py` (Model #6, Groq Llama 3.1) already fills
+description downstream of the VLM call, and `price_eur` was always
+covered by price_head. So nothing breaks.
+
+#### Prompt 2 (concurrent with the merge investigation)
+> "https://huggingface.co/mchlkan/qwen3vl4b-resell-adapter-multi-v2 this is the new mmodel"
+
+**Decision:** Confirmed this matches the URL Mike's commit wired into
+`runpod/handler.py`. Noted to user that the actual VLM serving prod
+traffic depends on the **RunPod worker rebuild** (separate
+infrastructure I don't control), not just our backend code. The
+handler.py default change only takes effect when the worker is
+rebuilt.
+
+#### Implementation
+
+`git merge --no-ff origin/main`. 5 files added/changed, no conflicts.
+`pytest backend/tests/ -q` → 123/123 still pass. `npm run build` →
+clean. Pushed merge commit, Vercel deploy, EC2 redeploy. Backend
+healthy.
+
+Open question for the user: is the RunPod worker on multi-v2 yet, or
+still on multi-v1? Until the worker is rebuilt, KA parse rate stays
+at 40.9% in production even though the backend is ready for the new
+6-field response shape.
+
+**What I learned:**
+1. **Zero-overlap merges are quiet wins.** The branches diverged
+   significantly (6 + 65 commits since the merge base), but the work
+   was disjoint by file — Mike on `models/` + `shared/prompts.py` +
+   `runpod/`, me on `backend/` + `frontend/`. Healthy modular
+   separation paid off at merge time.
+2. **The RunPod worker is the actual deployment unit for the VLM,
+   not our backend.** The `handler.py` default only matters at worker
+   rebuild time. Our backend just talks to whatever endpoint
+   `RUNPOD_ENDPOINT_ID` points at — which Mike controls. This is the
+   right separation but worth being explicit about so we don't
+   confuse "merged the prompt change" with "shipped the prompt
+   change".
+3. **`git merge-tree --write-tree` for conflict prediction is
+   underused.** A 1-second dry-run before the actual merge surfaced
+   "no conflicts" upfront — much faster than starting the merge and
+   bailing if it gets ugly.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
