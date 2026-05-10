@@ -5,17 +5,25 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
   --color-ink: #0e0f0e;
-  --color-ink-secondary: rgb(107 108 106);
-  --color-ink-tertiary: rgb(155 156 153);
-  --color-bg: #ffffff;
+  --color-ink2: #3a3b3a;
+  --color-ink-secondary: #6b6c6a;
+  --color-ink-tertiary: #9b9c99;
+  --color-bg: #fafaf8;
   --color-bg-subtle: #fafaf8;
-  --color-bg-card: rgb(239 236 230);
-  --color-border: rgb(231 229 224);
+  --color-bg-card: #ffffff;
+  --color-border: #e7e5e0;
+  --color-border-soft: #efece6;
   --color-accent: oklch(0.62 0.15 145);
+  --color-accent-soft: oklch(0.96 0.04 145);
+  --color-amber: oklch(0.72 0.12 75);
+  --color-amber-soft: oklch(0.96 0.04 80);
+  --color-vinted: oklch(0.55 0.08 195);
+  --color-vinted-soft: oklch(0.97 0.02 195);
+  --color-ka: oklch(0.62 0.13 55);
+  --color-ka-soft: oklch(0.97 0.03 70);
   --color-accent-orange: oklch(0.62 0.13 55);
-  --color-accent-dim: oklch(0.94 0.04 145);
 
-  --radius: 0px;
+  --radius: 14px;
 }
 
 * {
@@ -32,7 +40,6 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Safe area insets for PWA notch/home bar */
 body {
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
@@ -41,5 +48,3 @@ body {
 textarea {
   resize: none;
 }
-
-/* File inputs are hidden via visually-hidden styles on each element */

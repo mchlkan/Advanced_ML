@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from backend import db
 from backend.pipeline import run_pipeline
@@ -65,7 +65,7 @@ async def upload(
 ) -> UploadResponse:
     raw = await image.read()
     try:
-        pil_image = Image.open(io.BytesIO(raw)).convert("RGB")
+        pil_image = ImageOps.exif_transpose(Image.open(io.BytesIO(raw))).convert("RGB")
     except UnidentifiedImageError as exc:
         raise HTTPException(status_code=400, detail="Could not decode image") from exc
 

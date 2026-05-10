@@ -16,6 +16,21 @@ const PLATFORM_LABEL: Record<Platform, string> = {
   kleinanzeigen: "Kleinanzeigen",
 };
 
+const PLATFORM_ACCENT: Record<Platform, string> = {
+  vinted: "oklch(0.55 0.08 195)",
+  kleinanzeigen: "oklch(0.62 0.13 55)",
+};
+
+const PLATFORM_SOFT: Record<Platform, string> = {
+  vinted: "oklch(0.97 0.02 195)",
+  kleinanzeigen: "oklch(0.97 0.03 70)",
+};
+
+const PLATFORM_KICKER: Record<Platform, string> = {
+  vinted: "EU · fashion",
+  kleinanzeigen: "DE · local",
+};
+
 function fmt(n: number) {
   return `€${Math.round(n)}`;
 }
@@ -24,36 +39,284 @@ function shortId(id: string) {
   return id.slice(0, 6);
 }
 
-interface FieldChipProps {
-  label: string;
-  value: string | null;
-  uncertain?: boolean;
-}
-function FieldChip({ label, value, uncertain }: FieldChipProps) {
+// Pill chip for identification fields
+function Chip({
+  icon,
+  children,
+  dim,
+}: {
+  icon: string;
+  children: React.ReactNode;
+  dim?: boolean;
+}) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 52 }}>
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "7px 11px 7px 12px",
+        borderRadius: 999,
+        background: "#fff",
+        border: "1px solid #e7e5e0",
+        fontSize: 13.5,
+        fontWeight: 500,
+        color: dim ? "#9b9c99" : "#0e0f0e",
+        fontStyle: dim ? "italic" : "normal",
+        lineHeight: 1,
+        whiteSpace: "nowrap" as const,
+      }}
+    >
       <span
         style={{
+          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
           fontSize: 10,
-          fontWeight: 600,
-          letterSpacing: "1px",
-          color: "var(--color-ink-tertiary)",
-          textTransform: "uppercase",
-        }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
-          fontSize: 13,
+          color: "#9b9c99",
           fontWeight: 500,
-          color: uncertain ? "var(--color-ink-tertiary)" : "var(--color-ink)",
-          fontStyle: uncertain ? "italic" : "normal",
+          letterSpacing: "0.2px",
         }}
       >
-        {value ?? "—"}{uncertain ? " · Check" : ""}
+        {icon}
       </span>
+      {children}
     </div>
+  );
+}
+
+function SectionLabel({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        padding: "0 20px",
+        marginBottom: 10,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: "#9b9c99",
+          textTransform: "uppercase" as const,
+          letterSpacing: "1.4px",
+          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        }}
+      >
+        {children}
+      </div>
+      {action && (
+        <div style={{ fontSize: 13, color: "#3a3b3a", fontWeight: 500 }}>{action}</div>
+      )}
+    </div>
+  );
+}
+
+function ProbBar({ value, color }: { value: number; color: string }) {
+  return (
+    <div
+      style={{
+        height: 5,
+        background: "#efece6",
+        borderRadius: 999,
+        overflow: "hidden",
+        width: "100%",
+      }}
+    >
+      <div
+        style={{
+          width: `${Math.round(value * 100)}%`,
+          height: "100%",
+          background: color,
+          borderRadius: 999,
+          transition: "width 0.4s ease",
+        }}
+      />
+    </div>
+  );
+}
+
+interface PlatformCardProps {
+  platform: Platform;
+  recommended: boolean;
+  selected: boolean;
+  price: { q10: number; q50: number; q90: number };
+  sellProbability?: number;
+  qualitativeNote?: string;
+  verifying: boolean;
+  onClick: () => void;
+}
+
+function PlatformCard({
+  platform,
+  recommended,
+  selected,
+  price,
+  sellProbability,
+  qualitativeNote,
+  verifying,
+  onClick,
+}: PlatformCardProps) {
+  const accent = PLATFORM_ACCENT[platform];
+  const soft = PLATFORM_SOFT[platform];
+  const kicker = PLATFORM_KICKER[platform];
+
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        position: "relative",
+        borderRadius: 16,
+        background: selected ? soft : "#fff",
+        border: `1px solid ${selected ? accent + "55" : "#e7e5e0"}`,
+        padding: "16px 16px 18px",
+        boxShadow: selected
+          ? `0 1px 0 #fff inset, 0 6px 20px ${accent}1f`
+          : "0 1px 0 #fff inset",
+        cursor: "pointer",
+        marginTop: recommended ? 12 : 0,
+      }}
+    >
+      {recommended && (
+        <div
+          style={{
+            position: "absolute",
+            top: -10,
+            left: 16,
+            background: "#0e0f0e",
+            color: "#fff",
+            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+            fontSize: 10,
+            letterSpacing: "1.4px",
+            textTransform: "uppercase" as const,
+            padding: "4px 8px",
+            borderRadius: 6,
+          }}
+        >
+          Recommended
+        </div>
+      )}
+
+      {/* Wordmark row */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 14,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <div style={{ width: 8, height: 8, borderRadius: 8, background: accent }} />
+          <span style={{ fontSize: 14, fontWeight: 600, color: "#0e0f0e", letterSpacing: "-0.1px" }}>
+            {PLATFORM_LABEL[platform]}
+          </span>
+        </div>
+        <span
+          style={{
+            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+            fontSize: 10,
+            color: "#9b9c99",
+            textTransform: "uppercase" as const,
+            letterSpacing: "1.2px",
+          }}
+        >
+          {kicker}
+        </span>
+      </div>
+
+      {/* Price */}
+      {verifying ? (
+        <div style={{ fontSize: 13, color: "#9b9c99", height: 42 }}>…</div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          <div
+            style={{
+              fontSize: 38,
+              fontWeight: 600,
+              letterSpacing: "-1.2px",
+              color: "#0e0f0e",
+              fontVariantNumeric: "tabular-nums",
+              lineHeight: 1,
+            }}
+          >
+            {fmt(price.q50)}
+          </div>
+          <div
+            style={{
+              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              fontSize: 12,
+              color: "#6b6c6a",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {fmt(price.q10)}–{fmt(price.q90)}
+          </div>
+        </div>
+      )}
+
+      {/* Sell prob */}
+      {sellProbability !== undefined && !verifying && (
+        <div style={{ marginTop: 14 }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 12,
+              color: "#3a3b3a",
+              marginBottom: 6,
+              fontWeight: 500,
+            }}
+          >
+            <span>Chance to sell</span>
+            <span
+              style={{
+                fontVariantNumeric: "tabular-nums",
+                color: "#0e0f0e",
+                fontWeight: 600,
+              }}
+            >
+              {Math.round(sellProbability * 100)}% · 30 days
+            </span>
+          </div>
+          <ProbBar value={sellProbability} color={accent} />
+        </div>
+      )}
+
+      {/* Qualitative note */}
+      {qualitativeNote && !verifying && (
+        <div
+          style={{
+            marginTop: 14,
+            fontSize: 13,
+            color: "#3a3b3a",
+            lineHeight: 1.4,
+            padding: "10px 12px",
+            borderRadius: 10,
+            background: "#fff",
+            border: "1px solid #efece6",
+          }}
+        >
+          <span
+            style={{
+              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              fontSize: 10,
+              textTransform: "uppercase" as const,
+              letterSpacing: "1px",
+              color: "#9b9c99",
+              marginRight: 6,
+            }}
+          >
+            Note
+          </span>
+          {qualitativeNote}
+        </div>
+      )}
+    </button>
   );
 }
 
@@ -64,14 +327,15 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>("vinted");
   const [hints, setHints] = useState<Partial<Identification>>({});
 
-  // Determine recommendation: Vinted has higher price, Kleinanzeigen has sell probability
   const vintedQ50 = data.vinted.price.q50;
   const kaQ50 = data.kleinanzeigen.price.q50;
+  const recommendedPlatform: Platform = vintedQ50 >= kaQ50 ? "vinted" : "kleinanzeigen";
   const priceDiff = Math.abs(vintedQ50 - kaQ50);
-  const recommendationText =
+  const higherPlatform = vintedQ50 >= kaQ50 ? "Vinted" : "Kleinanzeigen";
+  const calloutText =
     vintedQ50 >= kaQ50
-      ? `Vinted gets ${fmt(priceDiff)} more; Kleinanzeigen may sell faster.`
-      : `Kleinanzeigen sells faster; Vinted gets ${fmt(priceDiff)} more.`;
+      ? `Vinted nets you ${fmt(priceDiff)} more. Kleinanzeigen typically sells faster locally.`
+      : `Kleinanzeigen sells faster locally. Vinted gets ${fmt(priceDiff)} more.`;
 
   const activeId =
     selectedPlatform === "vinted"
@@ -87,14 +351,21 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
   const wearDetected = data.visual_wear_probability > 0.4;
   const vintedReview = new Set(data.vinted.field_review?.needs_review ?? []);
 
+  const idBlock = data.vinted.identification;
+  const itemHeadline = [
+    idBlock.brand,
+    idBlock.color?.toLowerCase(),
+    idBlock.category?.toLowerCase(),
+    idBlock.condition ? `— ${idBlock.condition.toLowerCase()}` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault();
     setVerifying(true);
     try {
-      const updated = await verifyListing({
-        listing_id: data.listing_id,
-        hints,
-      });
+      const updated = await verifyListing({ listing_id: data.listing_id, hints });
       setData(updated);
     } finally {
       setVerifying(false);
@@ -103,7 +374,8 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
   }
 
   function handlePublish(platform: Platform) {
-    const id = platform === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
+    const id =
+      platform === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
     onPublish(platform, {
       ...id,
       title: listingTitle || id.title,
@@ -111,7 +383,10 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
     });
   }
 
-  const otherPlatform: Platform = selectedPlatform === "vinted" ? "kleinanzeigen" : "vinted";
+  const otherPlatform: Platform =
+    selectedPlatform === "vinted" ? "kleinanzeigen" : "vinted";
+
+  const ACCENT = "oklch(0.62 0.15 145)";
 
   return (
     <div
@@ -119,509 +394,575 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
         height: "100dvh",
         display: "flex",
         flexDirection: "column",
-        backgroundColor: "var(--color-bg)",
-        color: "var(--color-ink)",
-        fontFamily: "var(--font-sans)",
+        backgroundColor: "#fafaf8",
+        color: "#0e0f0e",
+        fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
         overflow: "hidden",
       }}
     >
-      {/* Header — fixed at top, outside scroll area */}
-      <header
-        style={{
-          padding: "20px 24px 16px",
-          borderBottom: "1px solid var(--color-border)",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexShrink: 0,
-        }}
-      >
-        <button
-          onClick={onReset}
-          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 15, fontWeight: 600, letterSpacing: "-0.3px", color: "var(--color-ink)", minHeight: 44 }}
-        >
-          Resell Copilot
-        </button>
-        <span
-          style={{
-            fontSize: 12,
-            color: "var(--color-ink-tertiary)",
-            fontFamily: "var(--font-mono)",
-          }}
-        >
-          #{shortId(data.listing_id)} · {(data.latency_ms / 1000).toFixed(1)}s
-        </span>
-      </header>
-
-      {/* Scrollable body — sits between header and publish bar */}
-      <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch" } as React.CSSProperties}>
-
-      {/* Photo preview */}
+      {/* Scrollable body */}
       <div
         style={{
-          height: 220,
-          overflow: "hidden",
-          backgroundColor: "var(--color-bg-card)",
-          flexShrink: 0,
-        }}
+          flex: 1,
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
+          paddingBottom: 120,
+        } as React.CSSProperties}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={imageUrl}
-          alt="Your item"
-          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-        />
-      </div>
-
-      {/* Identification block */}
-      <section style={{ padding: "24px 24px 0" }}>
-        <p
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: "1px",
-            textTransform: "uppercase",
-            color: "var(--color-ink-tertiary)",
-            margin: "0 0 6px",
-          }}
-        >
-          Identified
-        </p>
-        <p
-          style={{
-            fontSize: 11,
-            color: "var(--color-ink-tertiary)",
-            margin: "0 0 14px",
-          }}
-        >
-          What we see
-        </p>
-
-        {/* Item headline */}
-        <p
-          style={{
-            fontSize: 17,
-            fontWeight: 590,
-            letterSpacing: "-0.5px",
-            margin: "0 0 16px",
-            lineHeight: 1.3,
-          }}
-        >
-          {data.vinted.identification.brand}{" "}
-          {data.vinted.identification.color?.toLowerCase()}{" "}
-          {data.vinted.identification.category?.toLowerCase()},{" "}
-          {data.vinted.identification.condition?.toLowerCase()}
-        </p>
-
-        {/* Field chips */}
+        {/* Top bar */}
         <div
           style={{
+            padding: "12px 20px 16px",
             display: "flex",
-            gap: 20,
-            flexWrap: "wrap",
-            marginBottom: wearDetected ? 14 : 20,
+            alignItems: "center",
+            justifyContent: "space-between",
           }}
         >
-          <FieldChip
-            label="Brand"
-            value={data.vinted.identification.brand}
-            uncertain={vintedReview.has("brand")}
-          />
-          <FieldChip label="Type" value={data.vinted.identification.category} />
-          <FieldChip label="Cond" value={data.vinted.identification.condition} />
-          <FieldChip label="Color" value={data.vinted.identification.color} />
-          <FieldChip
-            label="Size"
-            value={data.vinted.identification.size}
-            uncertain={vintedReview.has("size") || !data.vinted.identification.size}
-          />
-        </div>
-
-        {/* Wear warning */}
-        {wearDetected && (
-          <div
+          <button
+            onClick={onReset}
             style={{
-              backgroundColor: "oklch(0.97 0.03 55)",
-              borderLeft: "3px solid var(--color-accent-orange)",
-              padding: "10px 14px",
-              marginBottom: 20,
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              border: "1px solid #e7e5e0",
+              background: "#fff",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+              cursor: "pointer",
             }}
           >
-            <p
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path
+                d="M9 2L4 7l5 5"
+                stroke="#0e0f0e"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          <div
+            style={{
+              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              fontSize: 10.5,
+              color: "#9b9c99",
+              textTransform: "uppercase",
+              letterSpacing: "1.2px",
+            }}
+          >
+            #{shortId(data.listing_id)} · {(data.latency_ms / 1000).toFixed(1)}s
+          </div>
+          <div style={{ width: 36 }} />
+        </div>
+
+        {/* Photo */}
+        <div style={{ padding: "0 20px" }}>
+          <div
+            style={{
+              borderRadius: 18,
+              overflow: "hidden",
+              border: "1px solid #e7e5e0",
+              position: "relative",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imageUrl}
+              alt="Your item"
+              style={{ width: "100%", height: 260, objectFit: "cover", display: "block" }}
+            />
+            <div
               style={{
-                fontSize: 13,
-                fontWeight: 600,
-                color: "var(--color-accent-orange)",
-                margin: "0 0 3px",
+                position: "absolute",
+                top: 12,
+                left: 12,
+                padding: "5px 9px",
+                borderRadius: 8,
+                background: "rgba(14,15,14,0.78)",
+                color: "#fff",
+                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                fontSize: 10.5,
+                textTransform: "uppercase",
+                letterSpacing: "1.2px",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                backdropFilter: "blur(8px)",
               }}
             >
-              ! Visible wear detected.
-            </p>
-            <p style={{ fontSize: 12, color: "var(--color-ink-secondary)", margin: 0 }}>
-              Light pilling detected. We adjusted condition accordingly.
-            </p>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path
+                  d="M2 5l2 2 4-4"
+                  stroke="#fff"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Identified
+            </div>
+          </div>
+        </div>
+
+        {/* Title block */}
+        <div style={{ padding: "24px 20px 16px" }}>
+          <div
+            style={{
+              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              fontSize: 10.5,
+              color: "#9b9c99",
+              textTransform: "uppercase",
+              letterSpacing: "1.4px",
+              marginBottom: 8,
+            }}
+          >
+            What we see
+          </div>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: 22,
+              fontWeight: 600,
+              letterSpacing: "-0.6px",
+              lineHeight: 1.2,
+              textWrap: "balance",
+            } as React.CSSProperties}
+          >
+            {itemHeadline || "Your item"}
+          </h2>
+        </div>
+
+        {/* Identification chips */}
+        <div
+          style={{
+            padding: "0 20px",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+          }}
+        >
+          {idBlock.brand && <Chip icon="BRAND">{idBlock.brand}</Chip>}
+          {idBlock.category && <Chip icon="TYPE">{idBlock.category}</Chip>}
+          {idBlock.condition && <Chip icon="COND">{idBlock.condition}</Chip>}
+          {idBlock.color && <Chip icon="COLOR">{idBlock.color}</Chip>}
+          <Chip
+            icon="SIZE"
+            dim={vintedReview.has("size") || !idBlock.size}
+          >
+            {idBlock.size ?? "—"}{(vintedReview.has("size") || !idBlock.size) ? " · Check" : ""}
+          </Chip>
+        </div>
+
+        {/* Wear badge */}
+        {wearDetected && (
+          <div style={{ padding: "12px 20px 0" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "10px 12px",
+                borderRadius: 12,
+                background: "oklch(0.96 0.04 80)",
+                border: "1px solid oklch(0.72 0.12 75 / 0.2)",
+                fontSize: 13,
+                color: "#3a3b3a",
+                lineHeight: 1.4,
+              }}
+            >
+              <div
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 9,
+                  flexShrink: 0,
+                  background: "oklch(0.72 0.12 75)",
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+              >
+                !
+              </div>
+              <div>
+                <span style={{ fontWeight: 600, color: "#0e0f0e" }}>Visible wear detected.</span>{" "}
+                Light wear detected. We adjusted condition accordingly.
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Edit details toggle */}
-        <button
-          onClick={() => setEditOpen((o) => !o)}
-          style={{
-            background: "none",
-            border: "none",
-            padding: 0,
-            fontSize: 13,
-            color: "var(--color-accent)",
-            cursor: "pointer",
-            fontWeight: 500,
-            minHeight: 44,
-            display: "flex",
-            alignItems: "center",
-          }}
-        >
-          {editOpen ? "Hide details" : "Edit details"} ↓
-        </button>
+        {/* Edit details button */}
+        <div style={{ padding: "14px 20px 0" }}>
+          <button
+            onClick={() => setEditOpen((o) => !o)}
+            style={{
+              width: "100%",
+              padding: "14px 16px",
+              borderRadius: 12,
+              border: "1px solid #e7e5e0",
+              background: "#fff",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+              fontSize: 14,
+              fontWeight: 500,
+              color: "#0e0f0e",
+            }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M2 10l1.2-3.2L9 1l3 3-5.8 5.8L3 11l-1-1z"
+                  stroke="#3a3b3a"
+                  strokeWidth="1.4"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              {editOpen ? "Hide details" : "Edit details"}
+            </span>
+            <span
+              style={{
+                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                fontSize: 10.5,
+                color: "#9b9c99",
+                letterSpacing: "1px",
+              }}
+            >
+              {editOpen ? "" : "RECALCULATES"}
+            </span>
+          </button>
 
-        {/* Edit form */}
-        {editOpen && (
-          <form onSubmit={handleVerify} style={{ marginTop: 12, marginBottom: 8 }}>
-            {(
-              [
-                ["brand", "Brand"],
-                ["category", "Type"],
-                ["condition", "Condition"],
-                ["color", "Color"],
-                ["size", "Size"],
-              ] as [keyof Identification, string][]
-            ).map(([field, label]) => (
-              <div key={field} style={{ marginBottom: 12 }}>
-                <label
+          {/* Edit form */}
+          {editOpen && (
+            <form
+              onSubmit={handleVerify}
+              style={{
+                marginTop: 12,
+                background: "#fff",
+                borderRadius: 12,
+                border: "1px solid #e7e5e0",
+                padding: "14px 16px",
+              }}
+            >
+              {(
+                [
+                  ["brand", "Brand"],
+                  ["category", "Type"],
+                  ["condition", "Condition"],
+                  ["color", "Color"],
+                  ["size", "Size"],
+                ] as [keyof Identification, string][]
+              ).map(([field, label]) => (
+                <div key={field} style={{ marginBottom: 12 }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: "0.8px",
+                      textTransform: "uppercase",
+                      color: "#9b9c99",
+                      marginBottom: 4,
+                    }}
+                  >
+                    {label}
+                  </label>
+                  <input
+                    type="text"
+                    defaultValue={(data.vinted.identification[field] as string) ?? ""}
+                    onChange={(e) =>
+                      setHints((h) => ({ ...h, [field]: e.target.value || null }))
+                    }
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      padding: "10px 12px",
+                      fontSize: 14,
+                      border: "1.5px solid #e7e5e0",
+                      borderRadius: 8,
+                      backgroundColor: "#fafaf8",
+                      color: "#0e0f0e",
+                      outline: "none",
+                      minHeight: 44,
+                      fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+                    }}
+                  />
+                </div>
+              ))}
+              <button
+                type="submit"
+                disabled={verifying}
+                style={{
+                  width: "100%",
+                  padding: "14px 0",
+                  backgroundColor: verifying ? "#9b9c99" : "#0e0f0e",
+                  color: "#fff",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  border: "none",
+                  borderRadius: 10,
+                  cursor: verifying ? "not-allowed" : "pointer",
+                  minHeight: 48,
+                  fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+                }}
+              >
+                {verifying ? "Recalculating…" : "Update listing"}
+              </button>
+            </form>
+          )}
+        </div>
+
+        {/* Platform section */}
+        <div style={{ padding: "28px 0 0" }}>
+          <SectionLabel>Where to sell it</SectionLabel>
+          <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 16 }}>
+            <PlatformCard
+              platform="vinted"
+              recommended={recommendedPlatform === "vinted"}
+              selected={selectedPlatform === "vinted"}
+              price={data.vinted.price}
+              sellProbability={data.vinted.sell_probability}
+              verifying={verifying}
+              onClick={() => setSelectedPlatform("vinted")}
+            />
+            <PlatformCard
+              platform="kleinanzeigen"
+              recommended={recommendedPlatform === "kleinanzeigen"}
+              selected={selectedPlatform === "kleinanzeigen"}
+              price={data.kleinanzeigen.price}
+              qualitativeNote={data.kleinanzeigen.qualitative_note}
+              verifying={verifying}
+              onClick={() => setSelectedPlatform("kleinanzeigen")}
+            />
+          </div>
+
+          {/* Callout */}
+          <div style={{ padding: "14px 20px 0" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                padding: "14px",
+                borderRadius: 12,
+                background: "#fff",
+                border: "1px solid #e7e5e0",
+              }}
+            >
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 8,
+                  flexShrink: 0,
+                  background: "oklch(0.62 0.15 145 / 0.1)",
+                  color: ACCENT,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                  fontSize: 13,
+                  fontWeight: 700,
+                }}
+              >
+                €
+              </div>
+              <div style={{ fontSize: 13.5, lineHeight: 1.45, color: "#3a3b3a" }}>
+                <strong style={{ color: "#0e0f0e" }}>{higherPlatform} nets you {fmt(priceDiff)} more.</strong>{" "}
+                {vintedQ50 >= kaQ50
+                  ? "Kleinanzeigen typically sells faster locally."
+                  : "Vinted reaches a larger fashion audience."}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Listing copy */}
+        <div style={{ padding: "28px 0 0" }}>
+          <SectionLabel
+            action={
+              <span style={{ color: ACCENT, cursor: "pointer" }}>Regenerate</span>
+            }
+          >
+            Your draft listing
+          </SectionLabel>
+          <div style={{ padding: "0 20px" }}>
+            <div
+              style={{
+                borderRadius: 14,
+                border: "1px solid #e7e5e0",
+                background: "#fff",
+                overflow: "hidden",
+              }}
+            >
+              {/* Title */}
+              <div style={{ padding: "14px 14px 8px" }}>
+                <div
                   style={{
-                    display: "block",
-                    fontSize: 11,
-                    fontWeight: 600,
-                    letterSpacing: "0.8px",
+                    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                    fontSize: 10,
+                    color: "#9b9c99",
                     textTransform: "uppercase",
-                    color: "var(--color-ink-tertiary)",
-                    marginBottom: 4,
+                    letterSpacing: "1.2px",
+                    marginBottom: 6,
                   }}
                 >
-                  {label}
-                </label>
+                  Title
+                </div>
                 <input
                   type="text"
-                  defaultValue={(data.vinted.identification[field] as string) ?? ""}
+                  value={listingTitle}
                   onChange={(e) =>
-                    setHints((h) => ({ ...h, [field]: e.target.value || null }))
+                    setTitleEdits((t) => ({ ...t, [selectedPlatform]: e.target.value }))
                   }
+                  placeholder="Title"
                   style={{
                     display: "block",
                     width: "100%",
-                    padding: "10px 12px",
-                    fontSize: 14,
-                    border: "1.5px solid var(--color-border)",
-                    backgroundColor: "var(--color-bg)",
-                    color: "var(--color-ink)",
+                    fontSize: 15,
+                    fontWeight: 600,
+                    color: "#0e0f0e",
+                    lineHeight: 1.3,
+                    border: "none",
                     outline: "none",
-                    minHeight: 44,
+                    background: "transparent",
+                    padding: 0,
+                    fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
                   }}
                 />
               </div>
-            ))}
-            <button
-              type="submit"
-              disabled={verifying}
-              style={{
-                width: "100%",
-                padding: "14px 0",
-                backgroundColor: verifying ? "var(--color-ink-tertiary)" : "var(--color-ink)",
-                color: "var(--color-bg)",
-                fontSize: 14,
-                fontWeight: 600,
-                border: "none",
-                cursor: verifying ? "not-allowed" : "pointer",
-                minHeight: 48,
-              }}
-            >
-              {verifying ? "Recalculating…" : "Update listing"}
-            </button>
-          </form>
-        )}
-      </section>
+              <div style={{ height: 1, background: "#efece6" }} />
+              {/* Description */}
+              <div style={{ padding: "12px 14px 14px" }}>
+                <div
+                  style={{
+                    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                    fontSize: 10,
+                    color: "#9b9c99",
+                    textTransform: "uppercase",
+                    letterSpacing: "1.2px",
+                    marginBottom: 6,
+                  }}
+                >
+                  Description
+                </div>
+                <textarea
+                  value={listingDesc}
+                  onChange={(e) =>
+                    setDescEdits((d) => ({ ...d, [selectedPlatform]: e.target.value }))
+                  }
+                  rows={5}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    fontSize: 13.5,
+                    lineHeight: 1.5,
+                    color: "#3a3b3a",
+                    border: "none",
+                    outline: "none",
+                    background: "transparent",
+                    padding: 0,
+                    resize: "none",
+                    fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
 
-      {/* Divider */}
-      <div style={{ height: 1, backgroundColor: "var(--color-border)", margin: "20px 0" }} />
+        <div style={{ height: 32 }} />
+      </div>
 
-      {/* Platform recommendation */}
-      <section style={{ padding: "0 24px" }}>
-        <p
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: "1px",
-            textTransform: "uppercase",
-            color: "var(--color-ink-tertiary)",
-            margin: "0 0 16px",
-          }}
-        >
-          Where to list
-        </p>
-
-        {/* Vinted card */}
-        <PlatformCard
-          platform="vinted"
-          selected={selectedPlatform === "vinted"}
-          price={data.vinted.price}
-          sellProbability={data.vinted.sell_probability}
-          verifying={verifying}
-          onClick={() => setSelectedPlatform("vinted")}
-        />
-
-        <div style={{ height: 10 }} />
-
-        {/* Kleinanzeigen card */}
-        <PlatformCard
-          platform="kleinanzeigen"
-          selected={selectedPlatform === "kleinanzeigen"}
-          price={data.kleinanzeigen.price}
-          qualitativeNote={data.kleinanzeigen.qualitative_note}
-          verifying={verifying}
-          onClick={() => setSelectedPlatform("kleinanzeigen")}
-        />
-
-        {/* Recommendation callout */}
-        <p
-          style={{
-            fontSize: 13,
-            color: "var(--color-ink-secondary)",
-            margin: "14px 0 0",
-            lineHeight: 1.45,
-          }}
-        >
-          {recommendationText}
-        </p>
-      </section>
-
-      {/* Divider */}
-      <div style={{ height: 1, backgroundColor: "var(--color-border)", margin: "20px 0" }} />
-
-      {/* Generated listing */}
-      <section style={{ padding: "0 24px" }}>
-        <p
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: "1px",
-            textTransform: "uppercase",
-            color: "var(--color-ink-tertiary)",
-            margin: "0 0 12px",
-          }}
-        >
-          Generated listing · {PLATFORM_LABEL[selectedPlatform]}
-        </p>
-
-        <input
-          type="text"
-          value={listingTitle}
-          onChange={(e) => setTitleEdits((t) => ({ ...t, [selectedPlatform]: e.target.value }))}
-          placeholder="Title"
-          style={{
-            display: "block",
-            width: "100%",
-            padding: "10px 12px",
-            fontSize: 14,
-            fontWeight: 500,
-            border: "1.5px solid var(--color-border)",
-            backgroundColor: "var(--color-bg)",
-            color: "var(--color-ink)",
-            outline: "none",
-            marginBottom: 10,
-            minHeight: 44,
-          }}
-        />
-
-        <textarea
-          value={listingDesc}
-          onChange={(e) => setDescEdits((d) => ({ ...d, [selectedPlatform]: e.target.value }))}
-          rows={6}
-          style={{
-            display: "block",
-            width: "100%",
-            padding: "10px 12px",
-            fontSize: 13,
-            lineHeight: 1.55,
-            border: "1.5px solid var(--color-border)",
-            backgroundColor: "var(--color-bg)",
-            color: "var(--color-ink)",
-            outline: "none",
-          }}
-        />
-      </section>
-
-      {/* Bottom padding so last content clears the safe area */}
-      <div style={{ height: "env(safe-area-inset-bottom, 16px)" }} />
-
-      </div>{/* end scrollable body */}
-
-      {/* Publish bar — never overlaps content because it's outside the scroll container */}
+      {/* Sticky bottom CTA */}
       <div
         style={{
+          position: "relative",
           flexShrink: 0,
-          backgroundColor: "var(--color-bg)",
-          borderTop: "1px solid var(--color-border)",
-          padding: "14px 24px calc(14px + env(safe-area-inset-bottom))",
+          padding: "14px 20px calc(20px + env(safe-area-inset-bottom))",
+          background:
+            "linear-gradient(180deg, rgba(250,250,248,0) 0%, rgba(250,250,248,1) 25%)",
+          marginTop: -20,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
         }}
       >
         <button
           onClick={() => handlePublish(selectedPlatform)}
           style={{
-            display: "block",
             width: "100%",
-            padding: "16px 0",
-            backgroundColor: "var(--color-ink)",
-            color: "var(--color-bg)",
-            fontSize: 15,
-            fontWeight: 600,
-            letterSpacing: "-0.2px",
+            height: 54,
+            borderRadius: 14,
             border: "none",
             cursor: "pointer",
-            minHeight: 52,
+            backgroundColor: ACCENT,
+            color: "#fff",
+            fontSize: 16,
+            fontWeight: 600,
+            letterSpacing: "-0.1px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0 20px",
+            boxShadow:
+              "0 1px 0 rgba(255,255,255,0.4) inset, 0 4px 12px oklch(0.62 0.15 145 / 0.3)",
+            fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
           }}
         >
-          Publish on {PLATFORM_LABEL[selectedPlatform]}
+          <span>Publish on {PLATFORM_LABEL[selectedPlatform]}</span>
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontVariantNumeric: "tabular-nums",
+              fontWeight: 500,
+              opacity: 0.92,
+            }}
+          >
+            {fmt(
+              selectedPlatform === "vinted" ? data.vinted.price.q50 : data.kleinanzeigen.price.q50
+            )}
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path
+                d="M3 7h8m0 0L7 3m4 4l-4 4"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        </button>
+        <button
+          onClick={() => handlePublish(otherPlatform)}
+          style={{
+            width: "100%",
+            height: 38,
+            borderRadius: 10,
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+            fontSize: 13.5,
+            fontWeight: 500,
+            color: "#6b6c6a",
+          }}
+        >
+          Or publish on {PLATFORM_LABEL[otherPlatform]} ·{" "}
+          {fmt(
+            otherPlatform === "vinted" ? data.vinted.price.q50 : data.kleinanzeigen.price.q50
+          )}
         </button>
       </div>
     </div>
-  );
-}
-
-// ---- PlatformCard sub-component ----
-
-interface PlatformCardProps {
-  platform: Platform;
-  selected: boolean;
-  price: { q10: number; q50: number; q90: number };
-  sellProbability?: number;
-  qualitativeNote?: string;
-  verifying: boolean;
-  onClick: () => void;
-}
-
-const PLATFORM_COLOR: Record<Platform, string> = {
-  vinted: "oklch(0.55 0.1 165)",      // teal-green
-  kleinanzeigen: "var(--color-accent-orange)",
-};
-
-function PlatformCard({
-  platform,
-  selected,
-  price,
-  sellProbability,
-  qualitativeNote,
-  verifying,
-  onClick,
-}: PlatformCardProps) {
-  const accentColor = PLATFORM_COLOR[platform];
-
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: "block",
-        width: "100%",
-        textAlign: "left",
-        padding: "16px",
-        backgroundColor: selected ? "var(--color-bg-card)" : "var(--color-bg-subtle)",
-        border: "none",
-        borderLeft: `4px solid ${selected ? accentColor : "var(--color-border)"}`,
-        cursor: "pointer",
-      }}
-    >
-      {/* Platform name + price */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          marginBottom: 8,
-        }}
-      >
-        <span
-          style={{
-            fontSize: 14,
-            fontWeight: 600,
-            letterSpacing: "-0.2px",
-            color: selected ? "var(--color-ink)" : "var(--color-ink-secondary)",
-          }}
-        >
-          {platform === "vinted" ? "Vinted" : "Kleinanzeigen"}
-        </span>
-
-        {verifying ? (
-          <span style={{ fontSize: 13, color: "var(--color-ink-tertiary)" }}>…</span>
-        ) : (
-          <div style={{ textAlign: "right" }}>
-            <span
-              style={{
-                fontSize: 20,
-                fontWeight: 590,
-                letterSpacing: "-0.6px",
-                color: "var(--color-ink)",
-              }}
-            >
-              {fmt(price.q50)}
-            </span>
-            <span
-              style={{
-                display: "block",
-                fontSize: 11,
-                color: "var(--color-ink-tertiary)",
-              }}
-            >
-              {fmt(price.q10)}–{fmt(price.q90)}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Sell probability (Vinted only) */}
-      {sellProbability !== undefined && !verifying && (
-        <div>
-          <div
-            style={{
-              height: 3,
-              backgroundColor: "var(--color-border)",
-              marginBottom: 5,
-            }}
-          >
-            <div
-              style={{
-                height: "100%",
-                width: `${Math.round(sellProbability * 100)}%`,
-                backgroundColor: accentColor,
-                transition: "width 0.4s ease",
-              }}
-            />
-          </div>
-          <span style={{ fontSize: 11, color: "var(--color-ink-tertiary)" }}>
-            ~{Math.round(sellProbability * 100)}% chance to sell within 30 days
-          </span>
-        </div>
-      )}
-
-      {/* Qualitative note (Kleinanzeigen) */}
-      {qualitativeNote && (
-        <p
-          style={{
-            fontSize: 11,
-            color: "var(--color-ink-tertiary)",
-            fontStyle: "italic",
-            margin: 0,
-          }}
-        >
-          {qualitativeNote}
-        </p>
-      )}
-    </button>
   );
 }

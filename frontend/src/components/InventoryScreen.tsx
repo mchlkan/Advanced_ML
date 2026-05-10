@@ -8,12 +8,19 @@ interface Props {
   onBack: () => void;
 }
 
-const PLATFORM_COLORS: Record<string, string> = {
-  vinted: "#00a987",
-  kleinanzeigen: "#d97706",
+const PLATFORM_ACCENT: Record<string, string> = {
+  vinted: "oklch(0.55 0.08 195)",
+  kleinanzeigen: "oklch(0.62 0.13 55)",
+};
+
+const PLATFORM_SOFT: Record<string, string> = {
+  vinted: "oklch(0.97 0.02 195)",
+  kleinanzeigen: "oklch(0.97 0.03 70)",
 };
 
 function PlatformBadge({ platform }: { platform: string }) {
+  const accent = PLATFORM_ACCENT[platform] ?? "#9b9c99";
+  const soft = PLATFORM_SOFT[platform] ?? "#f5f5f5";
   return (
     <span
       style={{
@@ -21,10 +28,12 @@ function PlatformBadge({ platform }: { platform: string }) {
         fontWeight: 600,
         letterSpacing: "0.4px",
         textTransform: "uppercase",
-        color: "#fff",
-        backgroundColor: PLATFORM_COLORS[platform] ?? "var(--color-ink-tertiary)",
-        padding: "2px 6px",
-        borderRadius: 3,
+        color: accent,
+        backgroundColor: soft,
+        padding: "3px 7px",
+        borderRadius: 999,
+        border: `1px solid ${accent}33`,
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
       }}
     >
       {platform}
@@ -39,7 +48,7 @@ function SkeletonCard() {
         display: "flex",
         gap: 14,
         padding: "16px 0",
-        borderBottom: "1px solid var(--color-border)",
+        borderBottom: "1px solid #e7e5e0",
         alignItems: "center",
       }}
     >
@@ -47,13 +56,18 @@ function SkeletonCard() {
         style={{
           width: 64,
           height: 64,
-          backgroundColor: "var(--color-bg-card)",
+          backgroundColor: "#efece6",
           flexShrink: 0,
+          borderRadius: 10,
         }}
       />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ height: 14, width: "60%", backgroundColor: "var(--color-bg-card)" }} />
-        <div style={{ height: 11, width: "40%", backgroundColor: "var(--color-bg-card)" }} />
+        <div
+          style={{ height: 14, width: "60%", backgroundColor: "#efece6", borderRadius: 6 }}
+        />
+        <div
+          style={{ height: 11, width: "40%", backgroundColor: "#efece6", borderRadius: 6 }}
+        />
       </div>
     </div>
   );
@@ -91,12 +105,12 @@ export default function InventoryScreen({ onBack }: Props) {
   return (
     <div
       style={{
-        minHeight: "100dvh",
+        height: "100dvh",
         display: "flex",
         flexDirection: "column",
-        backgroundColor: "var(--color-bg)",
-        color: "var(--color-ink)",
-        fontFamily: "var(--font-sans)",
+        backgroundColor: "#fafaf8",
+        color: "#0e0f0e",
+        fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
       }}
     >
       {/* Header */}
@@ -104,29 +118,41 @@ export default function InventoryScreen({ onBack }: Props) {
         style={{
           position: "sticky",
           top: 0,
-          backgroundColor: "var(--color-bg)",
+          backgroundColor: "#fafaf8",
           padding: "20px 24px 16px",
           display: "flex",
           alignItems: "center",
           gap: 12,
-          borderBottom: "1px solid var(--color-border)",
+          borderBottom: "1px solid #e7e5e0",
           zIndex: 10,
         }}
       >
         <button
           onClick={onBack}
           style={{
-            background: "none",
-            border: "none",
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            border: "1px solid #e7e5e0",
+            background: "#fff",
             cursor: "pointer",
-            padding: "4px 0",
-            color: "var(--color-ink)",
-            fontSize: 20,
-            lineHeight: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 0,
+            flexShrink: 0,
           }}
           aria-label="Back"
         >
-          ←
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path
+              d="M9 2L4 7l5 5"
+              stroke="#0e0f0e"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
         <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.3px" }}>
           My Listings
@@ -135,8 +161,11 @@ export default function InventoryScreen({ onBack }: Props) {
           <span
             style={{
               marginLeft: "auto",
-              fontSize: 12,
-              color: "var(--color-ink-tertiary)",
+              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              fontSize: 11,
+              color: "#9b9c99",
+              textTransform: "uppercase",
+              letterSpacing: "1px",
             }}
           >
             {listings.length} item{listings.length !== 1 ? "s" : ""}
@@ -159,7 +188,7 @@ export default function InventoryScreen({ onBack }: Props) {
             style={{
               marginTop: 40,
               textAlign: "center",
-              color: "var(--color-ink-secondary)",
+              color: "#6b6c6a",
               fontSize: 14,
             }}
           >
@@ -172,12 +201,34 @@ export default function InventoryScreen({ onBack }: Props) {
             style={{
               marginTop: 80,
               textAlign: "center",
-              color: "var(--color-ink-tertiary)",
+              color: "#9b9c99",
             }}
           >
-            <p style={{ fontSize: 32, margin: "0 0 12px" }}>📭</p>
-            <p style={{ fontSize: 15, margin: 0 }}>No listings yet.</p>
-            <p style={{ fontSize: 13, marginTop: 4 }}>
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: 12,
+                border: "1.5px dashed #e7e5e0",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 16px",
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path
+                  d="M10 4v12M4 10h12"
+                  stroke="#9b9c99"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </div>
+            <p style={{ fontSize: 15, margin: 0, color: "#3a3b3a", fontWeight: 500 }}>
+              No listings yet.
+            </p>
+            <p style={{ fontSize: 13, marginTop: 4, color: "#9b9c99" }}>
               Upload a photo to create your first one.
             </p>
           </div>
@@ -199,9 +250,8 @@ export default function InventoryScreen({ onBack }: Props) {
                 display: "flex",
                 gap: 14,
                 padding: "16px 0",
-                borderBottom: "1px solid var(--color-border)",
+                borderBottom: "1px solid #e7e5e0",
                 alignItems: "center",
-                opacity: 1,
               }}
             >
               {/* Thumbnail */}
@@ -213,8 +263,10 @@ export default function InventoryScreen({ onBack }: Props) {
                   height: 64,
                   objectFit: "cover",
                   flexShrink: 0,
-                  backgroundColor: "var(--color-bg-card)",
+                  backgroundColor: "#efece6",
                   imageOrientation: "from-image",
+                  borderRadius: 10,
+                  border: "1px solid #e7e5e0",
                 }}
               />
 
@@ -237,7 +289,7 @@ export default function InventoryScreen({ onBack }: Props) {
                   style={{
                     margin: "0 0 6px",
                     fontSize: 12,
-                    color: "var(--color-ink-secondary)",
+                    color: "#6b6c6a",
                   }}
                 >
                   {[brand, category].filter(Boolean).join(" · ") || "—"}
@@ -250,8 +302,10 @@ export default function InventoryScreen({ onBack }: Props) {
                     <span
                       style={{
                         fontSize: 10,
-                        color: "var(--color-ink-tertiary)",
+                        color: "#9b9c99",
                         letterSpacing: "0.3px",
+                        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                        textTransform: "uppercase",
                       }}
                     >
                       not published
@@ -268,13 +322,15 @@ export default function InventoryScreen({ onBack }: Props) {
                   style={{
                     fontSize: 12,
                     fontWeight: 600,
-                    padding: "6px 12px",
-                    border: "1.5px solid var(--color-border)",
-                    backgroundColor: "transparent",
-                    color: "var(--color-ink)",
+                    padding: "7px 12px",
+                    border: "1px solid #e7e5e0",
+                    borderRadius: 8,
+                    backgroundColor: "#fff",
+                    color: "#0e0f0e",
                     cursor: selling.has(item.listing_id) ? "default" : "pointer",
                     opacity: selling.has(item.listing_id) ? 0.5 : 1,
                     letterSpacing: "-0.1px",
+                    fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
                   }}
                 >
                   {selling.has(item.listing_id) ? "…" : "Mark sold"}
