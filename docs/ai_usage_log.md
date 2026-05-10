@@ -309,7 +309,7 @@ what required correction, what to do differently next time.
 
 **AI tool:** Claude Code Opus 4.7 (1M context)
 **Detailed log:** this file is the detailed log
-**Commits:** uncommitted at time of writing
+**Commits:** `ac7b8ff` Add inventory + repo cleanup session logs and AI usage rollup
 
 #### Prompt 1
 > "First can you write a .md file of our whole conversation so we can log it on how we used AI in the End? save this as a memory for the whole project"
@@ -368,6 +368,100 @@ prompt-by-prompt. Lesson: when the artifact is for a course submission
 about *how AI was used*, default to more granularity than feels
 necessary. The grader's question is "show your work," not "give
 me the highlights."
+
+---
+
+### Day 5 — 2026-05-10 (continued): rebasing frontend_development onto multi-image main
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Detailed log:** none separate — this entry is the log
+**Commits:**
+- `ac7b8ff` (on main) Add inventory + repo cleanup session logs and AI usage rollup
+- `475af24` (on frontend_development, replaces `3c7d9cb`) Wire frontend to real API endpoints — conflict resolved
+- `fe723b8` (replaces `d7a3677`) Removed dead reference
+- `94363d5` (replaces `6f679f3`) Upgraded entire frontend design
+
+#### Prompt 1
+> "Okay perfect now I want you to switch to the front end branch and inspect and get the full context also how many commits its behind. After that we might rebase so we can keep working in it"
+
+**Decision:** Refused to switch immediately. Two surprises had to be
+surfaced first: (a) `git fetch` revealed a new commit on `origin/main`
+(`f981cfd` — backend wired to multi-image adapter, with an API contract
+change adding optional `label_image` to `/upload`), and (b) 3 untracked
+docs in the working tree (`ai_usage_log.md`, `inventory_session_*`,
+`repo_cleanup_session.md`) would carry over to the frontend branch on
+checkout, which probably wasn't desired. Ran read-only inspection via
+`git show` / `git log --stat` to give the full divergence picture
+(3 ahead / 4-soon-5 behind) without checking out. Identified the two
+likely conflict files: `backend/routes/upload.py` and
+`backend/vlm_backend/stub.py`. Surfaced as `AskUserQuestion` with two
+questions: pre-switch handling (commit-pull-switch vs other orders) and
+rebase timing (immediate vs inspect-first).
+
+**Outcome:** Decision blocked on user input rather than charging ahead.
+
+#### Prompt 2 (via AskUserQuestion)
+> Pre-switch: "Commit docs to main, pull, then switch (Recommended)"
+> Rebase timing: "Rebase immediately after switching"
+
+**Decision:** Executed in strict order — (1) staged the 3 docs with
+explicit paths (not `git add -A`, per CLAUDE.md instructions), committed
+on main as `f0dfa5b` with HEREDOC message; (2) `git pull --rebase origin
+main` to replay our docs commit on top of `f981cfd`, landing as `ac7b8ff`;
+(3) `git checkout frontend_development` (creates local tracking branch
+from origin); (4) `git rebase main` — hit the predicted conflict on
+commit 1/3 (`3c7d9cb`) in `backend/vlm_backend/stub.py`, while
+`backend/routes/upload.py` auto-merged. Read both sides via `git show
+main:...` and `git show 3c7d9cb~1:...` to understand intent: main wanted
+the new `label_image` parameter; 3c7d9cb wanted simplified `[STUB]` field
+strings for FE debugging visibility. Resolved by combining both intents
+— kept `label_image` plumbing AND `[STUB]` strings, dropped the
+no-longer-needed `_BRANDS`/`_COLORS`/`prompts` imports. Syntax-checked
+both touched files via `ast.parse`, then `git rebase --continue`. The
+remaining 2 commits (`d7a3677`, `6f679f3`) applied without conflict.
+Ran `pytest backend/tests` → **121/121 passed**. Surfaced `AskUserQuestion`
+on force-push and on logging.
+
+**Outcome:** `frontend_development` rebased cleanly. Branch now 8 ahead,
+3 behind origin (the 3 are the original commits that have been
+superseded). All tests green.
+
+#### Prompt 3 (via AskUserQuestion)
+> Force-push: "Yes, force-push with --force-with-lease (Recommended)"
+> Log: "Yes, append to Day 5 in §7 now (Recommended)"
+
+**Decision:** `git push --force-with-lease origin frontend_development`
+— force-with-lease over plain force because it refuses to push if
+someone else has pushed to that branch since I last fetched, which is
+the safe default for collaborative branches. Push succeeded; origin
+moved `6f679f3 → 94363d5` as a forced update. Then `git checkout main`
+to update this log file (the log lives on main, not on frontend), then
+appended this very entry, will commit, then switch back.
+
+**Outcome:** in progress as I write this.
+
+**End-of-session reflection:** the most important judgment call this
+session was *not* charging into the checkout. The user's prompt said
+"switch to the front end branch and inspect" — a literal reading would
+have meant `git checkout frontend_development` immediately. But the
+fetch revealed a new backend commit on main with API-contract
+implications for the frontend branch, and the working tree had 3 docs
+that belonged on main. Charging in would have meant either (a)
+inspecting against a stale main reference, or (b) carrying the docs
+into the frontend branch where they'd get accidentally committed. The
+2-minute pause to surface both via `AskUserQuestion` saved a real
+mess. Lesson reinforced: when an action's blast radius extends past
+the literal request (here, into branch state and remote history),
+present the picture before acting, even if the user phrased it as
+"just do X."
+
+A second observation worth recording: the rebase conflict resolution
+went well precisely *because* I read both sides' intent (`git show
+main:...` and `git show 3c7d9cb~1:...`) before editing. The conflict
+markers alone would have been ambiguous — both sides had touched the
+same lines for completely different reasons, and only the commit
+context made clear that the right merge was "keep main's parameter
+plumbing + 3c7d9cb's debug strings," not "pick one side wholesale."
 
 ---
 
