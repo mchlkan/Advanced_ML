@@ -1315,6 +1315,133 @@ sticks across sessions.
 
 ---
 
+### Day 5 — 2026-05-10 (continued): platform reconnection — /plan, Ultraplan handoff, lorry research
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commits:** `<this commit>` Log /plan session for platform reconnection feature
+**Plan file:** `~/.claude/plans/sorted-tinkering-gray.md`
+
+#### Prompt 1
+> "/plan to hook the llisting on kleinanzeigen + vinted onto the current backend code, with refreshing tokens. if tokens cannot be refreshed at the start of a session a login button for each plattform needs to appear"
+
+**Decision:** Plan mode activated. Followed the canonical 5-phase
+workflow (Initial Understanding → Design → Review → Final Plan →
+ExitPlanMode). For Phase 1, launched two Explore agents in parallel:
+one auditing backend session management (refresh logic, onboarding
+endpoints, error types, schema shapes), one auditing frontend
+platform-status awareness (current state machine, API client
+patterns, design language, login form patterns from the
+already-built password gate). Both reports landed clean. Surfaced
+3 design questions via AskUserQuestion before writing any plan
+content.
+
+**Outcome:** Comprehensive context gathered without writing a single
+line of plan content yet.
+
+#### Prompt 2 (via AskUserQuestion)
+> Block scope: "Allow upload + identification, block only publish to that platform (Recommended)"
+> KA login UX: "Ka login can be done but needs phone verification handling we logged that already, so if we cant refresh the token from the last session we need to fully newly login and handle the phone verification"
+> Refresh timing: "Try first if it doesnt work refresh, if that doesnt work new login and save session. in general always save a working session afterwards"
+
+**Decision:** All three answers shaped the plan substantially. The
+"phone verification" answer in particular surprised me — the team's
+own `docs/ka_endpoints.md:46-59` says programmatic KA login is "not
+feasible" because of Akamai BMP + MFA SMS. Searched for any existing
+KA login code in the backend → found only `login_with_refresh()`
+(uses a captured refresh_token, not a fresh login). Asked the user
+to clarify what "we logged that already" meant.
+
+#### Implicit between-prompt finding (KA login docs)
+Searching for existing KA login code surfaced `docs/ka_endpoints.md`
+which catalogs the full Auth0 + MFA SMS endpoints but explicitly
+warns "Re-implementing login from scratch is impractical." Made me
+prepare to push back gently before assuming we could build it.
+
+#### Prompt 3
+> "I'm sending this plan to Ultraplan to be refined remotely. Let me know it's been handed off and that a web link will appear here in a moment — I can use that to edit and iterate on the plan in the browser once the plan has been generated. I can continue to work here in the meantime; Claude Code will notify me when the cloud plan is ready for review, and I have the option to teleport the plan back here for implementation post-approval."
+
+**Decision:** User rejected ExitPlanMode and is using Ultraplan
+(cloud agent) to iterate on the plan in the browser. New workflow
+to me — saved a memory about it for future sessions
+(`memory/feedback_ultraplan_workflow.md`). Stayed in plan mode (I
+don't end the turn until ExitPlanMode is approved or
+AskUserQuestion is asked). Acknowledged briefly + waited.
+
+#### Prompt 4 (Ultraplan link surfaced)
+> "◇ ultraplan · Monitor progress in Claude Code on the web https://claude.ai/code/session_0165hxZqJPXTJTrViNSpuBPS?from=cli"
+
+**Decision:** Standing by, offered read-only research while waiting.
+
+#### Prompt 5
+> "okay lets continue planning here, because the web cant access the repo from lorry"
+
+**Decision:** User pivoted back to local planning because the cloud
+agent couldn't access a sibling repo (`vinted-lister`, the team's
+Vinted/KA scraper + login automation, located at
+`/Users/leonschmidt/Projekte/Vinted/vinted-lister`). Listed the
+contents — found `RESEARCH-ka.md` (224 lines of KA research) and a
+`kleinanzeigen/` Python module. Read both. **Massive finding:**
+`vinted-lister/src/kleinanzeigen/session.py:61-194` already
+implements the Auth0 PKCE + email + password + MFA SMS login flow
+programmatically — using nothing but `requests` and regex. The
+team's research said it was "impractical" but they shipped working
+code. The only adaptation needed for our backend is swapping the
+OAuth client_id from web (cookie-based session) to mobile (token-
+based session via `/oauth/token` exchange).
+
+Updated the plan in-place to reflect this:
+- Implementation step #4 (KA login) rewritten from "build from
+  scratch" to "port lorry's flow + swap client_id + add code-token
+  exchange"
+- Risk profile dropped from speculative to known-working
+- Time estimate dropped from 6-8 hrs to 3-4 hrs
+- New section "Existing utilities to reuse" with explicit lorry
+  references
+
+#### Prompt 6 (via AskUserQuestion)
+> Refine more: "Yes — add Vinted-side details from vinted-lister too"
+
+**Decision:** Audited lorry's Vinted side (`src/session.py:87-113
+create_session_password`). Confirmed our backend's `password_login`
+(vinted.py:194) is the working analog — same OAuth password grant,
+same DataDome refresh dance. No code to port. But found a useful
+addition: explicit FE error mapping per backend exception type
+(`VintedAuthExpired` → wrong password, `VintedBlocked` → rate-limit
+message, `VintedNotConfigured` → admin escalation, `VintedError` →
+generic). Also documented what NOT to port from lorry (DataDome SDK
+~50-field fingerprint, ADB phone extraction, Playwright account
+creator) so future readers don't reinvent. Updated plan, called
+ExitPlanMode.
+
+**Outcome:** Plan approved. ~280-line plan file at
+`~/.claude/plans/sorted-tinkering-gray.md`. Ready to implement
+Phase 1 (~3 hrs).
+
+**End-of-session reflection:** Three patterns from this planning
+session worth keeping.
+
+First, **the team's docs were wrong about feasibility**. `RESEARCH-ka.md`
+said programmatic login was "impractical" but `kleinanzeigen/session.py`
+right next to it implemented exactly that. The lesson: when planning
+against a doc that says "this is hard," still grep the codebase for
+anyone who solved it. Two sibling files, three minutes of grepping,
+saved 6+ hours of building from scratch.
+
+Second, **the user's pivot from Ultraplan to local was the right call
+and I should have anticipated it**. Cloud agents can't reach
+filesystem siblings of the project they're operating on. Anytime the
+plan involves porting from an adjacent repo on the user's machine,
+local-first is the correct default. Save a memory for this.
+
+Third, **the plan refinement loop with AskUserQuestion at the end
+was high-leverage**. The user picked "yes — also Vinted details"
+which surfaced the FE error-mapping table (a meaningful planning
+artifact). If I had jumped straight to ExitPlanMode after the first
+draft, that wouldn't have been in the plan.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
