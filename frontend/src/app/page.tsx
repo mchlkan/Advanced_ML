@@ -1,15 +1,23 @@
 "use client";
 
-import { useRef, useState } from "react";
-import type { Identification, Platform, UploadResponse } from "@/types/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type {
+  Identification,
+  OnboardingStatus,
+  Platform,
+  UploadResponse,
+} from "@/types/api";
 import { uploadImage } from "@/api/upload";
 import { draftListing } from "@/api/publish";
+import { fetchOnboardingStatus } from "@/api/onboarding";
 import UploadScreen from "@/components/UploadScreen";
 import AnalyzingScreen from "@/components/AnalyzingScreen";
 import ResultsScreen from "@/components/ResultsScreen";
 import PublishedScreen from "@/components/PublishedScreen";
 import PublishingScreen from "@/components/PublishingScreen";
 import InventoryScreen from "@/components/InventoryScreen";
+import PlatformConnectionBanner from "@/components/PlatformConnectionBanner";
+import PlatformLoginModal from "@/components/PlatformLoginModal";
 
 type AppState =
   | { screen: "upload" }
@@ -27,8 +35,24 @@ type AppState =
 export default function Page() {
   const [state, setState] = useState<AppState>({ screen: "upload" });
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<OnboardingStatus | null>(null);
+  const [loginModalPlatform, setLoginModalPlatform] = useState<Platform | null>(null);
   // Incremented on every reset so a stale upload promise doesn't clobber state
   const uploadGenRef = useRef(0);
+
+  const refreshStatus = useCallback(async () => {
+    try {
+      const s = await fetchOnboardingStatus();
+      setConnectionStatus(s);
+    } catch {
+      // Backend down or other error — leave previous state in place; the
+      // banner just stays empty rather than flashing a misleading "all good".
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshStatus();
+  }, [refreshStatus]);
 
   async function handleFileSelected(file: File, imageUrl: string) {
     const gen = ++uploadGenRef.current;
@@ -70,52 +94,65 @@ export default function Page() {
     setState({ screen: "upload" });
   }
 
-  if (state.screen === "inventory") {
-    return <InventoryScreen onBack={() => setState({ screen: "upload" })} />;
+  function renderScreen() {
+    if (state.screen === "inventory") {
+      return <InventoryScreen onBack={() => setState({ screen: "upload" })} />;
+    }
+    if (state.screen === "upload") {
+      return (
+        <UploadScreen
+          onFileSelected={handleFileSelected}
+          onInventory={() => setState({ screen: "inventory" })}
+          error={uploadError}
+        />
+      );
+    }
+    if (state.screen === "analyzing") {
+      return <AnalyzingScreen imageUrl={state.imageUrl} onCancel={handleReset} />;
+    }
+    if (state.screen === "results") {
+      return (
+        <ResultsScreen
+          imageUrl={state.imageUrl}
+          data={state.data}
+          connectionStatus={connectionStatus}
+          onPublish={handlePublish}
+          onReset={handleReset}
+          onConnectPlatform={setLoginModalPlatform}
+        />
+      );
+    }
+    if (state.screen === "publishing") {
+      return <PublishingScreen platform={state.platform} />;
+    }
+    if (state.screen === "published") {
+      return (
+        <PublishedScreen
+          platform={state.platform}
+          listingUrl={state.listingUrl}
+          results={state.results}
+          onReset={handleReset}
+        />
+      );
+    }
+    return null;
   }
 
-  if (state.screen === "upload") {
-    return (
-      <UploadScreen
-        onFileSelected={handleFileSelected}
-        onInventory={() => setState({ screen: "inventory" })}
-        error={uploadError}
+  return (
+    <>
+      <PlatformConnectionBanner
+        status={connectionStatus}
+        onConnect={setLoginModalPlatform}
       />
-    );
-  }
-
-  if (state.screen === "analyzing") {
-    return (
-      <AnalyzingScreen
-        imageUrl={state.imageUrl}
-        onCancel={handleReset}
+      {renderScreen()}
+      <PlatformLoginModal
+        platform={loginModalPlatform}
+        onClose={() => setLoginModalPlatform(null)}
+        onSuccess={() => {
+          setLoginModalPlatform(null);
+          refreshStatus();
+        }}
       />
-    );
-  }
-
-  if (state.screen === "results") {
-    return (
-      <ResultsScreen
-        imageUrl={state.imageUrl}
-        data={state.data}
-        onPublish={handlePublish}
-        onReset={handleReset}
-      />
-    );
-  }
-
-  if (state.screen === "publishing") {
-    return <PublishingScreen platform={state.platform} />;
-  }
-
-  if (state.screen === "published") {
-    return (
-      <PublishedScreen
-        platform={state.platform}
-        listingUrl={state.listingUrl}
-        results={state.results}
-        onReset={handleReset}
-      />
-    );
-  }
+    </>
+  );
 }

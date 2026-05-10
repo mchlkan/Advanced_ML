@@ -1,5 +1,61 @@
 export type Platform = "vinted" | "kleinanzeigen";
 
+// Backend may also emit "expired" as a deprecated alias for "needs_login"
+// — treat it the same on the FE.
+export type PlatformConnectionState =
+  | "ready"
+  | "needs_login"
+  | "expired"
+  | "not_configured"
+  | "not_implemented";
+
+export interface PlatformStatus {
+  state: PlatformConnectionState;
+  expires_at: number | null;
+  user_id: string | null;
+}
+
+export interface OnboardingStatus {
+  vinted: PlatformStatus;
+  kleinanzeigen: PlatformStatus;
+}
+
+export interface OnboardingLoginResponse {
+  platform: Platform;
+  status: "ready";
+  user_id: string;
+  expires_at: number;
+}
+
+export interface KleinanzeigenInitiateResponse {
+  challenge_id: string | null;
+  status: "mfa_required" | "ready";
+  phone_hint?: string;
+  // Populated when status === "ready" (the maintainer's phone had a
+  // rememberBrowser cookie and Auth0 skipped MFA).
+  user_id?: string;
+  expires_at?: number;
+}
+
+export interface KleinanzeigenVerifyMfaRequest {
+  challenge_id: string;
+  sms_code: string;
+  email: string;
+  poster_type?: "PRIVATE" | "COMMERCIAL";
+  imprint?: string;
+  contact_name?: string;
+  home_location_id?: number;
+}
+
+export interface KleinanzeigenRefreshTokenRequest {
+  refresh_token: string;
+  email: string;
+  poster_type?: "PRIVATE" | "COMMERCIAL";
+  imprint?: string;
+  contact_name?: string;
+  home_location_id?: number;
+}
+
 export interface PriceBand {
   q10: number;
   q50: number;

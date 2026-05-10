@@ -1,14 +1,32 @@
 "use client";
 
 import { useState } from "react";
-import type { Identification, Platform, UploadResponse } from "@/types/api";
+import type {
+  Identification,
+  OnboardingStatus,
+  Platform,
+  UploadResponse,
+} from "@/types/api";
 import { verifyListing } from "@/api/verify";
 
 interface Props {
   imageUrl: string;
   data: UploadResponse;
+  connectionStatus: OnboardingStatus | null;
   onPublish: (platform: Platform, finalFields: Identification) => void;
   onReset: () => void;
+  onConnectPlatform: (platform: Platform) => void;
+}
+
+function isPlatformReady(
+  status: OnboardingStatus | null,
+  platform: Platform,
+): boolean {
+  // Treat unknown status as ready so we don't block users when the status
+  // endpoint is briefly unreachable. The publish backend will return its
+  // own error if a session is genuinely missing.
+  if (status === null) return true;
+  return status[platform].state === "ready";
 }
 
 const PLATFORM_LABEL: Record<Platform, string> = {
@@ -145,6 +163,7 @@ interface PlatformCardProps {
   sellProbability?: number;
   qualitativeNote?: string;
   verifying: boolean;
+  disconnected?: boolean;
   onClick: () => void;
 }
 
@@ -156,6 +175,7 @@ function PlatformCard({
   sellProbability,
   qualitativeNote,
   verifying,
+  disconnected,
   onClick,
 }: PlatformCardProps) {
   const accent = PLATFORM_ACCENT[platform];
@@ -179,6 +199,7 @@ function PlatformCard({
           : "0 1px 0 #fff inset",
         cursor: "pointer",
         marginTop: recommended ? 12 : 0,
+        opacity: disconnected ? 0.6 : 1,
       }}
     >
       {recommended && (
@@ -215,6 +236,22 @@ function PlatformCard({
           <span style={{ fontSize: 14, fontWeight: 600, color: "#0e0f0e", letterSpacing: "-0.1px" }}>
             {PLATFORM_LABEL[platform]}
           </span>
+          {disconnected && (
+            <span
+              style={{
+                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                fontSize: 9.5,
+                color: "oklch(0.45 0.08 75)",
+                backgroundColor: "oklch(0.95 0.06 80)",
+                padding: "2px 6px",
+                borderRadius: 999,
+                textTransform: "uppercase" as const,
+                letterSpacing: "1px",
+              }}
+            >
+              Disconnected
+            </span>
+          )}
         </div>
         <span
           style={{
@@ -320,7 +357,17 @@ function PlatformCard({
   );
 }
 
-export default function ResultsScreen({ imageUrl, data: initialData, onPublish, onReset }: Props) {
+export default function ResultsScreen({
+  imageUrl,
+  data: initialData,
+  connectionStatus,
+  onPublish,
+  onReset,
+  onConnectPlatform,
+}: Props) {
+  const vintedReady = isPlatformReady(connectionStatus, "vinted");
+  const kaReady = isPlatformReady(connectionStatus, "kleinanzeigen");
+  const isReady = (p: Platform) => (p === "vinted" ? vintedReady : kaReady);
   const [data, setData] = useState(initialData);
   const [editOpen, setEditOpen] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -731,6 +778,7 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
               price={data.vinted.price}
               sellProbability={data.vinted.sell_probability}
               verifying={verifying}
+              disconnected={!vintedReady}
               onClick={() => setSelectedPlatform("vinted")}
             />
             <PlatformCard
@@ -740,6 +788,7 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
               price={data.kleinanzeigen.price}
               qualitativeNote={data.kleinanzeigen.qualitative_note}
               verifying={verifying}
+              disconnected={!kaReady}
               onClick={() => setSelectedPlatform("kleinanzeigen")}
             />
           </div>
@@ -896,7 +945,11 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
         }}
       >
         <button
-          onClick={() => handlePublish(selectedPlatform)}
+          onClick={() =>
+            isReady(selectedPlatform)
+              ? handlePublish(selectedPlatform)
+              : onConnectPlatform(selectedPlatform)
+          }
           style={{
             width: "100%",
             height: 54,
@@ -917,33 +970,43 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
             fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
           }}
         >
-          <span>Publish on {PLATFORM_LABEL[selectedPlatform]}</span>
-          <span
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontVariantNumeric: "tabular-nums",
-              fontWeight: 500,
-              opacity: 0.92,
-            }}
-          >
-            {fmt(
-              selectedPlatform === "vinted" ? data.vinted.price.q50 : data.kleinanzeigen.price.q50
-            )}
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path
-                d="M3 7h8m0 0L7 3m4 4l-4 4"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+          <span>
+            {isReady(selectedPlatform)
+              ? `Publish on ${PLATFORM_LABEL[selectedPlatform]}`
+              : `Reconnect ${PLATFORM_LABEL[selectedPlatform]} to publish`}
           </span>
+          {isReady(selectedPlatform) && (
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontVariantNumeric: "tabular-nums",
+                fontWeight: 500,
+                opacity: 0.92,
+              }}
+            >
+              {fmt(
+                selectedPlatform === "vinted" ? data.vinted.price.q50 : data.kleinanzeigen.price.q50
+              )}
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M3 7h8m0 0L7 3m4 4l-4 4"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
+          )}
         </button>
         <button
-          onClick={() => handlePublish(otherPlatform)}
+          onClick={() =>
+            isReady(otherPlatform)
+              ? handlePublish(otherPlatform)
+              : onConnectPlatform(otherPlatform)
+          }
           style={{
             width: "100%",
             height: 38,
@@ -957,10 +1020,13 @@ export default function ResultsScreen({ imageUrl, data: initialData, onPublish, 
             color: "#6b6c6a",
           }}
         >
-          Or publish on {PLATFORM_LABEL[otherPlatform]} ·{" "}
-          {fmt(
-            otherPlatform === "vinted" ? data.vinted.price.q50 : data.kleinanzeigen.price.q50
-          )}
+          {isReady(otherPlatform)
+            ? `Or publish on ${PLATFORM_LABEL[otherPlatform]} · ${fmt(
+                otherPlatform === "vinted"
+                  ? data.vinted.price.q50
+                  : data.kleinanzeigen.price.q50,
+              )}`
+            : `Or reconnect ${PLATFORM_LABEL[otherPlatform]}`}
         </button>
       </div>
     </div>
