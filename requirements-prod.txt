@@ -27,7 +27,8 @@ tenacity>=8.0.0
 
 # ML — DINOv2 + the 3 head MLPs are loaded at startup. The VLM (Qwen3-VL)
 # itself runs on RunPod Serverless, but the heads run locally.
-torch>=2.3.0
+# torch is installed separately in the Dockerfile from the CPU-only index
+# to avoid pulling ~1.5 GB of CUDA libs we can't use on this t2.small.
 transformers>=4.56,<5
 numpy>=1.26.0
 huggingface_hub>=0.20.0

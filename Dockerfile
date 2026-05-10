@@ -16,7 +16,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-prod.txt .
-RUN pip install --no-cache-dir -r requirements-prod.txt
+
+# CPU-only torch wheel from PyTorch's index, NOT the default PyPI one which
+# bundles ~1.5 GB of CUDA libs (cuDNN, NCCL, etc) we can't use on a CPU box.
+# Install torch first so the rest of the requirements skip it.
+RUN pip install --no-cache-dir torch>=2.3.0 \
+        --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements-prod.txt
 
 # Drop the build toolchain to keep the image smaller.
 RUN apt-get purge -y gcc python3-dev \
