@@ -1737,6 +1737,269 @@ end-to-end against the live deployment.
 
 ---
 
+### Day 5 — 2026-05-10 (continued): /simplify pass on the reconnection feature
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commits:** `ff48009` Simplify: 4 fixes from review pass on the reconnection feature
+
+#### Prompt 1
+> /simplify (slash command, no free-form prompt)
+
+**Decision:** Saved the diff (HEAD~6..HEAD, excluding log + binaries +
+tsbuildinfo) to `/tmp/simplify-diff.txt` so the agents could reference
+it without re-loading. Launched 3 Explore agents in parallel per the
+simplify protocol — one each for **reuse**, **quality**, **efficiency**.
+Each got a focused prompt with the diff path + specific anti-patterns
+to look for.
+
+Aggregated 11 findings → triaged into 4 fixes + 7 skips with reasoning
+in the commit message.
+
+**Fixes:**
+1. **Real bug**: `httpx.Client` leak in `password_login_initiate` —
+   the `except KAError: raise` branch re-raised without closing. Fixed
+   by restructuring to a single `finally` close path with a `keep_client`
+   flag set only in the MFA branch.
+2. **Real perf**: `/onboarding/status` ran the two platform helpers
+   sequentially. Wrapped each in `asyncio.to_thread` + `asyncio.gather`
+   so latency is `max(vinted, ka)` not `vinted + ka`, and the event
+   loop isn't blocked while either refresh is in flight.
+3. **Reuse**: extracted `_extract_form_error()` helper for the regex
+   used in both `password_login_initiate` (failure outcome) and
+   `complete_mfa_login` (MFA failure).
+4. **Reuse**: collapsed 4 frontend error-message helpers
+   (`vintedErrorMessage`, `kaInitiateErrorMessage`, etc.) into one
+   `mapHttpError(err, errorMap, prefix)` + 4 declarative `ErrorMap`
+   constants.
+
+**Skips:** extract `try_load_or_refresh` (only 2 callers, premature DRY);
+typed dataclass return from `password_login_initiate` (used once
+internally); `KAMetadata` parameter object (fields are clear, abstraction
+adds nothing); 3-phase KA form into `formConfig` (forms have meaningfully
+different fields); `PHASE` const enum (`KaPhase` is already a TS union);
+modal JSX double-div (outer is backdrop click, inner stops propagation —
+standard pattern); process-local session cache, background GC, deep-equal
+status check (all premature).
+
+**Outcome:** +58/-52 lines across 3 files. 122/122 backend tests still
+pass. Frontend type-check clean.
+
+**End-of-session reflection:** the most valuable thing about /simplify
+isn't the fixes themselves — it's the explicit "what did I skip and
+why" list. Forces articulating skip reasons rather than silently
+rejecting findings, which makes the triage auditable.
+
+---
+
+### Day 5 — 2026-05-10 (continued): debug + fix publish-to-Vinted (phantom /draft endpoint)
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commits:** `a5f697a` Fix publish flow: replace phantom /draft with real publish-then-poll
+
+#### Prompt 1
+> "okay can you investigate why the listing to vinted is not working yet?"
+
+**Decision:** Started by checking the production system, not by reading
+code. Curl'd `/onboarding/status` (both `ready`) and `/healthz` (vlm
+backend OK, all 4 models loaded). Then read the last 80 container log
+lines via `sudo docker logs --tail 80`. Found it instantly:
+
+```
+INFO: 172.17.0.1:54866 - "POST /draft HTTP/1.0" 404 Not Found
+INFO: 172.17.0.1:54876 - "POST /draft HTTP/1.0" 404 Not Found
+INFO: 172.17.0.1:49158 - "POST /draft HTTP/1.0" 404 Not Found
+```
+
+Three 404s for `POST /draft` after a `POST /upload 200`. The frontend
+was calling a phantom endpoint.
+
+Listed all backend routes via `/openapi.json` — confirmed there is **no**
+`/draft` endpoint. The frontend's `draftListing()` in `publish.ts` was
+calling a URL that doesn't exist. The `/draft` thing was leftover from
+a planned "draft-first" UX (referenced in earlier session_log_2026-05-10.md)
+that was discussed but never implemented in the backend. The frontend
+was built ahead of the backend, then never reconciled.
+
+Read the actual `/publish` flow in `backend/routes/publish.py`: enqueue
+job → returns `{job_id, status: "pending"}` → background `PublishRunner`
+→ poll `/publish/status/{job_id}` → terminal status `posted` (success)
+or `failed`. Confirmed the JobStatus Literal in schemas.py — success is
+**`posted`** not `ok`.
+
+**Implementation:**
+- `frontend/src/api/publish.ts`: dropped `draftListing`, added
+  `pollPublishStatus(jobId, opts)` with 1.5s poll interval + 90s ceiling
+  + a `PublishTimeoutError` class.
+- `frontend/src/types/api.ts`: dropped unused `DraftResponse` type.
+- `frontend/src/app/page.tsx`: `handlePublish` now does
+  `publishListing()` → poll → on `posted`, open `platform_listing_url`
+  in a new tab + transition to `published`. On `failed`, record error
+  in `uploadError` state + return to `results`.
+- `frontend/src/components/PublishingScreen.tsx`: copy updated from
+  "Preparing draft / you'll publish yourself" (planned but never-built
+  UX) to "Publishing on X / Usually 5-10 seconds".
+
+Pushed + redeployed Vercel only. No backend rebuild needed since the
+fix was FE-only.
+
+**Outcome:** publish flow now actually works end-to-end. Real Auth0+SMS
+flow + real Vinted publish are exercisable from the deployed UI.
+
+**End-of-session reflection:** Container logs were the single fastest
+path to the root cause. Three lines of "POST /draft 404" said
+everything — no code reading needed to diagnose. **Pattern: when "X
+doesn't work" is the symptom, read production logs FIRST**, before
+opening any source file. Avoids the trap of pattern-matching against
+plausible-looking code paths that aren't the actual problem.
+
+---
+
+### Day 5 — 2026-05-10 (continued): backend deploy speedup (bind-mount code instead of baking)
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Plan file:** `~/.claude/plans/sorted-tinkering-gray.md` (overwrote the
+prior reconnection-feature plan since this is a different task)
+**Commits:**
+- `656195e` Speed up backend deploys: bind-mount code instead of baking into image
+- `53d8bd4` ec2_rebuild.sh: mkdir checkpoints mountpoint before docker run
+
+#### Prompt 1
+> "Is there a way to speed up the building and deploying of the backend?"
+
+**Decision:** Surveyed bottlenecks. Backend deploys taking ~5 min per
+cycle even for one-line code changes. `docker build` dominates — the
+pip install layer is ~3 GB resolved (torch + transformers + ...), and
+even with the layer cache, COPY-only rebuilds spend 30-60s on layer
+commits + container recreation. Presented 3 ranked options:
+
+A. **Volume-mount the code** (10 sec deploys, image becomes
+   "Python + deps" shell). Biggest win, simplest mental model.
+B. **BuildKit pip cache mount** (~1 min wins on rare rebuilds).
+C. **Pre-built base image with heavy deps** (similar to A, more complex).
+
+Recommended A. User invoked `/plan #1` next.
+
+#### Prompt 2
+> /plan #1 (slash command — plan mode for option A)
+
+**Decision:** Plan mode entered. Read prior plan file (reconnection
+feature, unrelated — flagged for overwrite). Quick read-only research:
+current Dockerfile structure, current container's mounts via `docker
+inspect`, listed `scripts/` to see existing organization. Asked one
+clarifying question via `AskUserQuestion`: script invocation style
+(2 EC2 scripts manual ssh / 2 EC2 + 2 Mac wrappers / 1 combined script
+with --rebuild flag).
+
+#### Prompt 3 (via AskUserQuestion)
+> "Two scripts on EC2, manual ssh from Mac (Recommended)"
+
+**Decision:** Wrote final plan to plan file covering: Dockerfile diff
+(drop `COPY backend/shared/models`), 2 new scripts
+(`ec2_redeploy.sh` fast path = git pull + docker restart + health
+poll; `ec2_rebuild.sh` slow path = git pull + build + recreate
+container with the canonical 5-volume flag set + health poll), deploy
+plan §5.6 + §11 updates, one-time EC2 migration sequence, verification
+steps. Architecture decisions: image is dep-only, host's git checkout
+is single source of truth for code; nested mount for checkpoints
+(host's `/opt/resell/checkpoints` mounted at `/app/models/checkpoints`
+on top of the broader `/opt/resell/app/models` mount); read-only for
+code mounts, read-write for `/app/data`; `uvicorn --reload` deferred
+as a future option. Called `ExitPlanMode`.
+
+#### Prompt 4
+> ExitPlanMode approved (no objections)
+
+**Decision:** Created 3 tasks (T10 code, T11 commit+migrate, T12
+verify). Executed each:
+
+**T10 — Code:** Edited Dockerfile (dropped 3 COPY lines, replaced with
+`mkdir -p /app/{backend,shared,models,data/uploads}` so the bind
+mounts have somewhere to attach). Wrote `scripts/ec2_redeploy.sh`
+(36 lines, polls `/health` for 20s) and `scripts/ec2_rebuild.sh`
+(53 lines, full build + recreate + 120s health poll). Both with
+`set -euo pipefail` and `chmod +x`. Updated `docs/deploy_plan.md` §5.6
+(point at `ec2_rebuild.sh`, document the canonical flag set inline)
++ new §5.6b (subsequent code-only deploys via `ec2_redeploy.sh`)
++ §11 time estimate (one-time setup all done; per-deploy ongoing
+splits 10s fast / 3-5min slow).
+
+**T11 — Commit + push + EC2 migrate:** Committed `656195e`, pushed.
+SSH'd to EC2, ran `chmod +x scripts/ec2_*.sh && ec2_rebuild.sh`.
+Build succeeded. Container recreate **FAILED** with:
+
+```
+mkdirat /var/lib/docker/rootfs/.../app/models/checkpoints:
+read-only file system
+```
+
+**Root cause:** the broader `/opt/resell/app/models` is mounted
+read-only. Docker tried to create the inner `/app/models/checkpoints`
+mountpoint inside it (so the `/opt/resell/checkpoints` bind has
+somewhere to attach), but mkdirat returns EROFS on a read-only mount.
+The host's `models/` doesn't ship an empty `checkpoints/` subdir
+because `.pt` files are gitignored — so no pre-existing mountpoint.
+
+**Fix:** added `mkdir -p /opt/resell/app/models/checkpoints` to
+`ec2_rebuild.sh` before `docker run`. Idempotent; preserves the
+read-only protection on the parent mount. Committed as `53d8bd4`,
+pushed, re-ran the rebuild script. **Container healthy on first try
+after the fix.**
+
+**T12 — Verify:** Three checks:
+1. `curl /healthz` → ok, all 4 models loaded ✓
+2. `curl /onboarding/status` → both `ready` ✓
+3. **Bind-mount sanity:** wrote a test file to host's
+   `/opt/resell/app/backend/_bind_test.txt`, exec'd into container,
+   `cat /app/backend/_bind_test.txt` showed the same content
+   immediately. Cleanup. ✓
+
+Then timed `ec2_redeploy.sh` end-to-end (no-op git pull + docker
+restart + health poll) — **10.2 seconds**. Old cycle was ~5 min for
+the same operation. Roughly 30x faster.
+
+**Outcome:** backend deploys go from ~5 min to ~10 sec for code-only
+changes. Old slow path still available via `ec2_rebuild.sh` when deps
+change. The full `docker run` flag set now lives in exactly one place
+(the script), so future container recreations are repeatable.
+
+#### Prompt 5 (interrupting T12)
+> "after pushing and verifying please log this part of the coversation"
+
+**Decision:** Acknowledged, completed verification first, then logged
+this whole 3-sub-session stretch. (Same prompt re-sent after T12
+completed — taken as reaffirmation.)
+
+**End-of-session reflection.** Two patterns from this stretch.
+
+First, **the read-only + nested-mount interaction is the kind of bug
+you can only catch by actually trying it**. Abstract reasoning said
+"Docker handles nested binds, this should work" — and that's true at
+the layer Docker exposes — but the implementation detail (Docker tries
+to `mkdirat` the inner mountpoint inside the read-only outer) wasn't
+visible until the runtime EROFS. Lesson: integration steps that touch
+host filesystem semantics need to be tried, not just reasoned about.
+
+Second, **measuring the delta after a perf change is essential**. If
+I had stopped at "the rebuild succeeded and `/healthz` returns 200,"
+I wouldn't have known if the speedup was real. The 10.2s wall-clock
+measurement is what makes the change defensible — without it, the user
+would have to take "10 sec" on faith. Pattern: **for any "make X
+faster" change, end with a wall-clock timing comparison**, not just
+"it works."
+
+A third process observation: between my push and the verify, the user
+made parallel commits (601072f and others) on the same branch. My
+push to feature/deploy-prep got the latest from origin (no conflicts
+because we touched different files), but I had to re-pull on EC2 to
+pick everything up. Pattern: when working alongside a collaborator on
+the same branch, **always pull before pushing** as a habit. (A simple
+`git pull --rebase` before push would have caught any divergence.)
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
