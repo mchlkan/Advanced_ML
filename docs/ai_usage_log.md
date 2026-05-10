@@ -1,0 +1,395 @@
+# AI Usage Log — Resell Copilot
+
+How AI tooling (primarily Claude Code) was used to build this 7-day course
+project. Captures both the **substance** (what AI produced) and the **shape**
+of the collaboration (how prompts evolved, where AI had to be redirected,
+what it got wrong).
+
+This is the top-level rollup for the course submission. The detailed
+session-by-session logs already in `docs/` (linked in §6) are the primary
+source — this file synthesizes them and is the entry point a grader should
+read first.
+
+---
+
+## 1. AI tools used
+
+| Tool | Where | What it did |
+|---|---|---|
+| **Claude Code** (Opus 4.7, 1M context) | Terminal, primary IDE assistant | Architecture planning, backend implementation, test writing, refactoring, doc writing, debugging on RunPod, frontend reconciliation |
+| **Claude Sonnet 4.6** | Parallel chat sessions | Frontend implementation pass (commit `ff659bb`), used to deliberately split work across two contexts so backend and frontend reviewed each other |
+| **GPT-4o-mini** (via OpenAI API) | Translation pipeline + price-prediction baseline | (a) Translated 8,711 listings DE/IT/FR → EN for the canonical schema (~$0.50). (b) Served as the "comparison model" the fine-tuned VLM was benchmarked against |
+| **Groq Llama 3.1 8B** | Production runtime (Model #6) | Generates the listing description prose from the VLM's grounded fields. Anti-hallucination by construction: the LLM never sees the photo |
+| **Qwen3-VL-4B + LoRA** | Production runtime (Model #1) | The fine-tuned vision-language model that does identification (brand / size / condition / color / category). Trained on RunPod via Claude-orchestrated session |
+
+Total external-API spend across the whole project: **~$3.50** (translation
+~$0.50 + RunPod ~$3 for the QLoRA fine-tune + Groq usage negligible at
+demo volume).
+
+---
+
+## 2. How AI was used (high-level)
+
+The project was built by **two humans + Claude as a third collaborator**,
+not by Claude alone. Concretely, AI was used for:
+
+- **Architecture decisions** as a structured brainstorming partner —
+  produces option lists with trade-offs, then humans pick. Examples:
+  canonical English schema vs bilingual (Day 2), one-call-per-platform
+  vs two (Day 0), drop description from training target vs not (Day 4).
+- **Backend implementation** — Claude wrote most of the FastAPI routes,
+  Pydantic schemas, SQLite migrations, and tests. Humans reviewed and
+  corrected.
+- **Long-running ops orchestration** — RunPod SSH setup, dependency
+  installs in tmux, training-loop monitoring via background `Monitor`
+  on log files, auto-terminate-on-success wrapper scripts.
+- **Refactoring** — `/simplify` runs that cleaned up duplication and
+  type-safety gaps after each major feature landed.
+- **Doc writing** — every major decision has a `.md` file under `docs/`,
+  most drafted by Claude from chat context, then human-edited.
+- **Debugging** — diagnosing the conftest `.env` leak, the `qwen3_vl`
+  config registry mismatch, the `UPLOADS_DIR` import-time capture bug.
+
+Where AI was **deliberately not used**: the model architecture decisions
+(quantile loss, LoRA rank, base model choice) came from the project brief
+not from Claude. Claude implemented and tuned within those constraints
+but did not pick them.
+
+---
+
+## 3. Chronological log
+
+Dates are session dates, not commit dates (commits sometimes lag by a day).
+
+### Day 0 — pre-2026-05-07: scaffold + EDA + decision freeze
+
+- Pair-programming session (Pair A) locked the architecture additions
+  to the brief: **canonical English schema** internally + reverse lookup
+  tables at publish time, **one VLM call per platform**, **categories
+  stay native** (no unified taxonomy).
+- EDA notebook (`notebooks/01_data_exploration.ipynb`) — Vinted is 38%
+  French / 21% Italian / 21% German; KA is 98% German; 15 brands appear
+  in both top-30 lists (validates cross-platform pitch).
+- Doc: `docs/decisions/day1.md` (originally `project_memory_day1.md`).
+
+### Day 1 — 2026-05-07: VLM spike + Qwen3-VL family selection
+
+- Smoke-tested Qwen3-VL candidates on Colab T4. Locked Qwen3-VL-4B as
+  the base model (4B fits on a 24 GB RunPod, 8B does not without
+  aggressive quantization).
+- Notebook: `notebooks/99_spike.ipynb` — zero-shot baseline + 1-epoch
+  QLoRA + canonical-metric eval.
+- Adapter shipped to HF Hub: `Rengo33/qwen3vl4b-resell-adapter`.
+
+### Day 2 — 2026-05-07/08: Day-2 fine-tune session + backend bring-up
+
+Detailed log: **`docs/session_log_day2_finetune.md`**.
+
+Two parallel tracks:
+
+**ML track** — built the bilingual data prep + canonical schema:
+- `src/translations.py`, `src/translate_text.py`, `src/prompts.py`,
+  `src/build_targets.py`, `src/build_splits.py`, `src/listing_mappings.py`
+- 8,711 rows translated DE/IT/FR → EN via async GPT-4o-mini (~45 min)
+- Locked stratified 90/10/test=500 splits
+- QLoRA training on RunPod 4090 (3h, ~$3, auto-terminate on success)
+- Result vs zero-shot 4B base: brand +14pp, color +18pp, condition +9pp,
+  price MAPE −57pp. Beats GPT-4o-mini on every metric.
+
+**Backend track** — Phase 1, 2, 3 of the FastAPI backend:
+- `53ac8a4` Phase 1 — FastAPI skeleton + stub VLM + SQLite logging
+- `c63eba7` Phase 2 — local_mps VLM (Qwen3-VL+LoRA on Mac MPS)
+- `f185093` Phase 3 — RunPod Serverless VLM + Docker handler
+- `b79bf4d` simplify pass on the RunPod VLM path
+
+### Day 3 — 2026-05-08: backend phases 4-6 + KA mobile-API + repo cleanup + inventory
+
+The biggest implementation day. Rough order:
+
+- **Repo cleanup** (`1910514`) — split `/src/` into `/shared/` (runtime)
+  + `/data_prep/` (offline). Detailed log: **`docs/repo_cleanup_session.md`**.
+  Three parallel `Explore` agents audited cruft, design questions surfaced
+  via `AskUserQuestion`, plan written, executed in 4 phases, all 90 tests
+  green.
+- **Phase 4 + 5** — `/verify` and `/publish` endpoints (`22966d6`, `f983a62`)
+- **Phase 6a/b/c** — direct Vinted publishing (`f02db17` + brand/size
+  mapping fixes), async `/publish` with background runner (`05cb53e`),
+  Kleinanzeigen direct publishing via mobile API (`c709dfd`, `c63a088`,
+  `9add251`). KA mobile API was reverse-engineered via mitmproxy on a
+  rooted Android — Claude documented the capture in `docs/ka_endpoints.md`.
+- **Inventory feature** (`7eee614`) — `wardrobe_snapshots` + `wardrobe_syncs`
+  tables, lazy-refresh `/inventory` endpoint with pricing-drift overlay,
+  22 new tests (116 backend tests total). Detailed log:
+  **`docs/inventory_session_2026-05-10.md`** Part 1-3.
+- **CORS + OpenAPI** (`13f579a`) — enabled `CORSMiddleware` and declared
+  every route's 4xx/5xx so `openapi-typescript` could generate typed FE
+  clients without retrofit.
+
+### Day 4 — 2026-05-09: frontend reconcile + Model #6 + multi-image plan + KA parse fix scoping
+
+- **Frontend reconcile** (`ff659bb`, Claude Sonnet 4.6) — first FE pass
+  (`f99bd58`) had created a duplicate `routes/listings.py`. Sonnet
+  rewired `InventoryScreen` to consume the rich `/inventory` shape and
+  deleted the duplicate. Two-author cross-checking pattern: backend was
+  built in one Claude session, frontend reconciled in a separate Claude
+  session — any contract mismatch surfaced as real review, not papered
+  over.
+- **Model #6** (`f2e69ab`) — Groq Llama 3.1 8B description generator.
+  Takes the VLM's grounded fields + platform + tone, returns prose.
+  LLM never sees the photo → cannot hallucinate beyond what was extracted.
+- **Multi-image fine-tuning plan** (`b984cd0`) — Claude wrote the
+  `docs/multi_image_finetuning_plan.md` after a 4-question
+  `AskUserQuestion` about constraints (dedicated 24GB pod, private Drive,
+  reclassify with CLIP, Michael owns execution). Plan executed overnight
+  by Michael; result landed Day 5 as `22d01c7`.
+- **KA parse fix doc** (`b4059c1`, `7ec3887`, `af171a8`) — strategy
+  documented but execution deferred. See Day 5.
+
+### Day 5 — 2026-05-10: planning session + demo strategy + this log
+
+Detailed log: **`docs/session_log_2026-05-10.md`** (10 phases).
+
+- Pulled overnight commits: multi-image retrain shipped (`22d01c7`),
+  brand +20pp / size +19pp on the Vinted slice. The plan Claude wrote
+  in Phase 6 of the previous session was executed and landed almost
+  exactly as predicted.
+- Brainstormed remaining model improvements (4B vs 4B-fp16 vs 8B,
+  separate description model). Honest comparison vs GPT-4o-mini reframed
+  the pitch away from "cheaper than 4o-mini" toward "better on the
+  metrics that matter + own the integrations."
+- Decision: **skip the KA parse-rate retrain.** Recovery handles 100%
+  of failures, another 4 GPU-hours not worth it for cosmetic clean-rate
+  gains. Verified against current code (`models/train_vlm.py:104`,
+  `scripts/build_manifest.py:197`) before deciding.
+- Wrote `docs/demo_strategy.md` — pitch-line candidates, metric story,
+  open team-debate questions, demo-day risk table.
+- Investigated `origin/frontend_development` branch — found it stale
+  (predates multi-image retrain). Identified a draft-first UX shift
+  (`/draft` endpoint) that needs verifying against the new VLM output.
+- **This file** written end-of-day to consolidate the AI-usage record
+  for course submission.
+
+---
+
+## 4. Cross-cutting patterns observed across all sessions
+
+### What consistently worked
+
+- **Plan mode before implementation.** Used 4+ times across the project.
+  Every single time the planning step caught something before code was
+  written: API research that forced canonical-schema design, discovery
+  that `train_vlm.py` was already shipped, constraint surfacing via
+  `AskUserQuestion` before drafting the multi-image plan.
+- **Background `Monitor` for long-running ops.** Translation runs,
+  pip installs on RunPod, training-loop milestones — all monitored
+  via `tail -f log | grep <keywords>` so the chat fired only on real
+  events. Saved hours of polling.
+- **Idempotent caches at every step.** Translation cache, splits parquets,
+  prediction JSONs, hidden-state `.pt` files — re-running any cell is a
+  no-op if the artifact exists. Made notebook appendices runnable
+  without redoing 1-hour inferences.
+- **Auto-terminate on the GPU pod.** `&&`-chained wrapper script:
+  train → upload to HF Hub → `runpodctl remove pod`. Only terminates
+  if everything succeeded; failures kept the pod alive for debugging.
+- **User pushback on weak claims.** *"Did this really work how do we
+  know?"* and *"But we just retrained model 1 again, wasn't this
+  implemented there?"* — each pushback caught something Claude had
+  glossed over. Verifying against current code rather than the planning
+  doc became the rule by Day 5.
+- **Two-author cross-checking via separate Claude sessions.** Backend
+  built in one chat, frontend reconciled in another chat — contract
+  mismatches surfaced as real review.
+
+### What required course correction
+
+- **Claude's over-engineering tendency.** Twice on Day 5 (slot-aware
+  multi-image, CLIP classifier) Claude proposed structured solutions
+  when the simpler unstructured one was right. Friend's input cut
+  through both.
+- **Trusting docs over code.** The KA parse fix was documented as
+  planned and Claude initially assumed the multi-image retrain had
+  included it. Forced to verify against actual files.
+- **One-shot claims from one piece of evidence.** *"Photos are tagged"*
+  ≠ *"Photos are tagged correctly."* Claude proclaimed the data was
+  clean before verifying the CLIP classifications were accurate.
+- **Mid-stream version drift.** Hit twice on RunPod: `transformers 5.x`
+  broke torch 2.4 compat; smoke test BEFORE pip install would have
+  caught it.
+
+### Friction points worth knowing about
+
+- **RunPod community cloud** — cheaper but two real risks: GPU reclaim
+  on Stop, and bursty PyPI throughput. Plan for both. Use `uv` not
+  `pip` and always run inside `tmux`.
+- **HuggingFace `transformers` is moving fast.** Don't pin
+  `transformers>=X.Y` without an upper bound — major versions break
+  torch compat.
+- **Conftest `.env` leaks.** `monkeypatch.delenv` inside a fixture is
+  silently undone by `load_dotenv` running in the imported app module.
+  Eager-import the app at conftest module load.
+
+---
+
+## 5. What AI did NOT do
+
+Worth being explicit about for the course submission:
+
+- Did not pick the model architecture (quantile loss, LoRA rank, base
+  model). Those came from the brief.
+- Did not collect or label the dataset. Scrapes were built by humans
+  before this project started; CLIP zero-shot tagging on the multi-image
+  scrape was Michael's work.
+- Did not write the training script for the price head (Model #4) or
+  the QLoRA trainer (`models/train_vlm.py`). Both written by Lenn /
+  Michael.
+- Did not make the demo-day strategic calls (Vinted-first, skip retrain,
+  etc.) — surfaced trade-offs via option lists, humans decided.
+- Did not reverse-engineer the KA mobile API (mitmproxy-on-rooted-Android
+  was a human-driven session). Claude documented the captures and
+  implemented the publishing client from those notes.
+
+---
+
+## 6. Detailed session logs (read these for specifics)
+
+| File | What it covers |
+|---|---|
+| `docs/session_log_day2_finetune.md` | Day 2 — translation pipeline, RunPod SSH setup, QLoRA training, eval integration. The most operationally detailed log |
+| `docs/repo_cleanup_session.md` | Day 3 — repo restructure session with parallel Explore agents and pre-commit verification |
+| `docs/inventory_session_2026-05-10.md` | Day 3 — inventory feature build (substance + interaction log) |
+| `docs/session_log_2026-05-10.md` | Day 5 — planning session: ML brainstorm, multi-image plan, KA parse-fix decision, demo strategy doc, frontend critique |
+| `docs/decisions/day1.md` | Day 0/1 — locked architecture decisions before any code |
+| `docs/decisions/day2.md` | Day 2 — combined-parquets + sold-status framing + Model #5 scope |
+| `docs/project_memory_2026-05-09.md` | Day 4 — point-in-time project state snapshot |
+| `docs/model_stack_evolution.md` | Authoritative state of all 6 models in the stack |
+| `docs/multi_image_finetuning_plan.md` | The plan Claude wrote that Michael executed overnight (+20pp brand, +19pp size) |
+| `docs/demo_strategy.md` | Pitch framing for the team meeting |
+
+---
+
+## 7. Prompt-by-prompt log (going forward)
+
+Each session is a chronological list of **every user prompt** + **what
+Claude decided to do** in response. Brief is fine. Quote the prompt
+verbatim; summarize the response in 1-3 sentences with file paths or
+artifact names.
+
+### Template
+
+```markdown
+### Day N — YYYY-MM-DD: <one-line topic>
+
+**AI tool:** <Claude Code Opus 4.7 / Sonnet 4.6 / etc.>
+**Detailed log:** `docs/<filename>.md` (if any)
+**Commits:** `<hash>` <subject>, `<hash>` <subject>
+
+#### Prompt 1
+> "<exact user prompt, verbatim>"
+
+**Decision:** <what Claude did and why — files touched, tools used,
+trade-offs surfaced, things deferred.>
+
+**Outcome:** <what landed, or what blocked.>
+
+#### Prompt 2
+> "<...>"
+
+**Decision:** ...
+**Outcome:** ...
+
+(repeat for every prompt in the session)
+
+**End-of-session reflection** (optional, one paragraph): what worked,
+what required correction, what to do differently next time.
+```
+
+---
+
+### Day 5 — 2026-05-10 (continued): writing this AI usage log
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Detailed log:** this file is the detailed log
+**Commits:** uncommitted at time of writing
+
+#### Prompt 1
+> "First can you write a .md file of our whole conversation so we can log it on how we used AI in the End? save this as a memory for the whole project"
+
+**Decision:** Pushed back with two clarifying questions before writing
+anything, because (a) the session was fresh — there was no prior
+conversation to "log" yet, and (b) "save as memory for the project"
+was ambiguous between memory storage (private to Claude across sessions)
+and a committed project doc (visible to graders). Used `AskUserQuestion`
+with two multi-choice questions: scope (reconstruct past / template /
+both) and location (docs + memory pointer / memory only / docs only).
+Recommended `docs/ + memory pointer` as the default.
+
+**Outcome:** Two design decisions surfaced before any file was touched.
+
+#### Prompt 2 (via AskUserQuestion)
+> Scope: "Both — reconstruct + template"
+> Location: "docs/ai_usage_log.md + memory pointer (Recommended)"
+
+**Decision:** Read four existing session logs in parallel
+(`session_log_2026-05-10.md`, `inventory_session_2026-05-10.md`,
+`repo_cleanup_session.md`, `demo_strategy.md`), plus `git log -50`
+and a `docs/` listing. Then a second parallel batch for completeness:
+`session_log_day2_finetune.md`, `decisions/day1.md`, partial
+`decisions/day2.md`, plus a check on the existing memory directory.
+Synthesized into 8-section log: tool inventory, high-level usage,
+chronological log Day 0 → Day 5, cross-cutting patterns, explicit
+"what AI did NOT do," index of detailed logs, ongoing-entry template,
+one-paragraph submission summary. Wrote `reference_ai_usage_log.md`
+in the memory directory and added a one-line entry to `MEMORY.md`
+pointing at it.
+
+**Outcome:** `docs/ai_usage_log.md` (~9 KB) + memory pointer landed.
+Reported back, flagged uncommitted, asked if user wanted to commit
+or review first.
+
+#### Prompt 3
+> "Best is to really document every prompt I make and you decisions based on this"
+
+**Decision:** Restructured §7 from session-summary template to
+prompt-by-prompt template. Added this session as the first worked
+example (the prompts you are reading now). Flagged the constraint
+that past sessions cannot be reconstructed prompt-by-prompt because
+I don't have transcripts — the existing logs' "key prompts quoted"
+form is the best record we have for Days 0-4, and the new format
+starts cleanly from Day 5 forward.
+
+**Outcome:** §7 of this file becomes the live rolling log. Memory
+pointer updated to reflect the new logging style.
+
+**End-of-session reflection:** the user asked twice for the log to
+be more honest/granular than I first proposed — first by picking
+"both reconstruct + template" over the safer template-only option,
+then by escalating the template detail from session-summary to
+prompt-by-prompt. Lesson: when the artifact is for a course submission
+about *how AI was used*, default to more granularity than feels
+necessary. The grader's question is "show your work," not "give
+me the highlights."
+
+---
+
+### Day 6 — YYYY-MM-DD: <topic>
+
+(empty — fill in next session)
+
+---
+
+## 8. One-paragraph submission summary
+
+Resell Copilot was built over 7 days by two humans collaborating with
+Claude Code (Opus 4.7) as a third contributor. Claude was used for
+architecture brainstorming, backend implementation, RunPod orchestration,
+test writing, refactoring, and documentation. Humans owned the model
+architecture choices, the dataset, the demo-day strategy, and the
+reverse-engineering of the Kleinanzeigen mobile API. Total external-API
+spend across all of training and translation was ~$3.50. The two most
+important AI patterns were **plan mode before implementation** (caught
+issues 4/4 times before code was written) and **idempotent caches at
+every step** (made every long-running artifact re-entrant). The two
+most important course-correction patterns were **the human pushing back
+on Claude's one-shot claims** ("did this really work?") and
+**verifying against current code rather than planning docs** when
+status drifted.
