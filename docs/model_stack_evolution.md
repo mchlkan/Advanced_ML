@@ -396,7 +396,72 @@ gives the same direction at slightly different absolute levels.
 
 **Next:** Model #4 / #5 may benefit from re-extracting VLM features with the
 new adapter so the price and sell-likelihood heads see better embeddings.
-Optional, not blocking.
+Optional, not blocking. — **Done 2026-05-10, see §3.4.**
+
+---
+
+### 3.4 Model #4 / #5 Re-extraction on Multi-Image Adapter (Round 2)
+
+**Owner:** Michael. **Status:** shipped 2026-05-10 (price head only; sell head kept old).
+
+**Setup:** re-extracted `data/embeddings/vlm_pooled_combined.npy` using the
+multi-image adapter. Vinted rows with a manifest-listed care label fed the
+model both photos; KA rows and label-less Vinted rows fell back to single
+image. ~6,192 of 8,711 rows (71%) used multi-image extraction. New code:
+`extract_vlm_features.py --manifest` (commit `bca06d3`).
+
+Both heads retrained on the new features, same locked 500-row test set as
+the v1 sweep checkpoint.
+
+**Price head (Model #4) — multi-image features vs single-image baseline, test set:**
+
+| metric | OLD (single) | NEW (multi) | Δ |
+|---|---|---|---|
+| MAE (€) | 15.65 | 16.05 | +0.40 |
+| **MAPE** | 0.5332 | **0.4643** | **−6.9 pp** |
+| RMSLE | 0.5452 | 0.5627 | +0.018 |
+| coverage q10–q90 | 0.7680 | 0.7760 | +0.8 pp |
+
+Per platform on test, MAPE improves on **both** Vinted (−7.8 pp) and
+Kleinanzeigen (−4.5 pp), so the gain isn't just brand-driven on Vinted —
+the adapter's better representation generalizes to KA's garment-only path
+too. MAE drifts +€0.40 in absolute terms but MAPE is the metric that
+maps to user-perceived accuracy on second-hand prices (€20 items, not €200).
+**Decision: ship.** New checkpoint at `models/checkpoints/price_head.pt`,
+old preserved as `price_head_single_v1.pt`.
+
+**Sell head (Model #5) — three variants tested:**
+
+| variant | params | val AUC | test AUC | test F1 |
+|---|---|---|---|---|
+| OLD `--no-vlm` (shipped v1) | 172 k | 0.5811 | **0.6052** | 0.4201 |
+| NEW `--no-vlm` (sanity check) | 172 k | 0.5834 | 0.5732 | 0.3841 |
+| NEW with VLM features | 1.5 M | 0.6172 | 0.5959 | 0.4231 |
+
+The original sell head was trained `--no-vlm` (metadata only — log_price,
+visual_wear, condition, brand embed, category, platform). To compare like
+for like we retrained `--no-vlm` on the new feature run; val AUC matched
+within 0.002, so the metadata path is genuinely unchanged. The new
+with-VLM variant lifts val AUC by ~3.6 pts but doesn't beat the old test
+AUC and is 8× larger. With test n=362 the AUC standard error is ~0.03 —
+the three test AUCs are statistically indistinguishable.
+
+**Decision: keep the old sell head.** No real signal to replace it, and
+adding 1.3 M parameters for no test-set gain is a regression in any
+practical sense (latency, memory, complexity).
+
+**Artifacts kept for the report:**
+- `models/checkpoints/price_head.pt` — new multi-image (shipped)
+- `models/checkpoints/price_head_single_v1.pt` — old single-image baseline
+- `models/checkpoints/sell_head.pt` — old metadata-only (shipped, unchanged)
+- `models/checkpoints/sell_head_multi.pt` — new with-VLM (kept, not shipped)
+- `models/checkpoints/sell_head_multi_novlm.pt` — sanity-check no-VLM retrain
+- `eval/results/{price_head_multi,sell_head_multi,sell_head_multi_novlm}.json`
+
+**Lesson:** features that help a generative VLM (multi-photo brand/size
+recognition) don't automatically help a downstream classifier whose signal
+is already saturated by metadata. Worth retraining and measuring; not
+worth assuming.
 
 ---
 
