@@ -19,6 +19,7 @@ GET /listings/{listing_id}/image
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import traceback
@@ -244,37 +245,48 @@ async def patch_listing_fields(listing_id: str, body: PatchFieldsRequest) -> dic
         vlm_call_count=0,
     )
 
-    pushed: dict[str, dict] = {}
     publishes = await db.get_publishes_for_listing(listing_id)
+    targets: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for p in publishes:
         if p.get("status") != "posted" or not p.get("platform_listing_id"):
             continue
-        platform = p["platform"]
-        platform_id = p["platform_listing_id"]
-        if platform in pushed:
-            continue  # only push to the most recent successful row per platform
+        if p["platform"] in seen:
+            continue
+        seen.add(p["platform"])
+        targets.append((p["platform"], p["platform_listing_id"]))
+
+    async def _push_one(platform: str, platform_id: str) -> tuple[str, dict]:
         try:
-            if platform == "vinted":
-                payload = to_vinted(merged)
-                if "catalog_id" not in payload:
-                    raise ValueError(f"category {merged.get('category')!r} has no Vinted catalog mapping")
-                await vinted_integration.update_listing(platform_id, payload)
-            elif platform == "kleinanzeigen":
-                payload = to_kleinanzeigen(merged)
-                if "category_id" not in payload:
-                    raise ValueError(f"category {merged.get('category')!r} has no Kleinanzeigen category mapping")
-                await ka_integration.update_listing(platform_id, payload)
-            else:
-                raise ValueError(f"update on {platform!r} not implemented")
-            pushed[platform] = {"ok": True}
+            await _push_edit(platform, platform_id, merged)
             logger.info("pushed edit to %s listing %s for %s", platform, platform_id, listing_id)
+            return platform, {"ok": True}
         except Exception as exc:
-            pushed[platform] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
             logger.warning(
                 "push edit to %s listing %s failed for %s: %s",
                 platform, platform_id, listing_id, exc,
             )
-    return {"stored": True, "pushed": pushed}
+            return platform, {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    results = await asyncio.gather(*(_push_one(p, pid) for p, pid in targets))
+    return {"stored": True, "pushed": dict(results)}
+
+
+async def _push_edit(platform: str, platform_id: str, fields: dict) -> None:
+    """Build the per-platform payload and call the integration's update.
+    Raises whatever the underlying integration raises."""
+    if platform == "vinted":
+        payload = to_vinted(fields)
+        if "catalog_id" not in payload:
+            raise ValueError(f"category {fields.get('category')!r} has no Vinted catalog mapping")
+        await vinted_integration.update_listing(platform_id, payload)
+    elif platform == "kleinanzeigen":
+        payload = to_kleinanzeigen(fields)
+        if "category_id" not in payload:
+            raise ValueError(f"category {fields.get('category')!r} has no Kleinanzeigen category mapping")
+        await ka_integration.update_listing(platform_id, payload)
+    else:
+        raise ValueError(f"update on {platform!r} not implemented")
 
 
 @router.delete("/listings/{listing_id}", status_code=204, response_class=Response)

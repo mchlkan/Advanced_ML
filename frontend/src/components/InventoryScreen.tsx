@@ -530,24 +530,17 @@ function PriceEditModal({
     try {
       const res = await onSaveAsync(parsed);
       setResult(res);
+      // Auto-close on full success; stay open if any platform push errored
+      // so the user can read the message.
+      if (Object.values(res.pushed).every((p) => p?.ok)) {
+        setTimeout(onClose, 1200);
+      }
     } catch (err) {
       setTopError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
     }
   }
-
-  // After a successful save with no errors, auto-close after a beat.
-  // If any platform push errored, stay open so the user can read it.
-  const allOk =
-    result !== null &&
-    Object.values(result.pushed).every((p) => p?.ok);
-  useEffect(() => {
-    if (result && allOk) {
-      const id = setTimeout(onClose, 1200);
-      return () => clearTimeout(id);
-    }
-  }, [result, allOk, onClose]);
 
   return (
     <>

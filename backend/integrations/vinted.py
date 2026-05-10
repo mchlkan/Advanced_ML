@@ -504,10 +504,10 @@ class VintedClient:
 
         # Read back to grab server-side photo ids
         resp = self._get(f"/api/v2/items/{draft_id}/details")
-        server_photo_ids: list[str] = []
-        if resp.status_code == 200:
-            for p in resp.json().get("item", {}).get("photos", []):
-                server_photo_ids.append(str(p["id"]))
+        server_photo_ids: list[str] = (
+            [str(pid) for pid in _extract_photo_ids(resp.json().get("item", {}))]
+            if resp.status_code == 200 else []
+        )
 
         # Step 3: complete (publish)
         complete = dict(full)
@@ -542,6 +542,14 @@ def _classify_error(resp: httpx.Response, step: str) -> VintedError:
     if resp.status_code == 401:
         return VintedAuthExpired(f"{step}: 401 Unauthorized — session likely expired")
     return VintedError(f"{step}: HTTP {resp.status_code} — {text}")
+
+
+def _extract_photo_ids(item: dict) -> list[int]:
+    """Pull the integer photo ids out of a Vinted item dict (as returned by
+    /api/v2/items/{id}/details or the /completion response). Skips entries
+    without an ``id`` field — Vinted occasionally returns placeholder
+    photo objects during processing."""
+    return [int(p["id"]) for p in (item.get("photos") or []) if p.get("id")]
 
 
 def _build_item_payload(p: dict, photo_ids: list[int]) -> dict:
@@ -667,8 +675,7 @@ async def update_listing(item_id: int | str, payload: dict) -> None:
         if session is None:
             raise VintedNotConfigured(f"no session file at {path}")
         client = VintedClient(session)
-        live = client.fetch_item_details(item_id)
-        photo_ids = [int(p["id"]) for p in (live.get("photos") or []) if p.get("id")]
+        photo_ids = _extract_photo_ids(client.fetch_item_details(item_id))
         if not photo_ids:
             raise VintedError(f"update: item {item_id} has no photos to preserve")
         if payload.get("brand") and not payload.get("brand_id"):
