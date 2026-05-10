@@ -10,6 +10,7 @@ import type {
 import { uploadImage } from "@/api/upload";
 import { pollPublishStatus, publishListing } from "@/api/publish";
 import { fetchOnboardingStatus } from "@/api/onboarding";
+import { BASE, fetchListingPrediction } from "@/api/inventory";
 import UploadScreen from "@/components/UploadScreen";
 import AnalyzingScreen from "@/components/AnalyzingScreen";
 import ResultsScreen from "@/components/ResultsScreen";
@@ -133,9 +134,82 @@ export default function Page() {
     setState({ screen: "upload" });
   }
 
+  async function handleOpenListing(listingId: string) {
+    uploadGenRef.current++;
+    setUploadError(null);
+    try {
+      const data = await fetchListingPrediction(listingId);
+      setState({
+        screen: "results",
+        imageUrl: `${BASE}/listings/${listingId}/image`,
+        data,
+      });
+    } catch (err) {
+      setUploadError(
+        err instanceof Error ? err.message : "Could not open listing.",
+      );
+    }
+  }
+
+  async function handleRelistListing(
+    listingId: string,
+    platforms: Platform[],
+  ) {
+    if (platforms.length === 0) return;
+    uploadGenRef.current++;
+    setUploadError(null);
+    let data;
+    try {
+      data = await fetchListingPrediction(listingId);
+    } catch (err) {
+      setUploadError(
+        err instanceof Error ? err.message : "Could not load listing for relist.",
+      );
+      return;
+    }
+    // Prefer Vinted when both were posted — matches the recommend logic on
+    // ResultsScreen (Vinted typically has the larger fashion audience).
+    const target: Platform = platforms.includes("vinted") ? "vinted" : platforms[0];
+    const finalFields =
+      target === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
+    const imageUrl = `${BASE}/listings/${listingId}/image`;
+    setState({ screen: "publishing", imageUrl, data, platform: target });
+    try {
+      const job = await publishListing({
+        listing_id: listingId,
+        platform: target,
+        final_fields: finalFields,
+      });
+      const result = await pollPublishStatus(job.job_id);
+      if (result.status === "posted" && result.platform_listing_url) {
+        window.open(result.platform_listing_url, "_blank");
+        setState({
+          screen: "published",
+          platform: target,
+          listingUrl: result.platform_listing_url,
+          results: data,
+        });
+      } else {
+        setUploadError(`Publishing failed: ${result.error ?? "unknown error"}`);
+        setState({ screen: "results", imageUrl, data });
+      }
+    } catch (err) {
+      setUploadError(
+        `Publishing failed: ${err instanceof Error ? err.message : "unknown error"}`,
+      );
+      setState({ screen: "results", imageUrl, data });
+    }
+  }
+
   function renderScreen() {
     if (state.screen === "inventory") {
-      return <InventoryScreen onBack={() => setState({ screen: "upload" })} />;
+      return (
+        <InventoryScreen
+          onBack={() => setState({ screen: "upload" })}
+          onOpenListing={handleOpenListing}
+          onRelistListing={handleRelistListing}
+        />
+      );
     }
     if (state.screen === "upload") {
       return (

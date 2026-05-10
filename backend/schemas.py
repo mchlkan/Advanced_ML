@@ -74,6 +74,20 @@ class VerifyHints(BaseModel):
     size: str | None = None
 
 
+class PatchFieldsRequest(BaseModel):
+    """Lightweight inventory edit — every field is optional and only
+    set keys overwrite the stored prediction's english_fields. Doesn't
+    re-trigger the VLM or recompute price bands."""
+    brand: str | None = None
+    category: str | None = None
+    condition: str | None = None
+    color: str | None = None
+    size: str | None = None
+    title: str | None = None
+    description: str | None = None
+    price_eur: float | None = None
+
+
 class VerifyRequest(BaseModel):
     listing_id: str
     hints: VerifyHints

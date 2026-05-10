@@ -31,16 +31,22 @@ from backend import db
 from backend.integrations import vinted as vinted_integration
 from backend.routes import upload as upload_route
 from backend.schemas import (
+    FieldReview,
+    Identification,
     InventoryBucket,
     InventoryItem,
     InventoryResponse,
     InventoryStatusCounts,
     InventorySummary,
+    KleinanzeigenBlock,
+    PatchFieldsRequest,
     PlatformPublishState,
     PredictionSummary,
     PriceBand,
     PricingStatus,
     SyncResponse,
+    UploadResponse,
+    VintedBlock,
     VintedLiveSnapshot,
 )
 
@@ -159,6 +165,108 @@ async def mark_sold(listing_id: str) -> Response:
             Path(path_str).unlink(missing_ok=True)
         except Exception:
             pass
+    return Response(status_code=204)
+
+
+@router.get("/listings/{listing_id}/prediction", response_model=UploadResponse)
+async def get_listing_prediction(listing_id: str) -> UploadResponse:
+    """Reshape the listing's most recent prediction into the same UploadResponse
+    the frontend renders for fresh uploads. Lets the inventory "Open" action
+    reuse ResultsScreen unmodified."""
+    rec = await db.get_listing(listing_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="listing not found")
+    pred = await db.get_latest_prediction(listing_id)
+    if pred is None:
+        raise HTTPException(status_code=404, detail="no prediction stored for this listing")
+
+    fields = pred["english_fields"]
+    identification = Identification(**{k: fields.get(k) for k in Identification.model_fields})
+    vinted_band = PriceBand(q10=pred["vinted_q10"], q50=pred["vinted_q50"], q90=pred["vinted_q90"])
+    ka_band = PriceBand(q10=pred["ka_q10"], q50=pred["ka_q50"], q90=pred["ka_q90"])
+    return UploadResponse(
+        listing_id=listing_id,
+        vlm_backend=rec.get("vlm_backend") or "unknown",
+        visual_wear_probability=pred["visual_wear_probability"] or 0.0,
+        vinted=VintedBlock(
+            price=vinted_band,
+            sell_probability=pred["vinted_sell_prob"] or 0.0,
+            identification=identification,
+            field_review=FieldReview(),
+        ),
+        kleinanzeigen=KleinanzeigenBlock(
+            price=ka_band,
+            identification=identification,
+            field_review=FieldReview(),
+        ),
+        latency_ms=int(pred["latency_ms"] or 0),
+    )
+
+
+@router.patch("/listings/{listing_id}/fields", status_code=204, response_class=Response)
+async def patch_listing_fields(listing_id: str, body: PatchFieldsRequest) -> Response:
+    """Lightweight edit — store new fields as a new predictions row with
+    source='edit'. Doesn't re-run the VLM or the price heads; the next
+    publish picks up the new values from the latest prediction row."""
+    pred = await db.get_latest_prediction(listing_id)
+    if pred is None:
+        raise HTTPException(status_code=404, detail="listing has no prediction to edit")
+    overrides = body.model_dump(exclude_unset=True, exclude_none=True)
+    if not overrides:
+        return Response(status_code=204)
+    merged = {**pred["english_fields"], **overrides}
+    await db.log_prediction(
+        listing_id=listing_id,
+        source="edit",
+        english_fields=merged,
+        vinted_q10=pred["vinted_q10"],
+        vinted_q50=pred["vinted_q50"],
+        vinted_q90=pred["vinted_q90"],
+        vinted_sell_prob=pred["vinted_sell_prob"],
+        ka_q10=pred["ka_q10"],
+        ka_q50=pred["ka_q50"],
+        ka_q90=pred["ka_q90"],
+        visual_wear_probability=pred["visual_wear_probability"],
+        latency_ms=0,
+        vlm_call_count=0,
+    )
+    return Response(status_code=204)
+
+
+@router.delete("/listings/{listing_id}", status_code=204, response_class=Response)
+async def delete_listing_combined(listing_id: str) -> Response:
+    """Combined delete: best-effort platform cleanup (Vinted only — KA's
+    integration doesn't expose delete) followed by guaranteed local cleanup.
+    Returns 204 even if the platform delete fails; the local row is gone
+    either way."""
+    rec = await db.get_listing(listing_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="listing not found")
+    publishes = await db.get_publishes_for_listing(listing_id)
+    for p in publishes:
+        if p.get("status") != "posted" or not p.get("platform_listing_id"):
+            continue
+        if p["platform"] == "vinted":
+            try:
+                await vinted_integration.delete_listing(p["platform_listing_id"])
+            except Exception as exc:
+                logger.warning(
+                    "vinted delete failed for %s during combined delete of listing %s: %s",
+                    p["platform_listing_id"], listing_id, exc,
+                )
+        else:
+            logger.info(
+                "skipping platform delete for %s on %s (not implemented)",
+                p["platform_listing_id"], p["platform"],
+            )
+    deleted = await db.delete_listing(listing_id)
+    if deleted is not None:
+        for path_str in deleted:
+            if path_str:
+                try:
+                    Path(path_str).unlink(missing_ok=True)
+                except Exception:
+                    pass
     return Response(status_code=204)
 
 

@@ -78,6 +78,17 @@ export interface Identification {
   price_eur: number | null;
 }
 
+export interface PatchFieldsRequest {
+  brand?: string | null;
+  category?: string | null;
+  condition?: string | null;
+  color?: string | null;
+  size?: string | null;
+  title?: string | null;
+  description?: string | null;
+  price_eur?: number | null;
+}
+
 export interface VintedBlock {
   price: PriceBand;
   sell_probability: number;

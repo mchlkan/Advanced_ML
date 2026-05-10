@@ -247,7 +247,8 @@ async def get_listing(
     async with aiosqlite.connect(_resolve(db_path)) as conn:
         conn.row_factory = aiosqlite.Row
         listing_row = await (await conn.execute(
-            "SELECT image_path, label_image_path FROM listings WHERE id = ?", (listing_id,)
+            "SELECT image_path, label_image_path, vlm_backend FROM listings WHERE id = ?",
+            (listing_id,),
         )).fetchone()
         if listing_row is None:
             return None
@@ -259,8 +260,54 @@ async def get_listing(
         return {
             "image_path": listing_row["image_path"],
             "label_image_path": listing_row["label_image_path"],
+            "vlm_backend": listing_row["vlm_backend"],
             "last_english_fields": json.loads(latest["english_fields"]) if latest else {},
         }
+
+
+async def get_latest_prediction(
+    listing_id: str,
+    db_path: Path | None = None,
+) -> dict | None:
+    """Return the most recent predictions row for a listing, with parsed
+    english_fields, or None if no prediction has been stored. Used by the
+    inventory edit/relist flow to reshape a stored prediction back into
+    the UploadResponse the frontend already knows how to render."""
+    async with aiosqlite.connect(_resolve(db_path)) as conn:
+        conn.row_factory = aiosqlite.Row
+        row = await (await conn.execute(
+            """SELECT english_fields,
+                      vinted_q10, vinted_q50, vinted_q90, vinted_sell_prob,
+                      ka_q10, ka_q50, ka_q90,
+                      visual_wear_probability, latency_ms, vlm_call_count,
+                      source
+               FROM predictions
+               WHERE listing_id = ?
+               ORDER BY id DESC LIMIT 1""",
+            (listing_id,),
+        )).fetchone()
+        if row is None:
+            return None
+        return {
+            **dict(row),
+            "english_fields": json.loads(row["english_fields"]),
+        }
+
+
+async def get_publishes_for_listing(
+    listing_id: str,
+    db_path: Path | None = None,
+) -> list[dict]:
+    """All publish rows for a listing, newest first. Used by the combined
+    delete endpoint to know which platforms to attempt cleanup on."""
+    async with aiosqlite.connect(_resolve(db_path)) as conn:
+        conn.row_factory = aiosqlite.Row
+        rows = await (await conn.execute(
+            "SELECT id, platform, status, platform_listing_id, platform_listing_url "
+            "FROM publishes WHERE listing_id = ? ORDER BY id DESC",
+            (listing_id,),
+        )).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ---------- publish-job state machine ----------
