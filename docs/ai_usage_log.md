@@ -595,6 +595,166 @@ a stronger choice than anything I'd recommend.
 
 ---
 
+### Day 5 — 2026-05-10 (continued): deploy prep execution (Phase 1 + 2)
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Detailed log:** none separate — this entry is the log
+**Branch:** `feature/deploy-prep` (off `frontend_development`, rebased onto `main`)
+**Commits:**
+- `425724a` Phase 1+2 deploy prep: Vercel password gate, prod Dockerfile, env-driven config
+- `<this commit>` Log deploy-prep session in AI usage log
+
+#### Prompt 1
+> "so for your plan, regarding the deplay plan we have a t3 micro with ubuntu, 51.21.3.235, /Users/leonschmidt/Downloads/Resell_Copilot.pem and yeah not log lines but log every part of the conversation we have, password value: Advancded_ML"
+
+**Decision:** Parsed three things from this — (a) user provided the §12
+inputs from the deploy plan (instance, IP, SSH key, password), (b) user
+clarified the logging preference: NOT inline mini-log lines after every
+response, but DO log every part of the conversation in the existing
+batched-at-natural-pause format, (c) noted a typo in the password
+(`Advancded_ML` has an extra `d`). Did NOT immediately start coding.
+First validated inputs: `chmod 400` the SSH key, then `ssh ... 'cat
+/etc/os-release; uname -a; df -h; free -h; ss -tln; which docker nginx
+certbot'` to inventory the EC2 instance. Got back: Ubuntu 26.04 (newer
+than my plan assumed), kernel 7.0.0-aws, t3.micro confirmed
+(908 MiB RAM, 590 available), 6.7 GB disk, only SSH listening (ports
+80+443 free), nothing pre-installed (clean box). Then surfaced 3 things
+needing decision before execution: missing domain (blocker for SSL),
+the password typo (cosmetic), and AWS Security Group port confirmation
+(unverifiable from inside the box). Asked AskUserQuestion with 3
+parallel questions: domain choice (nip.io / DuckDNS / real domain),
+password (as-typed vs corrected vs stronger), and start-now vs hold.
+
+**Outcome:** Clean validation pass before any code touched. User got an
+accurate picture of what was missing and could decide everything in one
+batch.
+
+#### Prompt 2 (via AskUserQuestion)
+> Domain: "resell-copilot.duckdns.org already done"
+> Password: "Correct the typo: Advanced_ML"
+> Start: "Yes, start now (Recommended)"
+
+**Decision:** Verified DuckDNS resolution (`dig resell-copilot.duckdns.org`
+→ `51.21.3.235` ✓). Created `feature/deploy-prep` off
+`frontend_development` (so frontend changes layer on the latest UI work).
+Then traced backend imports to validate the deploy plan's claim that
+torch could be dropped: `grep "^(import|from)" backend/ --include="*.py"`
+filtered to non-stdlib third-party imports + checked which files use
+`torch|transformers|peft|huggingface_hub|numpy`. Found
+`backend/bootstrap.py` and `backend/pipeline.py` import torch +
+transformers — they load DINOv2 + 3 head MLPs at FastAPI startup.
+**Realized the plan was wrong** — couldn't slim requirements to ~150 MB
+because the heads run locally (only the VLM is on RunPod). Stopped
+before writing any code. Surfaced AskUserQuestion with 3 architecture
+options (A: full ML on EC2 / B: move heads to RunPod handler / C:
+SKIP_ML mode) and an honest cost+time analysis of each. Recommended A
+for speed.
+
+**Outcome:** Caught a meaningful planning error before any code that
+followed it would have been wrong. Saved hours of "why won't this
+import?" debugging on EC2 later.
+
+#### Prompt 3 (via AskUserQuestion)
+> Architecture: "Option A: Run them on EC2 (faster to ship, tight on RAM) (Recommended for speed)"
+
+**Decision:** Started parallel file creation. While in the middle of
+writing `requirements-prod.txt`, a `<system-reminder>` interrupted with
+a new user message — Prompt 4 below. Noted the interrupt but completed
+the immediate file write before responding (per the system prompt's
+"complete current task before addressing"). After requirements-prod.txt
+landed, addressed Prompt 4 + continued the rest of the file work in
+parallel.
+
+The full file batch (in dependency order):
+1. `frontend/src/middleware.ts` — edge-runtime cookie check, redirects
+   to `/login` if `resell-auth` cookie missing
+2. `frontend/src/app/login/page.tsx` — server component with inline
+   server action; validates against `RESELL_ACCESS_PASSWORD` env var,
+   sets httpOnly cookie (30d, secure in prod). Styled to match the
+   existing app's design language (oklch greens, Inter font, JetBrains
+   Mono accents)
+3. `frontend/vercel.json` — framework=nextjs, region=fra1
+4. `frontend/README.md` — full rewrite, drops the stale "currently runs
+   with mock responses" claim
+5. `frontend/src/pages/.gitkeep` — `rm` + `rmdir` (single-router cleanup)
+6. `requirements-prod.txt` — trimmed to runtime essentials (~1.5 GB
+   image vs ~5 GB)
+7. `Dockerfile` — python:3.11-slim base, COPY backend/ shared/ models/,
+   HEALTHCHECK on `/health`, HF_HOME inside data volume
+8. `.dockerignore` — rewritten as unified config for both this Dockerfile
+   and `runpod/Dockerfile`. Excludes `models/checkpoints/` (bind-mounted),
+   `data/`, `frontend/`, `notebooks/`, etc.
+9. `backend/main.py` — three additions: `_materialize_session()` writes
+   `VINTED_SESSION_JSON` / `KA_SESSION_JSON` env vars to disk on startup
+   (preserving rotated sessions on restart); `CORS_ORIGINS` env var
+   replaces hardcoded `["*"]`; new `GET /health` lightweight liveness
+   probe (separate from existing detailed `/healthz`)
+10. `docs/deploy_plan.md` — updated §1-13 to reflect the architecture
+    correction (DINOv2 stays local), the instance change, and §4 sections
+    marked LANDED. §11 time table now shows done-vs-remaining.
+
+Verified: `cd frontend && RESELL_ACCESS_PASSWORD=test npm run build` →
+✓ compiled successfully (3 routes including new /login, middleware
+26.4 kB). `python -c "from backend.main import app"` → ✓ 20 routes (was
+19). Both green before commit.
+
+**Outcome:** All Phase 1 + Phase 2 work landed in a single reviewable
+commit (`425724a`) with detailed message documenting every change and
+why. Branch is on `feature/deploy-prep` ready for either local review
+or merge planning.
+
+#### Prompt 4 (interrupting Prompt 3 mid-execution)
+> "I upgraded the instance two t2.small with 2gb ram: 13.49.21.29"
+
+**Decision:** Acknowledged the interrupt without abandoning the in-flight
+work. Implications: (a) memory pressure no longer a concern (1.5 GB free
+on a 2 GB box vs 590 MB free on the original t3.micro — DINOv2's ~350 MB
+fits comfortably), (b) DuckDNS A-record needs to point at the new IP
+or the SSL cert won't issue, (c) the new instance might have a different
+Security Group with ports 80+443 not yet opened. Verified all three in
+parallel with the ongoing file writes: `ssh ... ubuntu@13.49.21.29` →
+worked, Ubuntu 26.04 confirmed; `dig resell-copilot.duckdns.org` →
+already resolves to `13.49.21.29` (user updated DuckDNS proactively);
+SG port check still requires AWS console access. Noted this as an open
+item in the deploy plan §13.
+
+**Outcome:** Mid-flight pivot handled cleanly. Three verifications ran
+in parallel with continued file work, no time lost.
+
+**End-of-session reflection:** Two patterns worth recording.
+
+First, I caught the requirements-slimming error *before* writing
+`requirements-prod.txt`. The trigger was a habit I've been reinforcing
+this session: don't trust the plan, verify against the code. Specifically,
+ran `grep "^(import|from)"` across `backend/` *before* drafting the
+slim requirements file. The plan claimed torch wasn't needed; the code
+said otherwise. If I had skipped the verification and written
+`requirements-prod.txt` straight from the plan, it would have built but
+the container would have crashed at startup with `ModuleNotFoundError:
+No module named 'torch'`. That's a 5-minute debug on EC2 instead of a
+2-minute audit on my Mac. Rule reinforced: **planning docs decay; code
+is ground truth**.
+
+Second, the mid-stream instance upgrade (Prompt 4) was handled by
+running 3 verifications in parallel with the ongoing file writes,
+rather than stopping all work to address it. The verifications were
+read-only Bash calls (ssh + dig + filesystem ops) and the file writes
+were independent. Result: zero time lost to the interrupt. Lesson:
+when an interrupt arrives mid-task, ask whether the new info BLOCKS
+the in-flight work — if no, parallelize the validation; if yes, stop
+and resolve.
+
+A third observation about logging: this entry is being written on
+`feature/deploy-prep`, not `main`. That breaks the previous pattern of
+"the log lives on main." Reasoning: the log file IS visible on this
+branch (it was carried via the rebase onto main earlier), so editing
+in-place avoids the branch-juggle detour. When `feature/deploy-prep`
+eventually merges to main, the log update flows along. The risk: if
+this branch is squash-merged or never merged, the log entry is lost.
+Should think about that explicitly when deciding the merge strategy.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
