@@ -1,0 +1,46 @@
+# Production image for the Resell Copilot FastAPI backend.
+# DINOv2 + the 3 head MLPs run inside this container; the VLM (Qwen3-VL)
+# itself runs on RunPod Serverless and is reached via httpx.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps:
+#   libjpeg62-turbo, zlib1g — Pillow runtime
+#   libgomp1               — torch runtime (OpenMP)
+#   gcc, python3-dev       — only needed for some pip wheels; purged after install
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libjpeg62-turbo zlib1g libgomp1 \
+        gcc python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-prod.txt .
+RUN pip install --no-cache-dir -r requirements-prod.txt
+
+# Drop the build toolchain to keep the image smaller.
+RUN apt-get purge -y gcc python3-dev \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# Application code. Model checkpoints (models/checkpoints/) are bind-mounted
+# at runtime — see .dockerignore.
+COPY backend/ ./backend/
+COPY shared/ ./shared/
+COPY models/ ./models/
+
+# Runtime data dir (SQLite + uploads + HF cache). Bind-mounted at runtime.
+RUN mkdir -p /app/data/uploads
+
+ENV PYTHONUNBUFFERED=1
+# Keep DINOv2 weights inside the persistent volume so they're cached
+# across container restarts.
+ENV HF_HOME=/app/data/.huggingface
+
+EXPOSE 8000
+
+# nginx upstream check + Docker healthcheck both hit /health (no model state read).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8000/health', timeout=5).raise_for_status()" || exit 1
+
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

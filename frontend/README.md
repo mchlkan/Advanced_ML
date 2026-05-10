@@ -11,20 +11,30 @@ Next.js 14 (App Router) · TypeScript · Tailwind CSS 4
 ```bash
 cd frontend
 npm install
-npm run dev
+NEXT_PUBLIC_API_URL=http://localhost:8000 \
+  RESELL_ACCESS_PASSWORD=local \
+  npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser, or on your phone by navigating to `http://<your-laptop-ip>:3000` on the same Wi-Fi network.
+Open [http://localhost:3000](http://localhost:3000). The password gate
+will prompt for the value of `RESELL_ACCESS_PASSWORD` — use any value
+for local dev.
 
 ## Backend
 
-The frontend currently runs with **mock API responses** — no backend needed to try the UI. When the backend is ready, set the API base URL:
+The frontend talks to a FastAPI backend over HTTP. Configure via
+`NEXT_PUBLIC_API_URL`:
 
-```bash
-NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
-```
+- Local: `http://localhost:8000` (run `uvicorn backend.main:app --reload`
+  from the repo root)
+- Production: set in Vercel project settings to the deployed backend URL
 
-Then uncomment the real `fetch` calls in `src/api/upload.ts`, `src/api/verify.ts`, and `src/api/publish.ts` (each has a `// TODO: backend` block).
+## Auth
+
+A single shared password gates the entire app via Next.js middleware
+(`src/middleware.ts`). Login state is stored in an httpOnly cookie that
+expires after 30 days. Configure the password via `RESELL_ACCESS_PASSWORD`
+on the server side (Vercel env var in production).
 
 ## Other commands
 
@@ -33,3 +43,8 @@ npm run type-check   # TypeScript check, no emit
 npm run lint         # ESLint
 npm run build        # Production build
 ```
+
+## Deployment
+
+See `docs/deploy_plan.md` in the repo root for the full Vercel + AWS EC2
+deploy guide.

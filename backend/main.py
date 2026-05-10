@@ -15,6 +15,29 @@ from fastapi.middleware.cors import CORSMiddleware
 # vlm_backend factory) sees the values regardless of import order.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+
+def _materialize_session(env_json_var: str, env_path_var: str, default_path: Path) -> None:
+    """Containerized deploys can't easily mount secret files. If the JSON
+    blob is supplied via env var, write it to disk so the existing file-based
+    loaders work unchanged. Skip if a session file already exists on disk —
+    that means a previous run rotated the tokens and the on-disk version is
+    fresher than the env seed."""
+    json_blob = os.environ.get(env_json_var)
+    if not json_blob:
+        return
+    if os.environ.get(env_path_var):
+        return  # explicit path wins
+    default_path.parent.mkdir(parents=True, exist_ok=True)
+    if not default_path.exists():
+        default_path.write_text(json_blob)
+    os.environ[env_path_var] = str(default_path)
+
+
+_DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
+_materialize_session("VINTED_SESSION_JSON", "VINTED_SESSION_PATH", _DATA_DIR / "vinted_session.json")
+_materialize_session("KA_SESSION_JSON", "KA_SESSION_PATH", _DATA_DIR / "ka_session.json")
+
+
 from backend import db  # noqa: E402
 from backend.bootstrap import load_models  # noqa: E402
 from backend.queue import PublishRunner  # noqa: E402
@@ -62,9 +85,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Resell Copilot API", lifespan=lifespan)
+
+# CORS: comma-separated list of origins via env var. Default "*" preserves
+# local-dev behavior; production sets this to the Vercel deploy URL.
+_cors_env = os.environ.get("CORS_ORIGINS", "*")
+_allow_origins = ["*"] if _cors_env.strip() == "*" else [o.strip() for o in _cors_env.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allow_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -75,6 +103,14 @@ app.include_router(onboarding.router)
 app.include_router(inventory.router)
 
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    """Lightweight liveness probe — does not touch app.state, so it works
+    even before model loading completes. Used by nginx upstream checks +
+    the Docker HEALTHCHECK."""
+    return {"status": "ok"}
 
 
 @app.get("/healthz", response_model=HealthzResponse)

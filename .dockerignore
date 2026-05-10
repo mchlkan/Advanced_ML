@@ -1,23 +1,54 @@
-.git
-.venv
+# Single .dockerignore covering both Dockerfiles in the repo:
+#   - /Dockerfile           — production FastAPI backend (COPY backend/ shared/ models/)
+#   - runpod/Dockerfile     — RunPod Serverless VLM (COPY shared/ runpod/)
+# Each Dockerfile only COPYs what it needs; this file just excludes paths that
+# neither image cares about, to keep the build context small.
+
+# VCS + dev tooling
+.git/
+.github/
+.venv/
+venv/
 .env
 .env.*
-__pycache__
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+.idea/
+.vscode/
+
+# Python build artifacts
+__pycache__/
 *.pyc
 *.pyo
-.pytest_cache
-.mypy_cache
-.ruff_cache
-.DS_Store
-data
-notebooks
-eval/results
-backend
-frontend
-docs
+*.pyd
+*.egg-info/
+build/
+dist/
+
+# Frontend lives separately on Vercel
+frontend/
+
+# Notebooks, docs, evaluation, one-off data prep — never used at runtime
+notebooks/
+docs/
+eval/
+data_prep/
+review_prompts/
+
+# Local data: scrapes, SQLite, uploads, predictions — bind-mounted at runtime
+data/
 *.parquet
 *.npy
-*.pt
-*.pth
 *.bin
 *.safetensors
+
+# Model checkpoints — bind-mounted at runtime in the backend image; the RunPod
+# image already pulls weights from HF Hub at startup, so it doesn't need them.
+*.pt
+*.pth
+models/checkpoints/
+
+# Tests don't run inside production
+backend/tests/

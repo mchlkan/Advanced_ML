@@ -1,10 +1,32 @@
 # Deploy Plan — Resell Copilot to Vercel + AWS EC2
 
-**Status:** DRAFT for review. No code changes have been made — everything below is a proposal.
+**Status:** Phase 1 + 2 code changes landed on `feature/deploy-prep`. Phase 3 (AWS EC2 setup) and Phase 1.6 (Vercel deploy) still need execution.
 
 **Goal:** Persistent public URL (Vercel) for the frontend, gated by a shared
 password. Backend hosted on user's existing free-tier AWS EC2 instance.
 Real Vinted + KA publishing enabled for anyone who clears the password.
+
+## Confirmed inputs (2026-05-10)
+
+| Item | Value |
+|---|---|
+| EC2 instance | t2.small (2 GB RAM) — upgraded from t3.micro mid-planning |
+| EC2 OS | Ubuntu 26.04 LTS |
+| EC2 public IP | `13.49.21.29` (eu-north-1, Stockholm) |
+| Domain | `resell-copilot.duckdns.org` (DuckDNS A-record points at the IP) |
+| SSH key | `/Users/leonschmidt/Downloads/Resell_Copilot.pem` (chmod 400, ED25519 host key trusted) |
+| Password | `Advanced_ML` (corrected from typed `Advancded_ML`) |
+
+## Course corrections vs the original plan
+
+1. **Architecture (§4.1):** original plan claimed `requirements.txt` could
+   slim to ~150 MB because "VLM goes through runpod_http.py so no torch
+   needed locally." This was wrong — `backend/bootstrap.py` loads DINOv2
+   (~340 MB) + 3 head MLPs at startup, which require `torch`,
+   `transformers`, `numpy`, `huggingface_hub`. Production image is ~1.5 GB.
+   Memory pressure was a concern on t3.micro (1 GB) but is fine on t2.small (2 GB).
+2. **Instance:** upgraded from t3.micro to t2.small mid-planning for DINOv2 headroom.
+3. **IP:** changed from `51.21.3.235` (t3.micro) to `13.49.21.29` (t2.small).
 
 ---
 
@@ -134,116 +156,92 @@ After this we know the public URL. Save it — needed for backend CORS in Phase 
 
 ## 4. Phase 2 — Backend prep (code changes)
 
-### 4.1 Slim down `requirements.txt`
+### 4.1 Trim training-only deps from `requirements.txt`
 
-Current `requirements.txt` (32 lines) includes training-time deps that the hosted
-backend doesn't need: `torch`, `transformers`, `peft`, `bitsandbytes`, `accelerate`,
-`trl`, `datasets`, `scikit-learn`, `evaluate`, `bert-score`, `nltk`, `wandb`.
+**[CORRECTED 2026-05-10]** — initial plan claimed we could skip torch
+because the VLM runs on RunPod. Wrong: `backend/bootstrap.py` loads
+DINOv2 + 3 head MLPs locally at startup. So torch + transformers stay,
+but training-only deps go.
 
-Total install size with these: ~5 GB. EC2 image will be huge and slow to build.
-
-Proposal: create `requirements-prod.txt` with only what the hosted backend imports
-at runtime. VLM goes through `runpod_http.py` so no torch needed locally:
+`requirements-prod.txt` (now landed):
 
 ```
-fastapi>=0.111.0
-uvicorn[standard]>=0.29.0
-python-multipart>=0.0.9
-pillow>=10.3.0
-pydantic>=2.7.0
-aiosqlite>=0.20.0
-httpx>=0.27.0
-python-dotenv>=1.0.0
-openai>=1.55.0      # used by description.py (Groq is OpenAI-compat)
-tenacity>=8.0.0
-pyjwt>=2.8.0        # KA JWT decode (verify which version)
+fastapi, uvicorn, python-multipart       # web
+pillow                                    # image
+pydantic                                  # schemas
+aiosqlite                                 # db
+httpx, openai                             # HTTP clients
+python-dotenv, tenacity                   # utils
+torch, transformers, numpy, huggingface_hub  # DINOv2 + heads
 ```
 
-Estimated install size: ~150 MB. EC2 image stays small.
+Dropped (training-only): `peft`, `bitsandbytes`, `accelerate`, `trl`,
+`datasets`, `pandas`, `pyarrow`, `scikit-learn`, `evaluate`,
+`bert-score`, `nltk`, `wandb`.
 
-**Caveat:** I need to verify by tracing imports that nothing in `backend/` reaches
-into the heavy deps. If `backend/description.py` imports from `transformers` somewhere
-this won't work. Will check before executing this step.
+Estimated image size: ~1.5 GB (down from ~5 GB if we'd kept everything).
+KA JWT decode confirmed hand-rolled in `_oauth.py` — no `pyjwt` needed.
 
-### 4.2 Inline session credentials (instead of file paths)
+### 4.2 Inline session credentials (LANDED)
 
-Currently `backend/integrations/vinted.py` reads from `VINTED_SESSION_PATH` (a file).
-Same for KA. This is awkward in a containerized deploy because we'd need to either:
-- Mount a secret file (extra Docker complexity)
-- Encode the file content as an env var (works but env-var size limits matter)
+`backend/main.py` now has `_materialize_session()` at module load that
+checks for `VINTED_SESSION_JSON` / `KA_SESSION_JSON` env vars. If set
+(and no `_PATH` is explicitly provided), the JSON blob is written to
+`data/{vinted,ka}_session.json` and the `_PATH` env var is set to that
+location. The existing file-based loaders work unchanged.
 
-Proposal: add a fallback path. If `VINTED_SESSION_JSON` (env var) is set, use it
-directly; else fall back to `VINTED_SESSION_PATH` (file). Backwards compatible —
-local dev keeps working unchanged.
+**Refresh-rotation semantics:** the materialized file is only written
+if it doesn't already exist. After Vinted rotates the DataDome cookie,
+the on-disk session is the freshest version; it's preserved across
+container restarts (data dir is bind-mounted to host EBS). To force
+re-seeding from env, manually `rm /opt/resell/data/vinted_session.json`
+on the host.
 
-Same for KA.
+### 4.3 Lock down CORS (LANDED)
 
-### 4.3 Lock down CORS
+`backend/main.py` now reads `CORS_ORIGINS` env var (comma-separated).
+Default `*` preserves local dev behavior; production sets it to the
+Vercel deploy URL.
 
-Currently `backend/main.py:67` uses `allow_origins=["*"]`. With public access and
-real publishing enabled, this is too open. Propose:
+### 4.4 Production Dockerfile (LANDED)
 
-```python
-allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-```
+`Dockerfile` at repo root (separate from `runpod/Dockerfile` which is
+GPU-flavored). Uses `python:3.11-slim` base, installs `requirements-prod.txt`,
+copies `backend/`, `shared/`, `models/` (with `models/checkpoints/`
+excluded via `.dockerignore`). Sets `HF_HOME=/app/data/.huggingface` so
+DINOv2 weights cache to the persistent volume. Exposes 8000. Includes a
+`HEALTHCHECK` that hits `/health`.
 
-In production set `CORS_ORIGINS=https://resell-copilot.vercel.app` (or whatever the
-Vercel URL is). Local dev unchanged (default `*`).
+`.dockerignore` rewritten to be a single config covering both this
+Dockerfile and `runpod/Dockerfile`.
 
-### 4.4 Production Dockerfile
+### 4.5 Healthcheck endpoint (LANDED)
 
-New `Dockerfile` at repo root (separate from `runpod/Dockerfile` which is GPU-flavored):
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# System deps for Pillow + lxml (KA mobile API uses XML)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libjpeg-dev zlib1g-dev libxml2-dev libxslt-dev gcc \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements-prod.txt .
-RUN pip install --no-cache-dir -r requirements-prod.txt
-
-COPY backend/ ./backend/
-COPY shared/ ./shared/
-
-# Data dir is volume-mounted in production
-RUN mkdir -p /app/data/uploads
-
-ENV PYTHONUNBUFFERED=1
-EXPOSE 8000
-
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-### 4.5 Add a healthcheck endpoint
-
-Backend doesn't currently expose `/health`. Need this for nginx upstream check
-and for Vercel to be able to verify backend is alive.
-
-Proposal: add `GET /health` returning `{"status": "ok", "vlm_backend": "<name>"}`.
-~5 lines in `backend/main.py`.
+`backend/main.py` now exposes:
+- `GET /health` — lightweight, returns `{"status": "ok"}` without
+  touching `app.state`. Used by nginx upstream check + Docker HEALTHCHECK.
+  Works even before model loading completes.
+- `GET /healthz` — existing detailed probe that reports VLM backend +
+  loaded models + device.
 
 ---
 
 ## 5. Phase 3 — AWS EC2 setup (you run, I provide commands)
 
-Assumes: Ubuntu 22.04, t3.micro, public IPv4, a domain pointing at it.
+**Confirmed:** Ubuntu 26.04 LTS, t2.small (2 GB RAM), public IPv4 `13.49.21.29`,
+domain `resell-copilot.duckdns.org` already pointing at it.
 
 ### 5.1 SSH in + base setup
 
 ```bash
-ssh ubuntu@<your-ec2-ip>
+ssh -i ~/Downloads/Resell_Copilot.pem ubuntu@13.49.21.29
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y docker.io docker-compose-v2 nginx certbot python3-certbot-nginx
 sudo usermod -aG docker ubuntu
 # log out and back in for docker group to take effect
 ```
 
-### 5.2 Add 2 GB swap (RAM safety net for t3.micro)
+### 5.2 Add 2 GB swap (insurance, not strictly required at 2 GB RAM)
 
 ```bash
 sudo fallocate -l 2G /swapfile
@@ -253,17 +251,32 @@ sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
-### 5.3 Persistent data directory
+### 5.3 Persistent data directory + checkpoints
 
 ```bash
-sudo mkdir -p /opt/resell/data/uploads
+sudo mkdir -p /opt/resell/data/uploads /opt/resell/checkpoints
 sudo chown -R ubuntu:ubuntu /opt/resell
 ```
 
 (EBS root volume is persistent across reboots — no separate volume needed at
 free-tier scale. If usage grows, attach a dedicated EBS volume here later.)
 
-### 5.4 Clone repo + secrets file
+### 5.4 Copy model checkpoints from your Mac
+
+The `.pt` files are gitignored (training artifacts), so they need to be
+shipped to EC2 once. From your Mac:
+
+```bash
+scp -i ~/Downloads/Resell_Copilot.pem \
+  models/checkpoints/flaw_head_vinted.pt \
+  models/checkpoints/price_head.pt \
+  models/checkpoints/sell_head.pt \
+  ubuntu@13.49.21.29:/opt/resell/checkpoints/
+```
+
+(Total ~7 MB — quick.)
+
+### 5.5 Clone repo + secrets file
 
 ```bash
 cd /opt/resell
@@ -288,7 +301,7 @@ EOF
 chmod 600 .env.prod
 ```
 
-### 5.5 Build + run
+### 5.6 Build + run
 
 ```bash
 docker build -t resell-backend .
@@ -298,18 +311,20 @@ docker run -d \
   -p 127.0.0.1:8000:8000 \
   --env-file .env.prod \
   -v /opt/resell/data:/app/data \
+  -v /opt/resell/checkpoints:/app/models/checkpoints:ro \
   resell-backend
 ```
 
 `-p 127.0.0.1:8000:8000` binds only to localhost — nginx will reverse-proxy to
-this. Backend is NOT exposed to the public internet directly.
+this. Backend is NOT exposed to the public internet directly. The checkpoints
+volume is mounted read-only since the heads aren't retrained at inference time.
 
-### 5.6 nginx reverse proxy
+### 5.7 nginx reverse proxy
 
 ```bash
 sudo tee /etc/nginx/sites-available/resell <<'EOF'
 server {
-    server_name <your-domain>;
+    server_name resell-copilot.duckdns.org;
 
     client_max_body_size 20M;  # for image uploads
 
@@ -332,10 +347,10 @@ sudo ln -s /etc/nginx/sites-available/resell /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-### 5.7 SSL via Let's Encrypt
+### 5.8 SSL via Let's Encrypt
 
 ```bash
-sudo certbot --nginx -d <your-domain>
+sudo certbot --nginx -d resell-copilot.duckdns.org
 # follow prompts, accept TOS, email for expiry warnings
 ```
 
@@ -350,7 +365,7 @@ certbot rewrites the nginx config to add HTTPS + auto-renewal cron.
 cd frontend
 npx vercel env rm NEXT_PUBLIC_API_URL production
 npx vercel env add NEXT_PUBLIC_API_URL production
-# enter: https://<your-domain>
+# enter: https://resell-copilot.duckdns.org
 npx vercel --prod
 ```
 
@@ -362,18 +377,19 @@ Frontend redeploys, now talking to the AWS backend.
 
 Once deployed, verify in this order:
 
-1. `curl https://<your-domain>/health` → `{"status": "ok", ...}`
-2. Open Vercel URL in incognito → password page renders
-3. Enter password → upload screen renders
-4. Upload a photo → identification + price band appears (catches: backend up,
-   RunPod reachable, Groq reachable)
-5. Click "draft" → opens new tab to draft URL (catches: Vinted/KA session valid
+1. `curl https://resell-copilot.duckdns.org/health` → `{"status": "ok"}`
+2. `curl https://resell-copilot.duckdns.org/healthz` → reports VLM backend + loaded models
+3. Open Vercel URL in incognito → password page renders
+4. Enter `Advanced_ML` → upload screen renders
+5. Upload a photo → identification + price band appears (catches: backend up,
+   RunPod reachable, Groq reachable, DINOv2 + heads loaded)
+6. Click "draft" → opens new tab to draft URL (catches: Vinted/KA session valid
    from a datacenter IP — the riskiest unknown)
-6. View inventory → renders previously uploaded items
-7. Hit `/inventory/sync` button → wardrobe data refreshes from Vinted
+7. View inventory → renders previously uploaded items
+8. Hit `/inventory/sync` button → wardrobe data refreshes from Vinted
 
-If step 5 fails (DataDome challenge), fallback options:
-- Refresh DataDome cookie locally + redeploy backend
+If step 6 fails (DataDome challenge), fallback options:
+- Refresh DataDome cookie locally + push fresh `VINTED_SESSION_JSON` to EC2 + restart container
 - Add cookie-rotation logic to handle the challenge
 - Limit publish to "draft only, manual paste" for the deployed version
 
@@ -384,13 +400,14 @@ If step 5 fails (DataDome challenge), fallback options:
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | Vinted DataDome blocks the AWS IP | Medium-high | Fall back to draft-only mode. Or warm DataDome from EC2 IP before demo |
-| t3.micro OOMs under concurrent uploads | Low at small scale | Swap configured (5.2). Upgrade to t3.small if it happens |
+| t2.small OOMs under concurrent uploads | Low at demo scale (DINOv2 ~350 MB on a 2 GB box leaves ample headroom) | Swap configured (§5.2). Upgrade to t3.medium if it happens |
 | Backend SQLite gets corrupted on container restart mid-write | Very low | aiosqlite uses WAL mode. EBS persistent. Acceptable for demo scale |
 | Vinted account flagged for unusual login pattern (Mac IP + EC2 IP) | Medium | Use only EC2 IP after deploy; stop using Vinted from Mac for the demo period |
 | RunPod cold-start times out the 180s nginx limit | Low (warm pods finish in 12s) | Pre-warm pod before demo. Or extend nginx timeout to 300s |
 | Cert renewal fails | Low | Certbot's auto-renewal cron handles it. Monitor first renewal at ~60 days |
 | Password leaks via team chat | Medium (human factor) | Rotate password if URL spreads beyond intended audience |
 | Costs exceed free tier (egress > 100GB/mo) | Very low for demo | Free tier covers more than enough for course demo |
+| DINOv2 weights download fails on first start (HF Hub outage) | Very low | Pre-pull on EC2 once via `python -c "from transformers import AutoModel; AutoModel.from_pretrained('facebook/dinov2-base')"` after first container build |
 
 ---
 
@@ -421,28 +438,41 @@ If a deploy goes bad:
 
 ## 11. Time estimate
 
-| Phase | Time | Blocking on you |
+| Phase | Time | Status |
 |---|---|---|
-| 1. Frontend prep + push | 30 min | Vercel login, password value |
-| 2. Backend code changes + Dockerfile | 1 hr | Nothing |
-| 3. AWS EC2 setup | 1-2 hrs | SSH access, domain, secrets |
-| 4. Wire FE → BE | 10 min | Nothing |
-| 5. Smoke tests + iteration | 30 min - 2 hrs | Depends on DataDome behaviour |
-| **Total** | **3-6 hrs realistic** | |
+| 1. Frontend prep | 30 min | ✅ **DONE** — middleware, login page, README, vercel.json all on `feature/deploy-prep` |
+| 2. Backend code changes + Dockerfile | 1 hr | ✅ **DONE** — `requirements-prod.txt`, `Dockerfile`, `.dockerignore`, CORS env var, `/health`, session JSON materialization on `feature/deploy-prep` |
+| 1.6. Vercel deploy | 30 min | ⏳ User runs `vercel login` + `vercel --prod` interactively |
+| 3. AWS EC2 setup | 1-2 hrs | ⏳ User runs SSH commands from §5; I guide |
+| 4. Wire FE → BE | 10 min | ⏳ Set NEXT_PUBLIC_API_URL on Vercel, redeploy |
+| 5. Smoke tests + iteration | 30 min - 2 hrs | ⏳ Depends on DataDome behaviour |
+| **Remaining total** | **2-4 hrs realistic** | |
 
 ---
 
-## 12. What I need from you to start
+## 12. Inputs (all confirmed 2026-05-10)
 
-Confirm or correct:
+1. **AWS:** t2.small Ubuntu 26.04 at `13.49.21.29` — ✅ confirmed
+2. **Domain:** `resell-copilot.duckdns.org` (DuckDNS A-record points at IP) — ✅ confirmed
+3. **Password:** `Advanced_ML` — ✅ confirmed (typo corrected)
+4. **Phase ordering:** Phase 2 + 1 done locally, Phase 1.6 + 3 + 4 + 5 next
+5. **Risks:** all accepted as-is; DataDome behaviour discovered at smoke-test time
 
-1. **AWS:** instance type, OS, public IP / Elastic IP, domain name (or "I'll register one")
-2. **Password value:** the shared password for the Vercel gate (or "set in dashboard later")
-3. **Phase ordering:** sequential as written, or any reordering
-4. **Anything in §8 risks** you want to address before deploying (e.g. accept
-   DataDome risk and proceed, vs warm cookies first)
+---
 
-After you confirm, I execute Phase 2 (backend code changes) on this branch — those
-are local edits, reviewable in a normal commit. Phase 3 (AWS setup) and Phase 1.6
-(Vercel deploy) are commands you run interactively, with me in the loop guiding
-each step.
+## 13. Open items still requiring you
+
+Before we can run Phase 1.6 + 3:
+
+1. **AWS Security Group:** confirm in EC2 console that ports **80** + **443**
+   are open to `0.0.0.0/0` (port 22 already verified). Without these, nginx
+   installs but is unreachable from outside.
+2. **Secret values for `.env.prod`** (Phase 5.5) — I'll need from you when
+   we get to that step:
+   - `RUNPOD_ENDPOINT_ID`, `RUNPOD_API_KEY`
+   - `GROQ_API_KEY`
+   - Full content of `~/.../vinted_session.json` (paste as `VINTED_SESSION_JSON`)
+   - `VINTED_DATADOME_SEED` / `VINTED_ANON_ID` / `VINTED_DEVICE_UUID` / `VINTED_DEVICE_TOKEN`
+   - Full content of KA session file (paste as `KA_SESSION_JSON`)
+3. **Vercel account** access — you'll run `npx vercel login` interactively
+   when we kick off Phase 1.6.
