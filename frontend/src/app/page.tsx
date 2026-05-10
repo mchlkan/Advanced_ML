@@ -8,7 +8,7 @@ import type {
   UploadResponse,
 } from "@/types/api";
 import { uploadImage } from "@/api/upload";
-import { draftListing } from "@/api/publish";
+import { pollPublishStatus, publishListing } from "@/api/publish";
 import { fetchOnboardingStatus } from "@/api/onboarding";
 import UploadScreen from "@/components/UploadScreen";
 import AnalyzingScreen from "@/components/AnalyzingScreen";
@@ -76,14 +76,30 @@ export default function Page() {
     const { data, imageUrl } = state;
     setState({ screen: "publishing", imageUrl, data, platform });
     try {
-      const draft = await draftListing({
+      const job = await publishListing({
         listing_id: data.listing_id,
         platform,
         final_fields: finalFields,
       });
-      window.open(draft.draft_url, "_blank");
-      setState({ screen: "published", platform, listingUrl: draft.draft_url, results: data });
-    } catch {
+      // Backend's PublishRunner does the actual platform call asynchronously;
+      // poll until terminal status (posted | failed).
+      const result = await pollPublishStatus(job.job_id);
+      if (result.status === "posted" && result.platform_listing_url) {
+        window.open(result.platform_listing_url, "_blank");
+        setState({
+          screen: "published",
+          platform,
+          listingUrl: result.platform_listing_url,
+          results: data,
+        });
+      } else {
+        setUploadError(`Publishing failed: ${result.error ?? "unknown error"}`);
+        setState({ screen: "results", imageUrl, data });
+      }
+    } catch (err) {
+      setUploadError(
+        `Publishing failed: ${err instanceof Error ? err.message : "unknown error"}`,
+      );
       setState({ screen: "results", imageUrl, data });
     }
   }

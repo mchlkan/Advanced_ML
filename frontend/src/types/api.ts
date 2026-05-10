@@ -145,13 +145,6 @@ export interface PublishStatusResponse {
   updated_at: number;
 }
 
-export interface DraftResponse {
-  draft_id: number;
-  draft_url: string;
-  listing_id: string;
-  platform: Platform;
-}
-
 export interface HealthzResponse {
   ok: boolean;
   vlm_backend: string;

@@ -65,7 +65,7 @@ export default function PublishingScreen({ platform }: Props) {
             margin: "0 0 8px",
           }}
         >
-          Preparing draft on {PLATFORM_LABEL[platform]}…
+          Publishing on {PLATFORM_LABEL[platform]}…
         </p>
         <p
           style={{
@@ -77,8 +77,7 @@ export default function PublishingScreen({ platform }: Props) {
             maxWidth: 280,
           }}
         >
-          Uploading your photo and filling in all fields. You&apos;ll review and publish on{" "}
-          {PLATFORM_LABEL[platform]} yourself.
+          Uploading your photo and posting the listing. Usually 5–10 seconds; cold starts can be longer.
         </p>
       </div>
 
