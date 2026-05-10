@@ -146,7 +146,10 @@ class OnboardingLoginResponse(BaseModel):
 
 
 class PlatformStatus(BaseModel):
-    state: Literal["ready", "expired", "not_configured", "not_implemented"]
+    # `expired` is kept as an alias for `needs_login` so any older clients
+    # don't break — backend never emits it now (try_load_or_refresh returns
+    # `needs_login` when refresh fails).
+    state: Literal["ready", "needs_login", "expired", "not_configured", "not_implemented"]
     expires_at: float | None = None
     user_id: str | None = None
 

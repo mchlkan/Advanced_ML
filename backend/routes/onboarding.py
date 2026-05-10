@@ -6,10 +6,10 @@ POST /onboarding/login
   used once and never logged or persisted.
 
 GET /onboarding/status
-  Per-platform: ready / expired / not_configured / not_implemented.
-
-Phase 6a: Vinted only. Kleinanzeigen always reports "not_implemented"
-until the mobile listing-create flow lands (Phase 6c).
+  Per-platform: ready / needs_login / not_configured. Attempts to refresh
+  expired sessions before reporting state — only escalates to needs_login
+  when refresh actually fails. The frontend uses this to decide whether
+  to show the per-platform Connect button.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import time
 
 from fastapi import APIRouter, HTTPException
 
@@ -134,36 +133,18 @@ async def status() -> OnboardingStatusResponse:
 
 
 def _kleinanzeigen_status() -> PlatformStatus:
-    if not ka_integration.is_configured():
-        return PlatformStatus(state="not_configured")
-    try:
-        session = ka_integration.load_session(ka_integration._session_path())
-    except Exception:
-        return PlatformStatus(state="not_configured")
-    if session is None:
-        return PlatformStatus(state="not_configured")
-    state = "ready" if session.expires_at > time.time() else "expired"
+    session, state = ka_integration.try_load_or_refresh()
     return PlatformStatus(
         state=state,
-        expires_at=session.expires_at,
-        user_id=str(session.user_id) if session.user_id else None,
+        expires_at=session.expires_at if session else None,
+        user_id=str(session.user_id) if session and session.user_id else None,
     )
 
 
 def _vinted_status() -> PlatformStatus:
-    if not vinted_integration.is_configured():
-        return PlatformStatus(state="not_configured")
-    try:
-        session = vinted_integration.load_session(
-            vinted_integration._session_path()
-        )
-    except Exception:
-        return PlatformStatus(state="not_configured")
-    if session is None:
-        return PlatformStatus(state="not_configured")
-    state = "ready" if session.expires_at > time.time() else "expired"
+    session, state = vinted_integration.try_load_or_refresh()
     return PlatformStatus(
         state=state,
-        expires_at=session.expires_at,
-        user_id=session.user_id or None,
+        expires_at=session.expires_at if session else None,
+        user_id=session.user_id if session and session.user_id else None,
     )

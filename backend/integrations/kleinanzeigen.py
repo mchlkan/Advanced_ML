@@ -130,6 +130,31 @@ def _session_path() -> Path:
     return Path(path).expanduser()
 
 
+def try_load_or_refresh() -> tuple["KASession | None", str]:
+    """Return (session, state) where state is 'ready' | 'needs_login' | 'not_configured'.
+    Attempts a refresh if the loaded session is expired but has a refresh_token.
+    Persists the rotated session to disk on successful refresh."""
+    if not is_configured():
+        return None, "not_configured"
+    try:
+        session = load_session(_session_path())
+    except Exception:
+        return None, "not_configured"
+    if session is None:
+        return None, "not_configured"
+    if session.expires_at > time.time():
+        return session, "ready"
+    if not session.refresh_token:
+        return None, "needs_login"
+    try:
+        refreshed = refresh_access_token(session)
+        save_session(refreshed, _session_path())
+        return refreshed, "ready"
+    except Exception:
+        logger.info("KA refresh failed; reporting needs_login", exc_info=True)
+        return None, "needs_login"
+
+
 from ._oauth import decode_jwt_payload as _decode_jwt_payload  # noqa: E402
 
 

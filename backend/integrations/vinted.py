@@ -573,6 +573,32 @@ def is_session_ready() -> bool:
     return session is not None and session.expires_at > time.time()
 
 
+def try_load_or_refresh() -> tuple["VintedSession | None", str]:
+    """Return (session, state) where state is 'ready' | 'needs_login' | 'not_configured'.
+    Attempts a refresh if the loaded session is expired but has a refresh_token.
+    Persists the rotated session to disk on successful refresh."""
+    if not is_configured():
+        return None, "not_configured"
+    try:
+        session = load_session(_session_path())
+    except Exception:
+        return None, "not_configured"
+    if session is None:
+        return None, "not_configured"
+    if session.expires_at > time.time():
+        return session, "ready"
+    if not session.refresh_token:
+        return None, "needs_login"
+    try:
+        refreshed = refresh_access_token(session)
+        save_session(refreshed, _session_path())
+        return refreshed, "ready"
+    except Exception:
+        # Refresh failed (auth, blocked, network, anything). User must re-login.
+        logger.info("Vinted refresh failed; reporting needs_login", exc_info=True)
+        return None, "needs_login"
+
+
 def seed_from_env() -> dict | None:
     """Read the four phone-extracted seed values from env vars.
     Returns None if any are missing — used by /onboarding/login."""

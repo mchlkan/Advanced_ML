@@ -66,7 +66,10 @@ def test_status_vinted_ready_with_session(app_client, monkeypatch, tmp_path):
     assert body["vinted"]["user_id"] == "42"
 
 
-def test_status_vinted_expired(app_client, monkeypatch, tmp_path):
+@respx.mock
+def test_status_vinted_needs_login_when_refresh_fails(app_client, monkeypatch, tmp_path):
+    """Expired session → backend tries to refresh → on failure, reports
+    needs_login so the FE can surface a Connect button."""
     session_path = tmp_path / "vinted-session.json"
     session_path.write_text(json.dumps({
         "access_token": "atok",
@@ -76,11 +79,61 @@ def test_status_vinted_expired(app_client, monkeypatch, tmp_path):
         "anon_id": "anon",
         "device_uuid": "duuid",
         "device_token": "dtok",
+        "domain": "www.vinted.fr",
     }))
     monkeypatch.setenv("VINTED_SESSION_PATH", str(session_path))
 
+    # DataDome SDK returns OK so we get past the cookie refresh.
+    respx.post("https://api-sdk.datadome.co/sdk/").mock(
+        return_value=httpx.Response(200, json={"cookie": "datadome=ok"})
+    )
+    # Vinted's OAuth refresh rejects the (fake) refresh_token.
+    respx.post("https://www.vinted.fr/oauth/token").mock(
+        return_value=httpx.Response(401, json={"error": "invalid_grant"})
+    )
+
     r = app_client.get("/onboarding/status")
-    assert r.json()["vinted"]["state"] == "expired"
+    assert r.json()["vinted"]["state"] == "needs_login"
+
+
+@respx.mock
+def test_status_vinted_refresh_succeeds_returns_ready(app_client, monkeypatch, tmp_path):
+    """Expired session → refresh succeeds → status reports ready and the new
+    session is persisted to disk."""
+    session_path = tmp_path / "vinted-session.json"
+    session_path.write_text(json.dumps({
+        "access_token": "atok",
+        "refresh_token": "rtok-old",
+        "expires_at": time.time() - 60,
+        "datadome_cookie": "cookie",
+        "anon_id": "anon",
+        "device_uuid": "duuid",
+        "device_token": "dtok",
+        "domain": "www.vinted.fr",
+    }))
+    monkeypatch.setenv("VINTED_SESSION_PATH", str(session_path))
+
+    respx.post("https://api-sdk.datadome.co/sdk/").mock(
+        return_value=httpx.Response(200, json={"cookie": "datadome=fresh"})
+    )
+    respx.post("https://www.vinted.fr/oauth/token").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "access_token": _fake_jwt(time.time() + 3600),
+                "refresh_token": "rtok-new",
+                "token_type": "bearer",
+                "expires_in": 3600,
+            },
+        )
+    )
+
+    r = app_client.get("/onboarding/status")
+    assert r.json()["vinted"]["state"] == "ready"
+
+    # Rotated refresh_token persisted to disk
+    saved = json.loads(session_path.read_text())
+    assert saved["refresh_token"] == "rtok-new"
 
 
 def test_login_kleinanzeigen_password_returns_501(app_client):
