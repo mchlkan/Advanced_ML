@@ -505,26 +505,7 @@ class VintedClient:
             raise _classify_error(resp, "draft complete")
 
         body = resp.json()
-        # DIAGNOSTIC: shadow-ban detection — DataDome can return 200 with a
-        # gutted body for flagged IPs. Log keys + first ~1.5KB so we can tell
-        # if `item.id` is actually present.
-        logger.warning(
-            "vinted completion response keys=%s server=%s preview=%r",
-            list(body.keys()) if isinstance(body, dict) else type(body).__name__,
-            resp.headers.get("server"),
-            str(body)[:1500],
-        )
-        item_obj = (body.get("item") or body.get("draft") or {}) if isinstance(body, dict) else {}
-        item_id_raw = item_obj.get("id") if isinstance(item_obj, dict) else None
-        if item_id_raw is None:
-            logger.error(
-                "vinted completion missing item.id — falling back to draft_id=%s; "
-                "listing likely NOT published (shadow-ban or schema drift)",
-                draft_id,
-            )
-            item_id = int(draft_id)
-        else:
-            item_id = int(item_id_raw)
+        item_id = int(body.get("item", body.get("draft", {})).get("id", draft_id))
         listing_url = f"{self.base_url}/items/{item_id}"
         return item_id, listing_url
 
