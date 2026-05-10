@@ -398,6 +398,28 @@ class VintedClient:
             raise VintedError(f"delete: item {item_id} not found")
         raise _classify_error(resp, "delete")
 
+    def fetch_item_details(self, item_id: int | str) -> dict:
+        """GET the live item's full details — needed to extract existing
+        photo IDs (and other fields) when constructing the PUT body for
+        ``update_listing``. Vinted requires a full payload on PUT, no
+        partial patches."""
+        resp = self._get(f"/api/v2/items/{item_id}/details")
+        if resp.status_code != 200:
+            raise _classify_error(resp, "fetch item details")
+        return resp.json().get("item", {})
+
+    def update_listing(self, item_id: int | str, payload: dict, photo_ids: list[int]) -> None:
+        """Replace a live Vinted item with the supplied payload. Endpoint
+        discovered via probe: PUT /api/v2/item_upload/items/{id} with the
+        same ``{"item": _build_item_payload(...)}`` body shape used by the
+        completion step of the publish flow."""
+        self._ensure_fresh()
+        full = _build_item_payload(payload, photo_ids)
+        resp = self._put(f"/api/v2/item_upload/items/{item_id}", json_body={"item": full})
+        if resp.status_code in (200, 204):
+            return
+        raise _classify_error(resp, "item update")
+
     def resolve_brand_id(self, brand: str) -> int | None:
         """Top hit from /api/v2/item_upload/brands?keyword=, cached per process.
         Returns None for blank input or no match — callers fall back to free-text
@@ -627,6 +649,33 @@ async def delete_listing(item_id: int | str) -> None:
             raise VintedNotConfigured(f"no session file at {path}")
         client = VintedClient(session)
         client.delete_draft(item_id)
+        save_session(client.session, path)
+
+    await asyncio.to_thread(_do)
+
+
+async def update_listing(item_id: int | str, payload: dict) -> None:
+    """Push edits to a live Vinted item. Vinted requires a full payload
+    on PUT (no partial patches), so we fetch existing photos via GET and
+    re-attach them in the payload. Caller supplies the rest of the
+    canonical fields (title/description/price/brand/etc.) via ``payload``
+    in the same shape ``submit_listing_via_draft`` accepts."""
+
+    def _do() -> None:
+        path = _session_path()
+        session = load_session(path)
+        if session is None:
+            raise VintedNotConfigured(f"no session file at {path}")
+        client = VintedClient(session)
+        live = client.fetch_item_details(item_id)
+        photo_ids = [int(p["id"]) for p in (live.get("photos") or []) if p.get("id")]
+        if not photo_ids:
+            raise VintedError(f"update: item {item_id} has no photos to preserve")
+        if payload.get("brand") and not payload.get("brand_id"):
+            bid = client.resolve_brand_id(payload["brand"])
+            if bid is not None:
+                payload = {**payload, "brand_id": bid}
+        client.update_listing(item_id, payload, photo_ids)
         save_session(client.session, path)
 
     await asyncio.to_thread(_do)

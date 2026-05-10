@@ -728,6 +728,66 @@ class KAClient:
             )
         return listing_id, f"https://www.kleinanzeigen.de/s-anzeige/{listing_id}"
 
+    def update_listing(self, ad_id: int | str, ad_xml: str) -> None:
+        """Replace a live ad with the supplied JAXB body. Same body shape
+        as ``submit_listing`` (build via ``build_ad_xml``); KA expects a
+        full state, not a partial patch."""
+        self._ensure_fresh()
+        headers = self._tier2_headers() | {"content-type": "application/json; charset=utf-8"}
+        url = f"{API_BASE}/api/users/{self.session.user_id}/ads/{ad_id}.json"
+        resp = self.http.put(url, content=ad_xml.encode("utf-8"), headers=headers, timeout=60)
+        if resp.status_code in (200, 204):
+            return
+        raise _classify_error(resp, "listing update")
+
+    def delete_listing(self, ad_id: int | str) -> None:
+        """Remove a live ad. Returns silently on 200/204/404 (already gone
+        is fine)."""
+        self._ensure_fresh()
+        url = f"{API_BASE}/api/users/{self.session.user_id}/ads/{ad_id}.json"
+        resp = self.http.delete(url, headers=self._tier2_headers(), timeout=30)
+        if resp.status_code in (200, 204, 404):
+            return
+        raise _classify_error(resp, "listing delete")
+
+    def get_listing_picture_links(self, ad_id: int | str) -> list[dict]:
+        """GET the existing ad and extract its current picture link blocks
+        in the shape ``build_ad_xml`` expects. Lets ``update_listing`` keep
+        the original photos without re-uploading."""
+        self._ensure_fresh()
+        url = f"{API_BASE}/api/users/{self.session.user_id}/ads/{ad_id}.json"
+        resp = self.http.get(url, headers=self._tier2_headers(), timeout=30)
+        if resp.status_code != 200:
+            raise _classify_error(resp, "listing fetch (for picture links)")
+        body = resp.json()
+        ad = (
+            body.get("{http://www.ebayclassifiedsgroup.com/schema/ad/v1}ad", {})
+            .get("value", {})
+            or {}
+        )
+        pictures = ad.get("pictures", {})
+        if isinstance(pictures, dict) and "picture" in pictures:
+            entries = pictures["picture"]
+            if isinstance(entries, dict):
+                entries = [entries]
+            out: list[dict] = []
+            for pic in entries:
+                links = pic.get("link", [])
+                if isinstance(links, dict):
+                    links = [links]
+                for lk in links:
+                    href = lk.get("href") or (lk.get("value", {}) if isinstance(lk.get("value"), dict) else None)
+                    rel = lk.get("rel") or (lk.get("rel", {}).get("value") if isinstance(lk.get("rel"), dict) else None)
+                    # Some fields are wrapped {"value": "..."} JAXB-style
+                    if isinstance(href, dict):
+                        href = href.get("value")
+                    if isinstance(rel, dict):
+                        rel = rel.get("value")
+                    if href:
+                        out.append({"href": href, "rel": rel or ""})
+            return out
+        return []
+
 
 def _classify_error(resp: httpx.Response, step: str) -> KAError:
     text = resp.text[:300]
@@ -746,13 +806,55 @@ async def publish(image_path: str | Path, payload: dict) -> tuple[int, str]:
 
 
 def _publish_sync(image_path: str | Path, payload: dict) -> tuple[int, str]:
+    session = _load_session_or_raise()
+    full_payload = _layer_session_defaults(payload, session)
+    client = KAClient(session)
+    picture_links = client.upload_photo(image_path)
+    if not picture_links:
+        raise KAError("photo upload returned no link blocks")
+    ad_xml = build_ad_xml(full_payload, picture_links)
+    return client.submit_listing(ad_xml)
+
+
+async def update_listing(ad_id: int | str, payload: dict) -> None:
+    """Push edits to a live KA ad. Same payload shape as ``publish`` —
+    KA requires the full state on PUT. Picture links are fetched from the
+    live ad so existing photos are preserved without re-upload."""
+    return await asyncio.to_thread(_update_sync, ad_id, payload)
+
+
+def _update_sync(ad_id: int | str, payload: dict) -> None:
+    session = _load_session_or_raise()
+    full_payload = _layer_session_defaults(payload, session)
+    client = KAClient(session)
+    picture_links = client.get_listing_picture_links(ad_id)
+    if not picture_links:
+        raise KAError(f"update: ad {ad_id} has no picture links to preserve")
+    ad_xml = build_ad_xml(full_payload, picture_links)
+    client.update_listing(ad_id, ad_xml)
+
+
+async def delete_listing(ad_id: int | str) -> None:
+    """Remove a live KA ad. Idempotent — already-gone ads return silently."""
+    return await asyncio.to_thread(_delete_sync, ad_id)
+
+
+def _delete_sync(ad_id: int | str) -> None:
+    session = _load_session_or_raise()
+    KAClient(session).delete_listing(ad_id)
+
+
+def _load_session_or_raise() -> KASession:
     path = _session_path()
     session = load_session(path)
     if session is None:
         raise KANotConfigured(f"no session file at {path}")
+    return session
 
-    # Layer session-derived defaults onto the payload so to_kleinanzeigen
-    # only has to populate the variable bits (title/description/etc.).
+
+def _layer_session_defaults(payload: dict, session: KASession) -> dict:
+    """Layer session-derived defaults onto the payload so to_kleinanzeigen
+    only has to populate the variable bits (title/description/etc.)."""
     full_payload = dict(payload)
     full_payload.setdefault("email", session.email)
     full_payload.setdefault("poster_type", session.poster_type)
@@ -762,10 +864,4 @@ def _publish_sync(image_path: str | Path, payload: dict) -> tuple[int, str]:
         full_payload["contact_name"] = session.contact_name
     if session.home_location_id and not full_payload.get("location_id"):
         full_payload["location_id"] = session.home_location_id
-
-    client = KAClient(session)
-    picture_links = client.upload_photo(image_path)
-    if not picture_links:
-        raise KAError("photo upload returned no link blocks")
-    ad_xml = build_ad_xml(full_payload, picture_links)
-    return client.submit_listing(ad_xml)
+    return full_payload

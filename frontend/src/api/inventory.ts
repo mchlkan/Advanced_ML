@@ -23,16 +23,27 @@ export async function fetchListingPrediction(id: string): Promise<UploadResponse
   return res.json() as Promise<UploadResponse>;
 }
 
+export interface PushResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface PatchFieldsResponse {
+  stored: boolean;
+  pushed: Partial<Record<"vinted" | "kleinanzeigen", PushResult>>;
+}
+
 export async function patchListingFields(
   id: string,
   fields: PatchFieldsRequest,
-): Promise<void> {
+): Promise<PatchFieldsResponse> {
   const res = await fetch(`${BASE}/listings/${id}/fields`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(fields),
   });
   if (!res.ok) throw new Error(`Failed to update listing: ${res.status}`);
+  return res.json() as Promise<PatchFieldsResponse>;
 }
 
 export async function deleteListing(id: string): Promise<void> {

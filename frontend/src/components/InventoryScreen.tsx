@@ -8,6 +8,7 @@ import {
   fetchInventory,
   markAsSold,
   patchListingFields,
+  type PatchFieldsResponse,
 } from "@/api/inventory";
 import SmallCaps from "./ui/SmallCaps";
 
@@ -150,14 +151,14 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
     }
   }
 
-  async function handleSavePrice(item: InventoryItem, newPrice: number) {
-    setPriceEdit(null);
+  async function handleSavePrice(item: InventoryItem, newPrice: number): Promise<PatchFieldsResponse> {
     setBusyState(item.listing_id, true);
     try {
-      await patchListingFields(item.listing_id, { price_eur: newPrice });
-      await refetch();
-    } catch {
-      // Stay; user can retry.
+      const res = await patchListingFields(item.listing_id, { price_eur: newPrice });
+      // Refresh inventory in the background so the card's title/brand/category
+      // reflects any side effects, but don't block the modal on it.
+      void refetch();
+      return res;
     } finally {
       setBusyState(item.listing_id, false);
     }
@@ -380,7 +381,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
         <PriceEditModal
           item={priceEdit}
           onClose={() => setPriceEdit(null)}
-          onSave={(p) => handleSavePrice(priceEdit, p)}
+          onSaveAsync={(p) => handleSavePrice(priceEdit, p)}
         />
       )}
 
@@ -494,14 +495,19 @@ function Divider() {
   return <div style={{ height: 1, background: "#efece6", margin: "4px 0" }} />;
 }
 
+const PLATFORM_LABELS_FULL: Record<string, string> = {
+  vinted: "Vinted",
+  kleinanzeigen: "Kleinanzeigen",
+};
+
 function PriceEditModal({
   item,
   onClose,
-  onSave,
+  onSaveAsync,
 }: {
   item: InventoryItem;
   onClose: () => void;
-  onSave: (price: number) => void;
+  onSaveAsync: (price: number) => Promise<PatchFieldsResponse>;
 }) {
   const currentPrice =
     (item.prediction?.english_fields?.price_eur as number | undefined) ??
@@ -510,11 +516,42 @@ function PriceEditModal({
   const [value, setValue] = useState<string>(
     currentPrice != null ? String(Math.round(currentPrice)) : "",
   );
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<PatchFieldsResponse | null>(null);
+  const [topError, setTopError] = useState<string | null>(null);
+  const postedPlatforms = getPostedPlatforms(item);
   const parsed = parseFloat(value.replace(",", "."));
   const valid = Number.isFinite(parsed) && parsed > 0;
+
+  async function doSave() {
+    if (!valid) return;
+    setSaving(true);
+    setTopError(null);
+    try {
+      const res = await onSaveAsync(parsed);
+      setResult(res);
+    } catch (err) {
+      setTopError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // After a successful save with no errors, auto-close after a beat.
+  // If any platform push errored, stay open so the user can read it.
+  const allOk =
+    result !== null &&
+    Object.values(result.pushed).every((p) => p?.ok);
+  useEffect(() => {
+    if (result && allOk) {
+      const id = setTimeout(onClose, 1200);
+      return () => clearTimeout(id);
+    }
+  }, [result, allOk, onClose]);
+
   return (
     <>
-      <Backdrop onClick={onClose} />
+      <Backdrop onClick={saving ? () => {} : onClose} />
       <div
         style={{
           position: "fixed", left: 24, right: 24, bottom: "30%",
@@ -529,12 +566,17 @@ function PriceEditModal({
           Change price
         </div>
         <div style={{ fontSize: 13, color: "#6b6c6a", marginBottom: 16 }}>
-          Saved locally. Republish to update the live listing.
+          {postedPlatforms.length === 0
+            ? "Saved locally. Will be used the next time you publish."
+            : `Pushes the new price live to ${postedPlatforms
+                .map((p) => PLATFORM_LABELS_FULL[p])
+                .join(" + ")}.`}
         </div>
         <div style={{
           display: "flex", alignItems: "center", gap: 8,
           padding: "10px 14px", border: "1.5px solid #e7e5e0",
           borderRadius: 12, background: "#fafaf8",
+          opacity: saving ? 0.6 : 1,
         }}>
           <span style={{ fontSize: 18, color: "#6b6c6a", fontWeight: 500 }}>€</span>
           <input
@@ -542,6 +584,7 @@ function PriceEditModal({
             type="number"
             inputMode="decimal"
             value={value}
+            disabled={saving}
             onChange={(e) => setValue(e.target.value)}
             placeholder="0"
             style={{
@@ -551,31 +594,70 @@ function PriceEditModal({
             }}
           />
         </div>
+
+        {(saving || result || topError) && (
+          <div style={{
+            marginTop: 14, padding: "10px 12px", borderRadius: 10,
+            background: "#fafaf8", border: "1px solid #efece6",
+            fontSize: 13, lineHeight: 1.5, color: "#3a3b3a",
+          }}>
+            {saving && <div>Saving and pushing to live listings…</div>}
+            {topError && (
+              <div style={{ color: "#c0392b" }}>{topError}</div>
+            )}
+            {result && (
+              <>
+                <div style={{ color: "#0e0f0e", fontWeight: 500 }}>
+                  ✓ Saved locally
+                </div>
+                {(["vinted", "kleinanzeigen"] as const).map((p) => {
+                  const r = result.pushed[p];
+                  if (!r) return null;
+                  return r.ok ? (
+                    <div key={p} style={{ color: "#0e0f0e" }}>
+                      ✓ {PLATFORM_LABELS_FULL[p]} updated
+                    </div>
+                  ) : (
+                    <div key={p} style={{ color: "#c0392b" }}>
+                      ✗ {PLATFORM_LABELS_FULL[p]}: {r.error}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
           <button
             onClick={onClose}
+            disabled={saving}
             style={{
               flex: 1, height: 46, borderRadius: 12,
               border: "1px solid #e7e5e0", background: "#fff",
-              cursor: "pointer", fontSize: 14, fontWeight: 500,
+              cursor: saving ? "default" : "pointer",
+              opacity: saving ? 0.5 : 1,
+              fontSize: 14, fontWeight: 500,
               color: "#0e0f0e", fontFamily: FONT,
             }}
           >
-            Cancel
+            {result ? "Done" : "Cancel"}
           </button>
-          <button
-            onClick={() => valid && onSave(parsed)}
-            disabled={!valid}
-            style={{
-              flex: 1, height: 46, borderRadius: 12,
-              border: "none",
-              background: valid ? "oklch(0.62 0.15 145)" : "#9b9c99",
-              cursor: valid ? "pointer" : "default",
-              fontSize: 14, fontWeight: 600, color: "#fff", fontFamily: FONT,
-            }}
-          >
-            Save
-          </button>
+          {!result && (
+            <button
+              onClick={doSave}
+              disabled={!valid || saving}
+              style={{
+                flex: 1, height: 46, borderRadius: 12,
+                border: "none",
+                background: valid && !saving ? "oklch(0.62 0.15 145)" : "#9b9c99",
+                cursor: valid && !saving ? "pointer" : "default",
+                fontSize: 14, fontWeight: 600, color: "#fff", fontFamily: FONT,
+              }}
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+          )}
         </div>
       </div>
     </>

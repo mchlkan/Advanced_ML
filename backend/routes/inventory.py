@@ -28,8 +28,14 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 
 from backend import db
-from backend.integrations import vinted as vinted_integration
+from backend.integrations import (
+    kleinanzeigen as ka_integration,
+    vinted as vinted_integration,
+)
 from backend.routes import upload as upload_route
+
+# backend/__init__.py adds repo/shared to sys.path.
+from listing_mappings import to_kleinanzeigen, to_vinted  # noqa: E402
 from backend.schemas import (
     FieldReview,
     Identification,
@@ -203,17 +209,24 @@ async def get_listing_prediction(listing_id: str) -> UploadResponse:
     )
 
 
-@router.patch("/listings/{listing_id}/fields", status_code=204, response_class=Response)
-async def patch_listing_fields(listing_id: str, body: PatchFieldsRequest) -> Response:
-    """Lightweight edit — store new fields as a new predictions row with
-    source='edit'. Doesn't re-run the VLM or the price heads; the next
-    publish picks up the new values from the latest prediction row."""
+@router.patch("/listings/{listing_id}/fields")
+async def patch_listing_fields(listing_id: str, body: PatchFieldsRequest) -> dict:
+    """Edit a listing's fields. Always stores locally; if the listing has
+    posted publishes, also pushes the changes to those live platforms.
+    Vinted/KA both require a full payload on PUT — we rebuild via
+    `to_vinted` / `to_kleinanzeigen` from the merged fields and either
+    re-attach existing photos (Vinted) or re-fetch picture links (KA).
+
+    Response shape:
+        {"stored": True, "pushed": {"vinted": {...}, "kleinanzeigen": {...}}}
+    Each entry is either {"ok": True} or {"ok": False, "error": "..."}.
+    Missing platform key = listing wasn't posted there, nothing to push."""
     pred = await db.get_latest_prediction(listing_id)
     if pred is None:
         raise HTTPException(status_code=404, detail="listing has no prediction to edit")
     overrides = body.model_dump(exclude_unset=True, exclude_none=True)
     if not overrides:
-        return Response(status_code=204)
+        return {"stored": True, "pushed": {}}
     merged = {**pred["english_fields"], **overrides}
     await db.log_prediction(
         listing_id=listing_id,
@@ -230,7 +243,38 @@ async def patch_listing_fields(listing_id: str, body: PatchFieldsRequest) -> Res
         latency_ms=0,
         vlm_call_count=0,
     )
-    return Response(status_code=204)
+
+    pushed: dict[str, dict] = {}
+    publishes = await db.get_publishes_for_listing(listing_id)
+    for p in publishes:
+        if p.get("status") != "posted" or not p.get("platform_listing_id"):
+            continue
+        platform = p["platform"]
+        platform_id = p["platform_listing_id"]
+        if platform in pushed:
+            continue  # only push to the most recent successful row per platform
+        try:
+            if platform == "vinted":
+                payload = to_vinted(merged)
+                if "catalog_id" not in payload:
+                    raise ValueError(f"category {merged.get('category')!r} has no Vinted catalog mapping")
+                await vinted_integration.update_listing(platform_id, payload)
+            elif platform == "kleinanzeigen":
+                payload = to_kleinanzeigen(merged)
+                if "category_id" not in payload:
+                    raise ValueError(f"category {merged.get('category')!r} has no Kleinanzeigen category mapping")
+                await ka_integration.update_listing(platform_id, payload)
+            else:
+                raise ValueError(f"update on {platform!r} not implemented")
+            pushed[platform] = {"ok": True}
+            logger.info("pushed edit to %s listing %s for %s", platform, platform_id, listing_id)
+        except Exception as exc:
+            pushed[platform] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            logger.warning(
+                "push edit to %s listing %s failed for %s: %s",
+                platform, platform_id, listing_id, exc,
+            )
+    return {"stored": True, "pushed": pushed}
 
 
 @router.delete("/listings/{listing_id}", status_code=204, response_class=Response)
@@ -243,21 +287,28 @@ async def delete_listing_combined(listing_id: str) -> Response:
     if rec is None:
         raise HTTPException(status_code=404, detail="listing not found")
     publishes = await db.get_publishes_for_listing(listing_id)
+    seen_platforms: set[str] = set()
     for p in publishes:
         if p.get("status") != "posted" or not p.get("platform_listing_id"):
             continue
-        if p["platform"] == "vinted":
-            try:
+        platform = p["platform"]
+        if platform in seen_platforms:
+            continue  # only delete the most recent successful row per platform
+        seen_platforms.add(platform)
+        try:
+            if platform == "vinted":
                 await vinted_integration.delete_listing(p["platform_listing_id"])
-            except Exception as exc:
-                logger.warning(
-                    "vinted delete failed for %s during combined delete of listing %s: %s",
-                    p["platform_listing_id"], listing_id, exc,
+            elif platform == "kleinanzeigen":
+                await ka_integration.delete_listing(p["platform_listing_id"])
+            else:
+                logger.info(
+                    "skipping platform delete for %s on %s (not implemented)",
+                    p["platform_listing_id"], platform,
                 )
-        else:
-            logger.info(
-                "skipping platform delete for %s on %s (not implemented)",
-                p["platform_listing_id"], p["platform"],
+        except Exception as exc:
+            logger.warning(
+                "%s delete failed for %s during combined delete of listing %s: %s",
+                platform, p["platform_listing_id"], listing_id, exc,
             )
     deleted = await db.delete_listing(listing_id)
     if deleted is not None:
