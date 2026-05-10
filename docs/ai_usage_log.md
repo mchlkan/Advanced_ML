@@ -755,6 +755,141 @@ Should think about that explicitly when deciding the merge strategy.
 
 ---
 
+### Day 5 — 2026-05-10 (continued): EC2 deploy — install, SG, CUDA bloat, EBS resize
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Detailed log:** none separate — this entry is the log
+**Branch:** `feature/deploy-prep`
+**Commits:**
+- `e78eea6` Fix Docker build: install CPU-only torch to fit on t2.small (8 GB EBS)
+- `<this commit>` Log EC2 deploy execution sub-session
+
+#### Prompt 1 (via AskUserQuestion)
+> Next: "Both in parallel — you handle Vercel, I guide EC2"
+
+**Decision:** Interpreted "I guide EC2" as authorization to drive the
+EC2 setup directly over SSH (key path was provided earlier), with each
+command shown clearly so the user can interrupt. Kicked off Chunk 1
+(`apt update && apt install docker.io docker-compose-v2 nginx certbot
+python3-certbot-nginx`) in background — fresh box, expected 2-4 min.
+Provided the user with a self-service Vercel walkthrough (`vercel
+login`, `vercel link`, two `vercel env add` calls, `vercel --prod`).
+
+**Outcome:** Both tracks moving in parallel; user not blocked on me
+for Vercel.
+
+#### Prompt 2
+> "[Image attached] those are the current inbound rules" (screenshot showed only TCP/22 from 0.0.0.0/0)
+
+**Decision:** Realized the EC2 instance's Security Group only had SSH
+open. Without ports 80 + 443 open externally, nginx would be
+unreachable and Let's Encrypt's HTTP-01 challenge would fail. Chunk 1
+install was unaffected (uses outbound only) so let it continue. Wrote
+step-by-step instructions for the AWS Console UI: Edit inbound rules →
+Add rule (HTTP, Anywhere-IPv4) → Add rule (HTTPS, Anywhere-IPv4) →
+Save. Promised to verify externally after they confirmed.
+
+Meanwhile Chunk 1 finished: Docker 29.1.3, nginx 1.28.3, certbot 4.0.0
+all installed. Started Chunks 2 (2 GB swap) + 3a (`/opt/resell/{data,
+checkpoints}` dirs) over SSH in parallel with Chunk 3b (`scp`
+checkpoints from Mac to EC2). All three landed in seconds. Pushed
+`feature/deploy-prep` to origin (so EC2 could clone it), cloned on EC2,
+started `docker build` in background.
+
+**Outcome:** EC2 base setup done; first Docker build kicked off while
+waiting on SG confirmation.
+
+#### Prompt 3
+> "okay I edit the ec2 rules and updated the inbound rules"
+
+**Decision:** Verified externally with `curl -I http://13.49.21.29` →
+**HTTP 200 from nginx 1.28.3** ✓. SG update confirmed working. While
+checking SG, the Docker build completed... but with **exit code 1**.
+
+Read the full build log. Root cause: standard PyPI `torch` wheel
+bundles ~1.5 GB of CUDA libraries (cuDNN 366 MB + NCCL 196 MB +
+cuSPARSELt 170 MB + nvshmem 60 MB + triton 188 MB + cuda-bindings).
+On a CPU-only EC2 instance these are dead weight that also doesn't fit
+in the 8 GB EBS root volume.
+
+Patched the build to use the CPU-only torch wheel from
+`https://download.pytorch.org/whl/cpu`. Two changes:
+1. `Dockerfile`: install torch separately from the CPU index *before*
+   `pip install -r requirements-prod.txt`, so the requirements step
+   sees torch already satisfied
+2. `requirements-prod.txt`: removed the `torch>=2.3.0` line (now
+   installed via the dedicated step) with a comment explaining why
+
+Committed as `e78eea6`, pushed, pulled on EC2, restarted build.
+
+**Outcome:** Build progresses much further this time — CPU torch only
+~200 MB instead of 1.5 GB, and the entire pip install step succeeded.
+
+#### Prompt 4 (implicit — next failure)
+
+The rebuild *also* failed with `no space left on device` — but at the
+very last layer commit, after the Python installs all succeeded.
+Cleaned Docker state (`docker system prune -af --volumes`, freed
+1.4 GB) but only got back to 2.1 GB free. Realized the real problem:
+**8 GB EBS is too small for OS + 2 GB swap + a ~1.2 GB Docker image
+plus build intermediates**. Free tier on AWS allows up to 30 GB EBS,
+so resizing was the right answer.
+
+Wrote step-by-step EBS resize instructions: AWS Console → EC2 →
+Volumes → Modify Volume → 8 GB → 16 GB → wait for "in-use" status →
+ping me. Promised to run `growpart /dev/nvme0n1 1` + `resize2fs
+/dev/nvme0n1p1` from SSH after the user confirmed.
+
+#### Prompt 5
+> "done"
+
+**Decision:** Ran the partition + filesystem resize over SSH. Result:
+`/dev/root` went from 6.7 GB total / 2.1 GB free → **15 GB total /
+9.8 GB free**. Restarted Docker build in background — should now have
+ample headroom.
+
+**Outcome:** Build running; reported back to the user with status.
+
+#### Prompt 6
+> "did you log this part of the conversation agian?"
+
+**Decision:** Honest answer — no, the most recent 5 prompts had not
+been logged. Chose to log inline now (rather than at the next natural
+pause) since the user is checking whether the logging discipline is
+holding up. Wrote this entry while the Docker build runs in background.
+
+**Outcome:** Log catches up to current state; pattern reinforced that
+the user *will* check on logging discipline if I drift.
+
+**End-of-session reflection:** Two technical lessons from this
+sub-session worth preserving for future deploys.
+
+First, **PyPI's default `torch` wheel bundles all CUDA dependencies
+even on CPU-only systems**. The `--index-url
+https://download.pytorch.org/whl/cpu` flag is the canonical fix. This
+was a ~1.5 GB blast radius on disk usage that I didn't anticipate.
+The signal was the build log line `Downloading
+nvidia_cudnn_cu13-9.19.0.56-py3-none-manylinux_2_27_x86_64.whl
+(366.1 MB)` — when CUDA libs appear in a CPU-only deploy log, switch
+indices immediately.
+
+Second, **AWS free-tier 8 GB EBS is too small for any non-trivial
+Python + ML stack**. Even the slim image (~1.2 GB) plus build
+intermediates (~1.5 GB) plus OS + swap eats the whole volume. Default
+EBS resize to 16 GB minimum for these deploys. This isn't documented
+anywhere obvious — it surfaces as a confusing `no space left on
+device` mid-build.
+
+A logging-process observation: the user has now asked "did you log?"
+twice in this session. Each time I had not. I keep falling into the
+pattern of saying "I'll log at the next natural pause" and then a new
+task arrives before the pause comes. The honest fix is: **log every
+prompt as soon as the response to it lands**, treating logging as part
+of the response rather than a separate task. Going to try that for the
+remainder of this session.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
