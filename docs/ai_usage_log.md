@@ -1603,6 +1603,140 @@ the work and the AI log entry. Better: edit, integrate, then
 
 ---
 
+### Day 5 — 2026-05-10 (continued): platform reconnection — full 3-phase implementation
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commits:**
+- `764e8a9` Phase 1 backend: try_load_or_refresh + status uses it
+- `4f9847c` Phase 1 frontend: connection banner + Vinted login modal
+- `2b2cd0a` Phase 2 backend: KA Auth0 + SMS MFA login (ported from vinted-lister)
+- `d2834be` Phase 2+3 frontend: KA two-phase login + refresh-token fallback
+- `<this commit>` Log full reconnection-feature implementation
+
+#### Prompts in this stretch
+The user approved the plan via ExitPlanMode and let the implementation
+run autonomously through 9 sequential tasks (TaskList #1-9). No new
+prompts during the implementation, but the user kept doing parallel UI
+work in the working tree (restyling components, introducing a shared
+`SmallCaps` helper, scaffolding a service worker). Each time their
+changes appeared mid-edit via `<system-reminder>`, I adapted to use
+their new patterns rather than overriding them.
+
+#### Decision summary per task
+
+**T1 — Backend refresh-on-status (`764e8a9`).** Added
+`try_load_or_refresh()` to both `vinted.py` + `kleinanzeigen.py`
+returning `(session, state)` where state is `ready` / `needs_login` /
+`not_configured`. Reduced `_vinted_status` and `_kleinanzeigen_status`
+from ~15 lines each to 5. `PlatformStatus.state` Literal grew
+`needs_login` (canonical); kept `expired` as a backwards-compat alias
+that backend no longer emits. Updated existing test + added a new
+test for the refresh-succeeds path with respx mocking. 122/122 tests
+pass.
+
+**T2 + T3 + T4 — Frontend wiring (`4f9847c`).** New types in
+`frontend/src/types/api.ts`. New API client `frontend/src/api/onboarding.ts`
+with `HTTPError` class so callers can map status codes to user-facing
+messages. New `PlatformConnectionBanner` (amber per-platform Connect
+buttons) + `PlatformLoginModal` (Vinted form for now, KA placeholder).
+Wired into `page.tsx` via `connectionStatus` state + `useEffect`
+on-mount fetch. `ResultsScreen` got `connectionStatus` + `onConnectPlatform`
+props — disconnected platform card dimmed with a "Disconnected" pill,
+publish CTA morphs to "Reconnect X to publish" + opens the modal.
+
+**T5 — Phase 1 e2e (autonomous).** Pushed + rebuilt EC2 + redeployed
+Vercel. First `/onboarding/status` call against the deployed backend
+reported `ready` for both — refresh-on-status worked unprompted. Then
+verified `needs_login` by tampering: backed up the Vinted session JSON,
+edited `expires_at` to past + invalidated `refresh_token`, hit `/status`
+→ correctly reported `needs_login`, then restored from backup → `ready`
+again. UI verified by build only (didn't enter real Vinted creds to
+avoid touching Leon's account).
+
+**T6 — Backend port of KA Auth0 + MFA (`2b2cd0a`). The big one.** Ported
+`vinted-lister/src/kleinanzeigen/session.py:61-194` into
+`backend/integrations/kleinanzeigen.py` as `password_login_initiate()`
++ `complete_mfa_login()`. Adaptations:
+- Swapped client_id from web (`aOq74Cm5...`) to mobile
+  (`uV5j90my...`) — so resulting OAuth tokens are compatible with
+  our existing `refresh_access_token()` and JAXB-XML `submit_listing()`.
+- Replaced lorry's `/m-einloggen.html` entry with direct `/authorize`.
+- Added the OAuth code → token exchange step at the end (lorry's web
+  flow doesn't need this).
+- Built a `KASession` with our schema instead of lorry's
+  csrf_token/cookies.
+- In-memory challenge state (`_KA_LOGIN_CHALLENGES` dict) keyed by
+  random `challenge_id`, holds the `httpx.Client` + PKCE verifier +
+  Auth0 state across the two API calls. GC'd after 5 min.
+- Three outcomes from initiate: `mfa_required` (most common),
+  `ready` (Auth0 skipped MFA via rememberBrowser cookie), or raises
+  `KAAuthExpired` on bad creds. `complete_mfa_login` returns a
+  fully-formed `KASession`.
+
+Added 3 new schemas + 2 new routes
+(`/onboarding/kleinanzeigen/initiate` + `/verify-mfa`). 122/122 tests
+still pass; the new endpoints don't have unit tests (would require
+mocking ~5 sequential httpx calls — punted).
+
+**T7 + T8 — Frontend KA two-phase form + refresh-token fallback (`d2834be`).**
+Combined into one component change since they're tightly coupled.
+Three KA phases (`credentials` / `mfa` / `refresh-token`) controlled
+by local state. Each form has a back-link so users can navigate
+without closing the modal. SMS code field uses `inputMode="numeric"`
++ `autoComplete="one-time-code"` so iOS keyboards autofill from the
+OTP. Per-phase + per-platform error mapping (4 helper functions)
+keeps user-facing messages tight. Adopted the user's `SmallCaps`
+helper for form labels.
+
+**T9 — Phase 2+3 e2e.** Pushed + rebuilt + redeployed. Smoke-tested
+the new endpoints externally:
+- `/onboarding/status` → still `ready` for both
+- `POST /kleinanzeigen/initiate` empty body → HTTP 422 (Pydantic
+  validation works → endpoint exists)
+- `POST /kleinanzeigen/verify-mfa` bad challenge_id → HTTP 401 with
+  the clear "MFA challenge expired or unknown" message → error
+  mapping works
+
+Real Auth0+MFA flow not exercised — would send SMS to Leon's phone +
+require him to enter the code. UI is built and reachable from the
+deployed Vercel URL whenever needed.
+
+#### Final state
+- Backend: 22 routes (was 19 pre-feature). All 122 tests pass.
+- Frontend: 3 routes, middleware 26.4 kB, page 11.5 kB.
+- Sessions: both Vinted + KA report `ready` (auto-refresh worked).
+- New user-facing capabilities: amber reconnection banner appears when
+  any platform fails refresh; per-platform login modal supports Vinted
+  email+password, KA Auth0 + SMS MFA flow, and KA refresh-token paste
+  fallback.
+
+**End-of-session reflection.** Three patterns from this stretch.
+
+First and most consequential: **finding lorry's `kleinanzeigen/session.py`
+during the plan phase**. The team's own `RESEARCH-ka.md` warned KA
+programmatic login was "impractical" but lorry shipped a working
+implementation in a sibling repo. Saved 6+ hours of building from
+scratch (and avoided the high risk of getting blocked by Akamai). The
+pattern: **before declaring something hard, grep adjacent repos**.
+
+Second: **the user did parallel UI work** (restyling components, adding
+`SmallCaps`, scaffolding a service worker) on top of mine. Each time
+their changes appeared mid-edit via `<system-reminder>`, I adapted to
+use their new patterns rather than overriding. The result is a single
+coherent design language, not a "Claude bolt-on" feel. Lesson: when
+the system flags an edit conflict, the right response is almost always
+"adopt their pattern in my next edit," not "fight to preserve mine."
+
+Third: **for state-machine features, test each branch via direct state
+manipulation, not just the happy path**. For T5 I almost left it at
+"components compile." Forced myself to verify the `needs_login` path
+via the JSON-tampering trick (backup, mangle, test, restore). That's
+the only way I caught that the refresh-on-status path actually worked
+end-to-end against the live deployment.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
