@@ -14,11 +14,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from translations import (
-    COLOR_EN_TO_KA_DE,
-    CONDITION_EN_TO_KA_DE,
-    KA_CATEGORY_EN_TO_DE,
-)
 
 
 # KA category-id mapping for the parent-tier vocab the VLM emits on the
@@ -45,6 +40,51 @@ _CONDITION_MAP = {
     "New":           "new",
     "Very good":     "like_new",   # KA has no "very_good" / "sehr_gut" slug
     "Good":          "ok",         # KA has no "good" slug
+}
+
+# Canonical English color → KA color attribute slug. KA's color enum is the
+# same lowercase German slug list across all 4 clothing/shoes categories
+# (per scripts/probe_ka_categories.py): beige, blau, braun, bunt, creme,
+# gelb, gold, grau, grün, khaki, lavendel, lila, orange, pink, print, rose,
+# rot, schwarz, silber, türkis, weiß, sonstige. Colors outside the enum
+# (Apricot, Burgundy, Coral, etc.) fold to the visually closest accepted
+# slug or "sonstige" rather than failing the publish.
+_KA_COLOR_SLUG: dict[str, str] = {
+    "Beige":      "beige",
+    "Blue":       "blau",
+    "Brown":      "braun",
+    "Multicolor": "bunt",
+    "Cream":      "creme",
+    "Yellow":     "gelb",
+    "Gold":       "gold",
+    "Gray":       "grau",
+    "Grey":       "grau",
+    "Green":      "grün",
+    "Khaki":      "khaki",
+    "Lavender":   "lavendel",
+    "Lilac":      "lila",
+    "Purple":     "lila",
+    "Orange":     "orange",
+    "Pink":       "pink",
+    "Print":      "print",
+    "Rose":       "rose",
+    "Red":        "rot",
+    "Black":      "schwarz",
+    "Silver":     "silber",
+    "Turquoise":  "türkis",
+    "White":      "weiß",
+    # Folds to closest valid hue
+    "Light blue": "blau",
+    "Navy":       "blau",
+    "Dark green": "grün",
+    "Mint":       "grün",
+    "Mustard":    "gelb",
+    "Burgundy":   "rot",
+    "Coral":      "rose",
+    "Apricot":    "beige",
+    # KA's "other" bucket
+    "Other":      "sonstige",
+    "Clear":      "sonstige",
 }
 KA_ATTRS: dict[int, dict[str, dict]] = {
     154: {  # Damenbekleidung — prefix kleidung_damen
@@ -128,8 +168,8 @@ def _ka_attributes(canon: dict[str, Any], category_id: int) -> dict[str, str]:
     if first:
         attrs[f"{prefix}.groesse"] = first[0].lower()
     color = canon.get("color")
-    if color and color in COLOR_EN_TO_KA_DE:
-        attrs[f"{prefix}.color"] = COLOR_EN_TO_KA_DE[color].lower()
+    if color:
+        attrs[f"{prefix}.color"] = _KA_COLOR_SLUG.get(color, "sonstige")
     cond = canon.get("condition")
     if cond and cond in spec["condition"]:
         attrs[f"{prefix}.condition"] = spec["condition"][cond]

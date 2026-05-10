@@ -177,6 +177,36 @@ def test_to_kleinanzeigen_routes_clothing_to_proper_leaves():
     assert out_m["attributes"]["kleidung_herren.art"] == "sonstige"
 
 
+def test_to_kleinanzeigen_color_uses_ka_enum_slugs():
+    """KA's color attribute is a fixed lowercase German enum (rose, schwarz,
+    blau, ...). Translating English colors via display names + .lower()
+    produces invalid values like 'rosé' or 'hellblau'. Verify the new
+    _KA_COLOR_SLUG map yields valid enum values."""
+    import sys
+    sys.path.insert(0, "shared")
+    from listing_mappings import to_kleinanzeigen
+
+    # KA enum from probe: 'rose' (no accent), 'schwarz', 'blau', 'grün'
+    out = to_kleinanzeigen({
+        "category": "Women's clothing", "color": "Rose",
+        "title": "x", "description": "y", "price_eur": 5.0,
+    })
+    assert out["attributes"]["kleidung_damen.color"] == "rose"
+
+    out = to_kleinanzeigen({
+        "category": "Men's clothing", "color": "Black",
+        "title": "x", "description": "y", "price_eur": 5.0,
+    })
+    assert out["attributes"]["kleidung_herren.color"] == "schwarz"
+
+    # Out-of-enum colors fold to 'sonstige' instead of failing the publish
+    out = to_kleinanzeigen({
+        "category": "Women's clothing", "color": "ChartreuseUnicornGold",
+        "title": "x", "description": "y", "price_eur": 5.0,
+    })
+    assert out["attributes"]["kleidung_damen.color"] == "sonstige"
+
+
 def test_to_kleinanzeigen_drops_unmapped_category():
     """Vinted-side leaf vocab (e.g. "sneakers" alone) has no KA mapping —
     runner sees no category_id and short-circuits with a clear error."""
