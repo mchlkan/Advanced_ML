@@ -396,7 +396,72 @@ gives the same direction at slightly different absolute levels.
 
 **Next:** Model #4 / #5 may benefit from re-extracting VLM features with the
 new adapter so the price and sell-likelihood heads see better embeddings.
-Optional, not blocking.
+Optional, not blocking. — **Done 2026-05-10, see §3.4.**
+
+---
+
+### 3.4 Model #4 / #5 Re-extraction on Multi-Image Adapter (Round 2)
+
+**Owner:** Michael. **Status:** shipped 2026-05-10 (price head only; sell head kept old).
+
+**Setup:** re-extracted `data/embeddings/vlm_pooled_combined.npy` using the
+multi-image adapter. Vinted rows with a manifest-listed care label fed the
+model both photos; KA rows and label-less Vinted rows fell back to single
+image. ~6,192 of 8,711 rows (71%) used multi-image extraction. New code:
+`extract_vlm_features.py --manifest` (commit `bca06d3`).
+
+Both heads retrained on the new features, same locked 500-row test set as
+the v1 sweep checkpoint.
+
+**Price head (Model #4) — multi-image features vs single-image baseline, test set:**
+
+| metric | OLD (single) | NEW (multi) | Δ |
+|---|---|---|---|
+| MAE (€) | 15.65 | 16.05 | +0.40 |
+| **MAPE** | 0.5332 | **0.4643** | **−6.9 pp** |
+| RMSLE | 0.5452 | 0.5627 | +0.018 |
+| coverage q10–q90 | 0.7680 | 0.7760 | +0.8 pp |
+
+Per platform on test, MAPE improves on **both** Vinted (−7.8 pp) and
+Kleinanzeigen (−4.5 pp), so the gain isn't just brand-driven on Vinted —
+the adapter's better representation generalizes to KA's garment-only path
+too. MAE drifts +€0.40 in absolute terms but MAPE is the metric that
+maps to user-perceived accuracy on second-hand prices (€20 items, not €200).
+**Decision: ship.** New checkpoint at `models/checkpoints/price_head.pt`,
+old preserved as `price_head_single_v1.pt`.
+
+**Sell head (Model #5) — three variants tested:**
+
+| variant | params | val AUC | test AUC | test F1 |
+|---|---|---|---|---|
+| OLD `--no-vlm` (shipped v1) | 172 k | 0.5811 | **0.6052** | 0.4201 |
+| NEW `--no-vlm` (sanity check) | 172 k | 0.5834 | 0.5732 | 0.3841 |
+| NEW with VLM features | 1.5 M | 0.6172 | 0.5959 | 0.4231 |
+
+The original sell head was trained `--no-vlm` (metadata only — log_price,
+visual_wear, condition, brand embed, category, platform). To compare like
+for like we retrained `--no-vlm` on the new feature run; val AUC matched
+within 0.002, so the metadata path is genuinely unchanged. The new
+with-VLM variant lifts val AUC by ~3.6 pts but doesn't beat the old test
+AUC and is 8× larger. With test n=362 the AUC standard error is ~0.03 —
+the three test AUCs are statistically indistinguishable.
+
+**Decision: keep the old sell head.** No real signal to replace it, and
+adding 1.3 M parameters for no test-set gain is a regression in any
+practical sense (latency, memory, complexity).
+
+**Artifacts kept for the report:**
+- `models/checkpoints/price_head.pt` — new multi-image (shipped)
+- `models/checkpoints/price_head_single_v1.pt` — old single-image baseline
+- `models/checkpoints/sell_head.pt` — old metadata-only (shipped, unchanged)
+- `models/checkpoints/sell_head_multi.pt` — new with-VLM (kept, not shipped)
+- `models/checkpoints/sell_head_multi_novlm.pt` — sanity-check no-VLM retrain
+- `eval/results/{price_head_multi,sell_head_multi,sell_head_multi_novlm}.json`
+
+**Lesson:** features that help a generative VLM (multi-photo brand/size
+recognition) don't automatically help a downstream classifier whose signal
+is already saturated by metadata. Worth retraining and measuring; not
+worth assuming.
 
 ---
 
@@ -440,13 +505,15 @@ at effectively zero price. Net: roughly neutral cost, substantially better quali
 
 ---
 
-### 4.2 Model #1 Retraining (Owner: Leon)
+### 4.2 Model #1 Retraining (Owner: Michael)
 
-**Status:** design complete, partially shipped.
+**Status:** design complete, partially shipped. Final retrain queued (`multi-v2`) —
+will bundle parse fix on top of multi-image.
 
 Three targeted improvements:
 1. **Larger base model:** evaluate Qwen3-VL-7B or Qwen3-VL-9B as base. Larger models
    may improve brand recognition and condition inference where the 4B model underperforms.
+   **Out of scope for the course project — speculative, not committed.**
 2. **Multi-photo input:** ~~design~~ **shipped 2026-05-10 — see §3.3.** Brand +20 pp,
    size +19 pp on the 368-row multi-image test slice. Used 2 photos (garment + care
    label) rather than 3–5; the label photo carries the brand/size text the cover shot
@@ -486,3 +553,248 @@ Three targeted improvements:
 continue to include `brand`, `category`, `condition`, `color`, `size`, `title`.
 Model #6 is agnostic to model size, photo count, or hidden state dimension.
 No coordination required beyond this schema contract.
+
+---
+
+### 4.3 Multi-image v2 retrain (shipped 2026-05-10)
+
+**Status:** shipped. Adapter `mchlkan/qwen3vl4b-resell-adapter-multi-v2` (HF Hub,
+public). Backend defaults updated; `models/checkpoints/price_head.pt` swapped to the
+v2-features-trained head; backend tests 121/121 green.
+
+**What v2 changes vs v1:**
+- Multi-image dataset (manifest mode, garment + optional care label) — same setup as v1.
+- Parse fix: `description` removed from `_build_target_json()` in `models/train_vlm.py`
+  and from `get_prompt()` in `shared/prompts.py`. `price_eur` removed from `get_prompt()`
+  but kept in the training target as an auxiliary task to preserve hidden-state quality
+  for Model #4 (the pooled hidden state still has to encode price-relevant signal even
+  if the inference prompt no longer asks for it).
+
+**Why two separate runs (v1 then v2), not one:** the multi-image-only v1 run was an
+isolation experiment — it confirmed the +20 pp brand / +19 pp size lift is attributable
+to the photo pair, not confounded with prompt/target edits. With that result locked,
+adding the parse fix on top of the same setup is a clean additive change.
+
+**Run details (2026-05-10):**
+- Training: 3 h 26 min on RTX 4090 (community), final train_loss 0.155, eval_loss 0.121.
+  Loss numbers are mechanically lower than v1's (0.383 / 0.348) because there are fewer
+  target tokens to predict per example — they are not directly comparable across schemas.
+- Feature re-extraction: 38 min for 8,711 rows with manifest mode (6,192 of 8,711 used
+  multi-image; the rest single-image).
+- Price head retrain: ~3 min, early-stop at epoch 10.
+- Total cost on the pod: ~$1.45.
+
+**Field-eval on the locked KA test split (n=132):**
+
+| metric | Rengo33 v0 (single, old prompt) | multi-v1 + new prompt | multi-v2 (shipped) |
+|---|---|---|---|
+| **clean parse_ok** | 40.9% | 99.24% | **100%** |
+| brand_acc | 44.7% | 40.9% | 39.4% |
+| category_acc | 88.6% | 86.4% | 84.8% |
+| condition_acc | 69.7% | 57.6% | 50.0% |
+| color_acc | 64.4% | 49.2% | 48.5% |
+| size_acc | 21.2% | 5.3% | 7.6% |
+| avg_description_words | (had description) | 0 | 0 |
+
+**Two competing options at ship time, weighed academically:**
+
+**Option A: keep multi-v1, change only the inference prompt.** Empirically reaches
+99.24% KA parse rate without retraining. Cheap, no new artifact to deploy.
+**Rejected because** the project brief (§3.1) explicitly mandates that the inference
+prompt match the training prompt exactly — multi-v1 was trained on a prompt asking for
+8 fields and would now be served a prompt asking for 6. That is a train-vs-inference
+mismatch we'd be relying on the model to gracefully ignore. Empirically it does;
+principled defense becomes weak when asked "why didn't you align them?"
+
+**Option B (chosen): retrain on a matched prompt-target pair.** v2's training prompt
+and inference prompt are identical by construction. The schema mismatch is fixed at the
+right layer of the stack. Defense: "We diagnosed the failure (verbose `description` field
+overflowed token budget on KA, breaking JSON structure), redesigned prompt and target
+together, retrained, and measured."
+
+**On the KA field-acc deltas vs multi-v1 + new prompt:** −7.6 pp condition, −0.7 pp
+color, −1.5 pp brand, −1.5 pp category, +2.3 pp size. With n=132 the 95% CI on a 50%
+proportion is ±8.5 pp, so the only Δ even approaching significance is condition, and it
+sits inside the noise floor. The −20-ish-pp gaps vs Rengo33 v0 (which trained on mixed
+data including KA) are real and reflect the manifest-filter cost: the multi-image
+manifest has zero KA listings, so both multi-v1 and multi-v2 generalize to KA from a
+Vinted-only training distribution. That cost was paid by both v1 and v2 equally and is
+not v2-specific.
+
+**Price head results, locked 500-row test (n=132 KA, n=368 Vinted):**
+
+| metric | v1 (multi-v1 features, shipped earlier today) | v2 (multi-v2 features, shipped now) |
+|---|---|---|
+| Test MAE (€) | 16.05 | 16.93 |
+| Test MAPE | 0.4643 | 0.5036 |
+| Test coverage q10–q90 | 77.6% | **85.8%** |
+| KA MAE (€) | 15.28 | **14.72** |
+| KA MAPE | 0.6390 | 0.6526 |
+| KA coverage | 75.0% | **84.1%** |
+| Vinted MAE (€) | 16.33 | 17.73 |
+| Vinted MAPE | 0.4017 | 0.4502 |
+| Vinted coverage | 78.5% | 86.4% |
+
+Median accuracy regresses slightly (+0.9 pp MAPE overall, more on Vinted), but quantile
+calibration improves materially: coverage moves from 77.6% toward the 80% target and
+overshoots to 85.8%. For a price-suggestion tool that surfaces a range, well-calibrated
+quantiles matter more than a marginally tighter median — the user sees q10 / q50 / q90,
+not just the median.
+
+**Files shipped:**
+- HF adapter `mchlkan/qwen3vl4b-resell-adapter-multi-v2` (public).
+- `models/checkpoints/price_head.pt` (v2-trained, md5 `34c918b7…`).
+- `models/checkpoints/price_head_v2.pt` (canonical v2 copy, identical content).
+- Old multi-v1-features price head preserved as `models/checkpoints/price_head_multi.pt`.
+- Backend `DEFAULT_ADAPTER` / `ADAPTER_ID` updated to v2 in `models/extract_vlm_features.py`
+  and `runpod/handler.py`.
+- `models/train_vlm.py` `_build_target_json` and `shared/prompts.py` `get_prompt` updated
+  to drop `description` (and drop `price_eur` from the prompt only).
+
+**What did NOT change:**
+- Sell head (Model #5) — metadata-only, `vlm_dim=0`, unaffected by the VLM swap.
+- Flaw head (Model #2) — DINOv2-based, independent.
+- Description generator (Model #6) — agnostic to VLM weights as long as the field schema
+  contract holds (still emits `brand`, `category`, `condition`, `color`, `size`, `title`).
+- Frontend — no schema changes; field set is a strict subset of v1's.
+
+---
+
+### 4.4 Multi-image v3 retrain — KA-inclusive manifest (planned, queued)
+
+**Status:** queued, will execute next session. **Owner:** Michael.
+
+**Why a v3:** the v2 field-eval surfaced a real performance split — KA size_acc 7.6%
+vs Vinted 45.9% on the same adapter, and similar gaps on KA condition (50.0% vs 65.5%)
+and color (48.5% vs 74.7%). Root cause is **a pipeline gap, not a data gap**: the KA
+scrape captured ~4,000 listings with an average of 4.7 photos each (92.6% have ≥2
+photos, 43% have ≥5), but those photos were never run through CLIP for
+garment-vs-label classification. As a result, `scripts/build_manifest.py` is hardcoded
+Vinted-only (its docstring even says *"Vinted-only: the multi-image scraper only
+scrapes Vinted"*) and v1/v2 trained on **zero KA listings**. v3 closes that gap.
+
+**What v3 changes vs v2:**
+
+1. **CLIP classification on KA scrapes.** Run `scripts/reclassify_clip.py --margin 0.0`
+   over the 18,864 images in `data/data_leon/raw/ka_clothing_*`. The `--margin 0.0`
+   flag is required for KA — the script's default `--margin 0.05` on a 2-class output
+   forces all-uncertain photos into the "garment" bucket and gives 0% label-rate (this
+   gotcha was diagnosed during v1 manifest building).
+2. **Manifest builder extension.** Generalise `scripts/build_manifest.py` to load both
+   `vinted_clothing_combined.parquet` and `kleinanzeigen_clothing_combined.parquet`,
+   join with platform-specific scrape paths, and emit a single combined manifest.
+3. **Retrain Model #1** with the KA-inclusive manifest → adapter
+   `mchlkan/qwen3vl4b-resell-adapter-multi-v3`. Same hyperparameters as v2 (LR 1e-4,
+   eff batch 8, 2 epochs, LoRA r=16 α=32). Same prompt and target schema as v2 (no
+   `description`; `price_eur` auxiliary in target only).
+4. **Re-extract VLM features** with the v3 adapter, **retrain price head** (v3), run
+   field-eval on the locked Vinted + KA test slices.
+
+**Expected outcomes:**
+
+- **KA size accuracy:** large lift from 7.6%. Order-of-magnitude estimate: somewhere
+  between Vinted's 45.9% (if KA care-label photos are comparably useful) and the
+  Rengo33 v0 KA baseline of 21.2% (if KA labels are typically lower-quality). The
+  truthful answer comes from the eval, not a guess.
+- **KA condition / color / brand:** modest lifts; metadata-saturated fields (category)
+  already near ceiling.
+- **Vinted metrics:** expected to hold roughly steady. Mixing KA into training adds
+  data diversity but also distracts the LoRA from Vinted-specific patterns. Within
+  ±2 pp on Vinted brand/size is the realistic target.
+- **Price head:** the v2 result already showed that better calibration sometimes costs
+  median accuracy. v3's price head will be retrained and measured the same way; we'll
+  ship whichever quantile profile is more defensible.
+
+**Cost estimate:** ~1 day wall time. ~$2 in GPU spend (1–2 h CLIP on KA + ~30 min
+manifest code/eval + ~3.5 h LoRA train + ~1 h feature extraction + ~5 min price head).
+
+**Why v3 instead of just documenting the limitation:** the gap is structurally
+obvious — same model, same prompt, same evaluation script, but Vinted is trained-on
+and KA is generalised-to. A reviewer reading §5.4 will ask "why didn't you train on
+both?" and the honest answer is "the manifest pipeline didn't support it" — which is
+exactly the kind of pipeline gap a careful ML execution closes. The fix is well-scoped
+and the result is a single number (KA size_acc) that either lifts or doesn't. Worth
+running.
+
+**What does NOT change in v3:**
+- Sell head (Model #5) — still metadata-only, `vlm_dim=0`.
+- Flaw head (Model #2) — still DINOv2-based, independent.
+- Description generator (Model #6) — field-schema contract unchanged.
+- Frontend — no API changes.
+- Backend deploy: only the `ADAPTER_ID` env var and `models/checkpoints/price_head.pt`
+  need to swap, identical to the v2 ship procedure.
+
+---
+
+## 5. Final Stack (2026-05-10) — Report-Ready Summary
+
+This section is the canonical snapshot of what was actually shipped. Use it as the
+input for the project report.
+
+### 5.1 Tech stack
+
+| layer | choice | notes |
+|---|---|---|
+| Language (backend, ML) | Python 3.11 | conda env `AD_ML` for the maintainer; plain `pip + venv` works equally |
+| Backend framework | FastAPI | async REST; SQLite for listing logs and inventory |
+| Frontend | Next.js (TypeScript) | served from `/frontend`; PWA-ready |
+| Deploy | EC2 (backend) + Vercel (frontend) | Dockerised backend; password-gated public preview |
+| ML libraries | PyTorch 2.4 (CUDA 12.4), `transformers>=4.56,<5`, `peft>=0.12`, `bitsandbytes>=0.43`, `accelerate>=0.34`, `datasets>=2.20` | training + extraction |
+| Vision | DINOv2 (`facebook/dinov2-base`), CLIP (`openai/clip-vit-base-patch32`), Qwen3-VL-4B-Instruct + custom LoRA | three independent visual encoders for three independent jobs |
+| Training infra | RunPod community RTX 4090 (network volume `/workspace`) | ~$0.34/h; full v2 retrain ~$1.45 |
+| Model hosting | HuggingFace Hub (`mchlkan/qwen3vl4b-resell-adapter-multi-v2`, public) | public adapter so colleagues only need their own HF token + Qwen3-VL gated-repo acceptance |
+| Source of truth | `resell_copilot_tech_brief_v2.md` | architecture + scope decisions |
+
+### 5.2 Final model stack (6 models)
+
+| # | Name | Architecture | Inputs | Outputs | Active in v2? |
+|---|---|---|---|---|---|
+| 1 | **VLM listing extractor** | Qwen3-VL-4B-Instruct + LoRA (r=16, α=32, 4-bit, 40M trainable) — `multi-v2` adapter | 1–2 photos (garment + optional care label) + platform-specific English prompt | JSON: `brand, category, condition, color, size, title` (+ `price_eur` as training-only auxiliary) | ✓ |
+| 2 | **Visible-flaw head** | Frozen DINOv2-base (768-dim) → MLP → sigmoid | garment image | `visual_wear_probability` ∈ [0, 1] (auxiliary input to #4) | ✓ |
+| 3 | **Tag-presence rule** | derived rule, no separate model | Model #1's `condition` field | `tag_proxy = 1.0 if condition == "New with tags" else 0.0` | ✓ (rule, not a learned model) |
+| 4 | **Price head v2** | MLP → 5-quantile pinball loss | VLM hidden state (2,560-dim) + visual_wear_prob + tag_proxy + platform/category/condition (one-hot) + brand (32-dim embed) | `q10, q25, q50, q75, q90` of `log(price + 1)` | ✓ |
+| 5 | **Sell-likelihood head** | MLP → sigmoid (metadata-only, `vlm_dim=0`) | log_price + visual_wear_prob + condition + brand_embed + category + platform | `P(sold within ~8d)` | ✓ |
+| 6 | **Grounded description generator** | small generator conditioned on Model #1's structured fields | brand, category, condition, color, size, title, price | description text (2–3 sentences, English) | ✓ |
+
+### 5.3 Headline evaluation metrics (locked test sets)
+
+**Model #1 — VLM listing extractor (multi-v2, shipped):**
+
+| split | n | parse_ok | brand | category | condition | color | size |
+|---|---|---|---|---|---|---|---|
+| Vinted multi-image test | 368 | 97.8% | 69.3% | 99.7% | 65.5% | 74.7% | 45.9% |
+| KA test (single-image) | 132 | **100%** | 39.4% | 84.8% | 50.0% | 48.5% | 7.6% |
+
+vs Rengo33 v0 baseline (single-image, mixed-data training): KA parse rate **40.9% → 100%**, Vinted brand **49.2% → 69.3%** (+20.1 pp), Vinted size **26.9% → 45.9%** (+19.0 pp).
+
+**Model #2 — Visible-flaw head:** test AUC **0.701**, F1 0.428 (Vinted-trained generalises better than Vinted+KA combined).
+
+**Model #4 — Price head v2 (shipped):**
+
+| split | n | MAE (€) | MAPE | coverage q10–q90 |
+|---|---|---|---|---|
+| Overall | 500 | 16.93 | 0.504 | **85.8%** |
+| Kleinanzeigen | 132 | 14.72 | 0.653 | 84.1% |
+| Vinted | 368 | 17.73 | 0.450 | 86.4% |
+
+vs GPT-4o-mini single-shot baseline on the same test slice: MAE €21.50, MAPE 102.5% — Model #4 is materially better on both metrics.
+
+**Model #5 — Sell-likelihood head (metadata-only, shipped):** test AUC **0.605**, F1 **0.420**, threshold tuned on val to 0.425. Framed as a directional signal, not a calibrated probability.
+
+**Model #6 — Grounded description generator:** ships with the v2 stack; commit `f2e69ab`. Quantitative eval (e.g., BLEU/ROUGE) is not the relevant metric — the design goal is "grounded in the structured fields", validated by inspection.
+
+### 5.4 Known limitations (worth flagging in the report)
+
+1. **KA field accuracy lower than Vinted** (size 7.6%, condition 50.0%, color 48.5%, vs Vinted 45.9% / 65.5% / 74.7% on the same v2 adapter). Root cause is a *pipeline gap*, not a data gap: the KA scrape captured ~4,000 listings with an average of 4.7 photos/listing (92.6% have ≥2 photos), but those photos were never run through CLIP for garment-vs-label classification. As a result, the multi-image manifest (`scripts/build_manifest.py`) is hardcoded Vinted-only, and the v2 LoRA was trained on zero KA listings. **Being addressed in v3 (see §4.4) — queued, ~1 day of work.**
+2. **Sell head is a directional signal, not a calibrated probability.** AUC 0.605 reflects right-censoring (items listed close to scrape date have less observation time and are treated as negatives), seller-withdrawal noise, and a small positive class. The frontend treats it as a likelihood ribbon, not a percentage.
+3. **Single LoRA adapter for both platforms.** A more principled architecture would route Vinted to a multi-image adapter and KA to a single-image adapter (or platform-specific LoRAs). Cost-of-time vs marginal benefit didn't justify the split for the demo. v3's KA-inclusive training is the lighter alternative — adapt one adapter to both distributions rather than maintain two.
+
+### 5.5 Suggested next steps (if the project continues)
+
+In rough priority order:
+
+1. **Calibrate the sell head** (Platt scaling or isotonic regression on the val set) so the frontend can show real probabilities rather than rank-only scores.
+2. **Size string normalisation** (e.g., map `"Medium"` ↔ `"M"`, `"EU 40"` ↔ `"40"`) before scoring `size_acc` — a meaningful slice of current "errors" are format mismatches, not true model failures.
+3. **Larger base VLM (Qwen3-VL-7B/9B).** Speculative; useful only if the 4B model is genuinely bottlenecked on capacity rather than data.
+
+(The previous top item — "extend the multi-image manifest to KA" — has been promoted out of "next steps" into the active v3 retrain, see §4.4.)

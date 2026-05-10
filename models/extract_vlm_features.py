@@ -7,14 +7,21 @@ listing prompt, and caches one 2560-dim vector per row.
 RunPod smoke test:
 
     python models/extract_vlm_features.py \
-        --adapter-id Rengo33/qwen3vl4b-resell-adapter \
+        --adapter-id mchlkan/qwen3vl4b-resell-adapter-multi-v2 \
         --load-in-4bit \
         --limit 5
 
-Full run:
+Full single-image run:
 
     python models/extract_vlm_features.py \
-        --adapter-id Rengo33/qwen3vl4b-resell-adapter \
+        --adapter-id mchlkan/qwen3vl4b-resell-adapter-multi-v2 \
+        --load-in-4bit
+
+Full multi-image run (feeds the care-label photo when available):
+
+    python models/extract_vlm_features.py \
+        --adapter-id mchlkan/qwen3vl4b-resell-adapter-multi-v2 \
+        --manifest /workspace/data/manifest.parquet \
         --load-in-4bit
 """
 
@@ -44,15 +51,42 @@ from prompts import get_prompt  # noqa: E402
 
 
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
-# Multi-image v1 (2026-05-10). Trained on garment + optional care label;
-# brand +20pp, size +19pp vs the single-image v1 adapter
-# (Rengo33/qwen3vl4b-resell-adapter). See docs/model_stack_evolution.md §3.3.
-DEFAULT_ADAPTER = "mchlkan/qwen3vl4b-resell-adapter-multi-v1"
+# Multi-image v2 (2026-05-10). Same multi-image setup as v1, plus the parse-fix
+# retrain: prompt and target both drop `description` (KA parse rate 40.9% → 100%).
+# `price_eur` kept in the training target as an auxiliary task. See §4.3.
+DEFAULT_ADAPTER = "mchlkan/qwen3vl4b-resell-adapter-multi-v2"
 DEFAULT_OUTPUT = REPO_ROOT / "data" / "embeddings" / "vlm_pooled_combined.npy"
 DEFAULT_INDEX = REPO_ROOT / "data" / "embeddings" / "vlm_pooled_combined_index.parquet"
 DEFAULT_VINTED = REPO_ROOT / "data" / "vinted_clothing_combined.parquet"
 DEFAULT_KA = REPO_ROOT / "data" / "kleinanzeigen_clothing_combined.parquet"
 DEFAULT_SPLITS = REPO_ROOT / "data" / "splits"
+
+
+def load_label_lookup(manifest_path: Path) -> dict[tuple[str, int], str]:
+    """Build (platform, id) -> label_path from the multi-image manifest.
+
+    Only rows whose ``label_path`` is non-null and points to an existing file
+    are included. Missing files are dropped silently — this is best-effort
+    enrichment, not a hard requirement.
+    """
+    import pandas as pd
+
+    df = pd.read_parquet(manifest_path)
+    required = {"platform", "listing_id", "label_path"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"manifest is missing columns: {sorted(missing)}")
+    lookup: dict[tuple[str, int], str] = {}
+    for plat, lid, lpath in zip(df["platform"], df["listing_id"], df["label_path"]):
+        if lpath is None:
+            continue
+        if isinstance(lpath, float) and pd.isna(lpath):
+            continue
+        s = str(lpath)
+        if not s or not Path(s).exists():
+            continue
+        lookup[(str(plat), int(lid))] = s
+    return lookup
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,6 +98,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--splits-dir", type=Path, default=DEFAULT_SPLITS)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--index-output", type=Path, default=DEFAULT_INDEX)
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help=(
+            "Optional multi-image manifest parquet (from scripts/build_manifest.py). "
+            "When set, rows with a matching (platform, id) in the manifest are "
+            "extracted with both the garment photo from the combined parquet and "
+            "the care-label photo from the manifest. Rows without a label fall back "
+            "to single-image extraction. Use only with the multi-image adapter."
+        ),
+    )
     parser.add_argument("--limit", type=int, default=None, help="Optional smoke-test row limit.")
     parser.add_argument(
         "--load-in-4bit",
@@ -162,8 +208,10 @@ def build_inputs(
 
 
 @torch.no_grad()
-def extract_one(processor, model, image, platform: str, pool: str) -> np.ndarray:
-    inputs = build_inputs(processor, image, platform, model_device(model))
+def extract_one(processor, model, image, platform: str, pool: str, label_image=None) -> np.ndarray:
+    inputs = build_inputs(
+        processor, image, platform, model_device(model), label_image=label_image,
+    )
     out = model(**inputs, output_hidden_states=True, return_dict=True)
     last_hidden = out.hidden_states[-1]  # [1, seq_len, hidden_dim]
     if pool == "last":
@@ -189,6 +237,7 @@ def write_index(df, args: argparse.Namespace, hidden_dim: int) -> None:
     index["adapter_id"] = args.adapter_id
     index["pool"] = args.pool
     index["prompt_source"] = "src.prompts.get_prompt"
+    index["manifest"] = str(args.manifest) if args.manifest is not None else ""
     index.to_parquet(args.index_output, index=False)
 
 
@@ -203,6 +252,29 @@ def main() -> None:
     if args.limit is not None:
         df = df.head(args.limit).copy()
         print(f"Smoke-test limit active: {len(df):,} rows")
+
+    label_lookup: dict[tuple[str, int], str] = {}
+    if args.manifest is not None:
+        label_lookup = load_label_lookup(args.manifest)
+        keys = [(str(p), int(i)) for p, i in zip(df["platform"], df["id"])]
+        n_with_label = sum(1 for k in keys if k in label_lookup)
+        print(
+            f"Manifest loaded: {len(label_lookup):,} rows have a usable label photo. "
+            f"{n_with_label:,} of {len(df):,} rows in this run will use multi-image extraction."
+        )
+
+    def _label_for(row) -> "Image.Image | None":
+        if not label_lookup:
+            return None
+        path = label_lookup.get((str(row["platform"]), int(row["id"])))
+        if path is None:
+            return None
+        try:
+            from PIL import Image as _Image
+            return _Image.open(path).convert("RGB")
+        except Exception as exc:  # pragma: no cover — best-effort
+            print(f"  WARN: failed to decode label {path}: {exc}")
+            return None
 
     processor, model = load_model_and_processor(args)
 
@@ -221,8 +293,13 @@ def main() -> None:
         print(f"Resuming from row {start:,} / {len(df):,}")
 
     if features is None:
-        first_image = decode_image(df.iloc[0]["image"])
-        first_vec = extract_one(processor, model, first_image, df.iloc[0]["platform"], args.pool)
+        first_row = df.iloc[0]
+        first_image = decode_image(first_row["image"])
+        first_label = _label_for(first_row)
+        first_vec = extract_one(
+            processor, model, first_image, first_row["platform"], args.pool,
+            label_image=first_label,
+        )
         hidden_dim = int(first_vec.shape[0])
         args.output.parent.mkdir(parents=True, exist_ok=True)
         features = np.lib.format.open_memmap(
@@ -239,7 +316,11 @@ def main() -> None:
     for i in tqdm(range(start, len(df)), desc="Extracting VLM pooled states"):
         row = df.iloc[i]
         image = decode_image(row["image"])
-        features[i] = extract_one(processor, model, image, row["platform"], args.pool)
+        label_image = _label_for(row)
+        features[i] = extract_one(
+            processor, model, image, row["platform"], args.pool,
+            label_image=label_image,
+        )
         if (i + 1) % args.progress_every == 0:
             features.flush()
             progress_file.write_text(

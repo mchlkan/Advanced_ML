@@ -84,9 +84,12 @@ def _decode_image(cell) -> Image.Image:
 def _build_target_json(row: pd.Series) -> str:
     """Build the assistant-turn JSON string from canonical English columns.
 
-    Schema must match ``src.prompts.get_prompt`` field order. Uses indent=2
-    to mirror the prompt's `Format:` example so the model imitates layout
-    rather than learning to re-format.
+    Field order mirrors the prompt's `Format:` block. ``price_eur`` is kept as
+    an auxiliary training-only target — not present in the prompt — so the
+    pooled hidden state encodes price-relevant signal for the downstream
+    price head. ``description`` was removed (multi-v2): KA listings frequently
+    triggered malformed JSON when the model tried to write a long description
+    string, dropping the KA clean-parse rate.
     """
     brand = row.get("brand_canon")
     if brand in (None, "UNK") or (isinstance(brand, float) and pd.isna(brand)):
@@ -101,7 +104,6 @@ def _build_target_json(row: pd.Series) -> str:
         "color": row["color_en"],
         "size": size,
         "title": row["title_en"],
-        "description": row["description_en"],
         "price_eur": float(row["price"]),
     }
     return json.dumps(obj, ensure_ascii=False, indent=2)
