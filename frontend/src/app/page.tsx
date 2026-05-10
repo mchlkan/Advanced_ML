@@ -22,9 +22,26 @@ import PlatformLoginModal from "@/components/PlatformLoginModal";
 type AppState =
   | { screen: "upload" }
   | { screen: "inventory" }
-  | { screen: "analyzing"; imageUrl: string; file: File }
-  | { screen: "results"; imageUrl: string; data: UploadResponse }
-  | { screen: "publishing"; imageUrl: string; data: UploadResponse; platform: Platform }
+  | {
+      screen: "analyzing";
+      imageUrl: string;
+      file: File;
+      labelImageUrl?: string;
+      labelFile?: File;
+    }
+  | {
+      screen: "results";
+      imageUrl: string;
+      data: UploadResponse;
+      labelImageUrl?: string;
+    }
+  | {
+      screen: "publishing";
+      imageUrl: string;
+      data: UploadResponse;
+      platform: Platform;
+      labelImageUrl?: string;
+    }
   | {
       screen: "published";
       platform: Platform;
@@ -54,14 +71,19 @@ export default function Page() {
     refreshStatus();
   }, [refreshStatus]);
 
-  async function handleFileSelected(file: File, imageUrl: string) {
+  async function handleSubmit(
+    file: File,
+    imageUrl: string,
+    labelFile?: File,
+    labelImageUrl?: string,
+  ) {
     const gen = ++uploadGenRef.current;
     setUploadError(null);
-    setState({ screen: "analyzing", imageUrl, file });
+    setState({ screen: "analyzing", imageUrl, file, labelImageUrl, labelFile });
     try {
-      const data = await uploadImage(file);
+      const data = await uploadImage(file, labelFile);
       if (gen !== uploadGenRef.current) return;
-      setState({ screen: "results", imageUrl, data });
+      setState({ screen: "results", imageUrl, data, labelImageUrl });
     } catch (err) {
       if (gen !== uploadGenRef.current) return;
       setUploadError(
@@ -73,8 +95,8 @@ export default function Page() {
 
   async function handlePublish(platform: Platform, finalFields: Identification) {
     if (state.screen !== "results") return;
-    const { data, imageUrl } = state;
-    setState({ screen: "publishing", imageUrl, data, platform });
+    const { data, imageUrl, labelImageUrl } = state;
+    setState({ screen: "publishing", imageUrl, data, platform, labelImageUrl });
     try {
       const job = await publishListing({
         listing_id: data.listing_id,
@@ -94,13 +116,13 @@ export default function Page() {
         });
       } else {
         setUploadError(`Publishing failed: ${result.error ?? "unknown error"}`);
-        setState({ screen: "results", imageUrl, data });
+        setState({ screen: "results", imageUrl, data, labelImageUrl });
       }
     } catch (err) {
       setUploadError(
         `Publishing failed: ${err instanceof Error ? err.message : "unknown error"}`,
       );
-      setState({ screen: "results", imageUrl, data });
+      setState({ screen: "results", imageUrl, data, labelImageUrl });
     }
   }
 
@@ -117,19 +139,26 @@ export default function Page() {
     if (state.screen === "upload") {
       return (
         <UploadScreen
-          onFileSelected={handleFileSelected}
+          onSubmit={handleSubmit}
           onInventory={() => setState({ screen: "inventory" })}
           error={uploadError}
         />
       );
     }
     if (state.screen === "analyzing") {
-      return <AnalyzingScreen imageUrl={state.imageUrl} onCancel={handleReset} />;
+      return (
+        <AnalyzingScreen
+          imageUrl={state.imageUrl}
+          labelImageUrl={state.labelImageUrl}
+          onCancel={handleReset}
+        />
+      );
     }
     if (state.screen === "results") {
       return (
         <ResultsScreen
           imageUrl={state.imageUrl}
+          labelImageUrl={state.labelImageUrl}
           data={state.data}
           connectionStatus={connectionStatus}
           onPublish={handlePublish}

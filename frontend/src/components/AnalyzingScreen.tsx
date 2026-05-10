@@ -5,12 +5,13 @@ import SmallCaps from "./ui/SmallCaps";
 
 interface Props {
   imageUrl: string;
+  labelImageUrl?: string;
   onCancel: () => void;
 }
 
 const ACCENT = "oklch(0.62 0.15 145)";
 
-export default function AnalyzingScreen({ imageUrl, onCancel }: Props) {
+export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: Props) {
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(Date.now());
 
@@ -112,6 +113,25 @@ export default function AnalyzingScreen({ imageUrl, onCancel }: Props) {
             />
             Analyzing
           </div>
+          {/* Optional brand/size tag thumbnail */}
+          {labelImageUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={labelImageUrl}
+              alt="Brand or size tag"
+              style={{
+                position: "absolute",
+                right: 12,
+                bottom: 12,
+                width: 64,
+                height: 64,
+                objectFit: "cover",
+                borderRadius: 10,
+                border: "2px solid #fff",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+              }}
+            />
+          )}
         </div>
       </div>
 

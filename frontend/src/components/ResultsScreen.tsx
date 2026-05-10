@@ -12,6 +12,7 @@ import SmallCaps from "./ui/SmallCaps";
 
 interface Props {
   imageUrl: string;
+  labelImageUrl?: string;
   data: UploadResponse;
   connectionStatus: OnboardingStatus | null;
   onPublish: (platform: Platform, finalFields: Identification) => void;
@@ -317,6 +318,7 @@ function PlatformCard({
 
 export default function ResultsScreen({
   imageUrl,
+  labelImageUrl,
   data: initialData,
   connectionStatus,
   onPublish,
@@ -506,6 +508,24 @@ export default function ResultsScreen({
               </svg>
               Identified
             </div>
+            {labelImageUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={labelImageUrl}
+                alt="Brand or size tag"
+                style={{
+                  position: "absolute",
+                  right: 12,
+                  bottom: 12,
+                  width: 64,
+                  height: 64,
+                  objectFit: "cover",
+                  borderRadius: 10,
+                  border: "2px solid #fff",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+                }}
+              />
+            )}
           </div>
         </div>
 
