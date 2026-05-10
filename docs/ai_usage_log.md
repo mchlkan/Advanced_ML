@@ -2085,6 +2085,459 @@ Final test: ran tshirts via `vinted.publish()` (the production async path that c
 
 ---
 
+### Day 5 — 2026-05-10 (continued): integrate Mike's new MLP heads + multi-image VLM adapter
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Plan file:** overwrote prior plan (deploy speedup, already shipped)
+**Commits:** none — pure file-drop deploy
+
+#### Prompt 1
+> "/plan my mate did changes in the backend with new models and want me to integrate those, all 4 files in downloads also his hugging face key so we can use the newest model"
+
+**Decision:** Plan mode entered. Read-only inspection of `~/Downloads/`
+revealed 4 candidate files: 3 `.pt` head checkpoints + 1 `.env (1)`.
+SHA-256'd each against the in-repo copies — `flaw_head_vinted.pt` and
+`price_head.pt` had new hashes; `sell_head.pt` was bytewise identical
+(no-op). The .env file's keys overlapped with current `.env` plus one
+new key (`GROQ_API_KEY`); notably **no `HF_TOKEN`** despite the user's
+prompt — the closest was `GH_TOKEN` (GitHub).
+
+Read `backend/bootstrap.py` to confirm checkpoint loader auto-detects
+schema from each `.pt`'s pickled `model_config` / `vocab` keys — so any
+architecture changes Mike made would be absorbed automatically. Found
+`models/extract_vlm_features.py:DEFAULT_ADAPTER =
+"mchlkan/qwen3vl4b-resell-adapter-multi-v1"` already shipped (commit
+`22d01c7`) — the new model URL the user mentioned was already wired
+into prod via the existing RunPod worker; the user just thought there
+was an HF-token step.
+
+Asked 3 `AskUserQuestion`s to lock scope: HF-key clarification, env
+merge strategy, deploy scope. User answers:
+- HF model URL = `mchlkan/qwen3vl4b-resell-adapter-multi-v1`
+- skip the .env entirely
+- deploy local + EC2
+
+#### Prompt 2 (via AskUserQuestion → ExitPlanMode)
+
+**Decision:** Plan: drop in the 2 changed `.pt` files locally and on
+EC2 (skip the unchanged sell_head); preserve old as `.bak.preMike`;
+restart EC2 container via the existing `ec2_redeploy.sh` (bind-mount
+means no rebuild needed). Ran the smoke-load script
+(`load_models('cpu')`) locally — all 4 models load clean
+(FlawHead in_dim=768, PriceHead/SellHead use_flaw=True; sell_uses_vlm=False
+which is why sell_head didn't need retraining — it doesn't consume
+VLM hidden states).
+
+Pushed checkpoints to EC2 via scp (dir was ubuntu-owned, no /tmp hop
+needed), restart took 10.2 seconds, `/healthz` confirmed 4 models +
+`vlm_backend=runpod_http`. No commit — `.pt` files are gitignored.
+
+**What I learned:**
+1. **The "HF token" question was a confusion** — the user expected the
+   model swap to require an HF auth step, but RunPod's worker had
+   already been built with the new adapter baked in. Important to
+   clarify "what is the actual integration mechanism?" (RunPod worker
+   image vs. live HF download) before planning.
+2. **Hash-comparing files before assuming all 4 are different** saved
+   me from a no-op write and helped explain why `sell_head` shipped
+   identical (it has `sell_uses_vlm=False`, so the new adapter
+   doesn't change its inputs).
+3. **The bind-mount deploy speedup paid off immediately** — 10s
+   restart vs. ~5min rebuild. Worth the investment from the prior
+   session.
+
+---
+
+### Day 5 — 2026-05-10 (continued): optional brand/size tag photo (multi-image upload UI)
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Plan file:** overwrote prior plan (heads integration shipped)
+**Commit:** `d994f6e` Frontend: optional brand/size tag photo
+(multi-image upload)
+
+#### Prompt 1
+> "okay and now the model accepts now 2 pictures, and we need to integrate that in the frontend and also to give it our model. however the second picture is optional!"
+
+**Decision:** Launched 2 Explore agents in parallel — one tracing the
+backend image flow (upload → pipeline → VLM), one mapping the frontend
+upload UX. Both came back with the same surprise: **the backend was
+already plumbed for two images end-to-end.**
+`backend/routes/upload.py:54-65` accepted optional `label_image`,
+`pipeline.py:152-165` forwarded it to both VLM calls, both VLM
+backends accepted it, the RunPod handler decoded `label_image_b64`,
+the SQLite `listings` table had `label_image_path`, `/verify`
+auto-loaded the stored label, and `test_upload_multi_image_saves_both`
+already existed. **Zero backend changes required** — pure frontend
+work.
+
+The trained adapter expects a *care label / brand tag* close-up
+specifically (not just any second image) — backend names the field
+`label_image`. Asked 3 questions to lock UI direction: naming, slot
+layout, downstream display.
+
+User answers:
+- Naming: "Brand/size tag" (not "care label", not generic "second photo")
+- UI pattern: reveal-after-first (existing single-photo picker stays;
+  after main pick, swap into review state with thumbnail + add-tag CTA
+  + Continue button)
+- Downstream: small label thumbnail beside main on AnalyzingScreen
+  AND ResultsScreen; `/verify` already auto-uses stored label so no
+  change needed there.
+
+#### Prompt 2 (via ExitPlanMode → approval)
+
+**Decision:** 5 frontend files touched, no backend, no API contract
+change (FastAPI form already accepted `label_image`). Reread the
+actual files (not just trust the agents' summary) — found that
+ResultsScreen *already* shows the main photo with an "Identified"
+badge, so I switched from "new header row" (agent's suggestion) to
+"overlay thumbnail" (mirrors the AnalyzingScreen treatment, more
+compact).
+
+UploadScreen rewritten as a 2-phase component (PickPhase /
+ReviewPhase) with internal state for main + label files + URLs.
+4 hidden file inputs (camera + library × 2). Object URLs revoked on
+replace + unmount. page.tsx AppState extended with optional
+`labelImageUrl?` / `labelFile?` on analyzing/results/publishing
+variants — kept all optional so the no-label path is exactly the
+prior behavior.
+
+`npm run build` clean. Deployed to Vercel
+`dpl_G3mDBx7i78DUuQKQbKQ8kFe4Rj9U`. No EC2 redeploy needed.
+
+**What I learned:**
+1. **The existing system was designed for the future model.** Reading
+   the agents' reports carefully revealed that `label_image` was
+   already plumbed in anticipation of the multi-image adapter that
+   shipped today. The prior team did the hard work; the frontend was
+   just the visible last mile.
+2. **An Explore agent's report can miss adjacent context.** The
+   frontend agent said "ResultsScreen does not display image", but
+   actually it does — the agent only looked at the part it was asked
+   about. Verifying via direct read before planning the layout
+   prevented a clumsy redesign.
+3. **Vercel CLI must be run from `frontend/`.** Running it from the
+   repo root auto-detects the project as FastAPI and fails with
+   "Project names cannot contain '---'". Always `cd frontend &&
+   vercel deploy --prod --yes`.
+
+---
+
+### Day 5 — 2026-05-10 (continued): post-publish UI lies + KA silent dashboard-URL fallback
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Plan file:** overwrote prior plan (multi-image upload shipped)
+**Commit:** `fae1543` Fix post-publish UI lies + KA silent
+dashboard-URL fallback
+
+#### Prompt 1
+> "/plan whats not currently correct is the upload screen afterwards because it says we have prefilled your listing but it listed it already on vinted and is the kleinanzeigen link working?"
+
+**Decision:** Two bugs, both fallout from the prior `a5f697a` "Fix
+publish flow: replace phantom /draft with real publish-then-poll"
+migration. The backend now genuinely posts the listing live, but the
+PublishedScreen copy still said "We pre-filled {Platform} in a new
+tab" and "Switch over to ... hit publish on {Platform} itself. We
+don't post on your behalf" — actively false claims.
+
+Launched 2 Explore agents in parallel — one auditing PublishedScreen
+copy, one tracing the KA URL pipeline. The KA agent surfaced an
+*independent* bug: `KAClient.submit_listing` (lines 723-728) had a
+silent fallback — if neither the Location header regex nor the JAXB
+JSON body yielded a listing id, it returned the user's KA dashboard
+URL (`m-meine-anzeigen.html`) and the runner happily marked the job
+`status='posted'`. Whether the listing actually existed on KA was
+unverified.
+
+Forensic check on prod DB (`SELECT … FROM publishes WHERE
+platform='kleinanzeigen'`): **zero KA publishes ever attempted** — so
+the silent-fallback bug was theoretical so far. The fix is preventive:
+when the user does try KA, they'll see truth instead of a fake URL.
+
+#### Prompt 2 (via ExitPlanMode → approval)
+
+**Decision:** Two-file fix.
+- `frontend/src/components/PublishedScreen.tsx` — 4 string edits:
+  badge "Live on {Platform}", headline "Your listing is live on
+  {Platform}.", body "We opened it in a new tab so you can give it a
+  final check or share the link.", drop the misleading "drafted in
+  Xs" clause (latency_ms is the upload+inference latency, not the
+  publish latency).
+- `backend/integrations/kleinanzeigen.py:723-728` — replace silent
+  dashboard fallback with `raise KAError(f"listing submit: no listing
+  id in response (Location={loc!r}, body_keys={list(ad.keys())})")`.
+  Matches Vinted's pattern (which crashes on missing ID).
+
+Vercel deploy + EC2 redeploy in parallel via 3 simultaneous Bash
+calls. All three landed clean.
+
+**What I learned:**
+1. **UI text rots when behavior changes.** The /draft → /publish
+   migration shipped without anyone re-reading the post-publish copy.
+   Mechanical text-search for "draft", "prefill", and "switch over"
+   would have caught this.
+2. **Silent fallback URLs are worse than crashes.** A 404 on a
+   confidently-opened tab erodes trust more than an explicit error
+   banner. Loud failures scale better.
+3. **Forensic SQL gives empirical answers.** "Has KA publish ever
+   succeeded?" was a one-line query against the prod DB — much faster
+   than reasoning from code paths. `sudo docker exec resell-backend
+   python -c "..."` works without needing sqlite3 installed on the
+   host.
+
+---
+
+### Day 5 — 2026-05-10 (continued): KA category mapping (probe-derived) + Vinted .com URLs + ResultsScreen error banner + KA color slug fix
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Plan file:** overwrote prior plan (post-publish copy shipped)
+**Commits:**
+- `e819d2d` Map KA parent categories empirically + .com Vinted URLs +
+  ResultsScreen banner
+- `4954ac6` KA color attribute: use real enum slugs (rose, schwarz,
+  blau...)
+
+#### Prompt 1
+> "dint work again" (after smoke-testing the post-publish fix)
+
+**Decision:** Spun up the log monitor on the EC2 container with a
+KA-focused grep filter
+(`kleinanzeigen|ka_|kaerror|kanotconfigured|listing submit|no listing
+id|m-meine-anzeigen|/publish|/upload|traceback|error|exception|fail`).
+Three KA publishes fired (jobs 5/6/7) — only `POST /publish 202` and
+status-poll lines, no errors. SQL snapshot revealed: all three KA
+jobs failed with `category Women's clothing has no Kleinanzeigen
+category mapping`. The runner short-circuited at pre-validation,
+never hit KA's API. **And the user saw nothing** — a separate bug.
+
+Two layered bugs:
+- KA-side prompt vocab is `["Women's clothing", "Men's clothing",
+  "Women's shoes", "Men's shoes"]` (parent labels), but
+  `KA_CATEGORY_TO_ID` only had Vinted-style leaves
+  (`tshirts/jackets/jeans → 160`).
+- `ResultsScreen` was passed `uploadError` from page.tsx but never
+  rendered it (only UploadScreen had the banner). Publish failures
+  rolled back to results screen with no visible feedback.
+
+User also asked for `vinted.fr` URLs to be `vinted.com` for sharing.
+
+#### Prompt 2
+> "/plan this" → user followup "Can you also add that you explore items that are in those categories so you get the categories right?"
+
+**Decision:** Plan upgraded with an empirical discovery step. Wrote
+`scripts/probe_ka_categories.py` — uses the live KA mobile session
+(`try_load_or_refresh()`) to walk `/api/categories.json` and fetch
+`/api/ads/metadata/{cat_id}.json` for each candidate parent, dumps
+everything to `docs/ka_category_probe.json` for audit + future
+re-runs.
+
+#### Prompt 3 (via ExitPlanMode → approval)
+
+**Decision:** Ran the probe. First pass returned 161 nodes but no
+matches — name extractor was treating `{'value': 'Damenbekleidung'}`
+as a stringified dict instead of unwrapping JAXB's
+`{'value': X}` envelope. Added `_unwrap_value()` helper, re-ran:
+
+| English | KA leaf | prefix | art enum count | "other" art |
+|---|---|---|---|---|
+| Women's clothing | 154 (Damenbekleidung) | `kleidung_damen` | 15 | `sonstige` |
+| Men's clothing | 160 (Herrenbekleidung) | `kleidung_herren` | 13 | `sonstige` |
+| Women's shoes | 159 (Damenschuhe) | `schuhe_damen` | 9 | `sonstiges` |
+| Men's shoes | 158 (Herrenschuhe) | `schuhe_herren` | 7 | `sonstiges` |
+
+Big finding: the existing code's `kleidung_herren` prefix wasn't
+generic — it was specifically Men's. So routing women's items
+through 160 was wrong. Also: condition slugs in the existing code
+(`new_etikett`, `good`) weren't in KA's enum at all
+(`new_with_tag/new/like_new/ok/alright`).
+
+Rewrote `KA_ATTRS` with empirically captured per-category blocks +
+shared `_CONDITION_MAP`. Updated `_ka_attributes` to fall back to
+per-category `default_art` instead of a global "shirts" string. Test
+fixtures updated. Added a test that verifies the new mapping
+(`test_to_kleinanzeigen_routes_clothing_to_proper_leaves`).
+
+For Vinted: `vinted.py:509` rewrote the user-display URL to
+`https://www.vinted.com/items/{item_id}` while keeping the API
+base_url as `vinted.fr` (where session cookies are valid). 7 test
+fixtures flipped from .fr to .com.
+
+For ResultsScreen: added `error?: string | null` prop, rendered the
+same red banner UploadScreen uses, threaded `uploadError` through
+from page.tsx, cleared on retry inside `handlePublish`.
+
+50/50 backend tests passed. Deploy + EC2 redeploy.
+
+#### Prompt 4
+> "dint work again" (second attempt)
+
+**Decision:** Pulled latest publish jobs. Job 8 made it past
+validation, into KA's API, and got rejected with:
+
+```
+HTTP 400 attributeMap[kleidung_damen.color]: Kein gültiger Wert.
+```
+
+Real progress — KA mapping works, request reached KA, only the
+color slug is wrong. Probed the color enum from the existing
+`docs/ka_category_probe.json`: KA accepts a fixed lowercase German
+slug list (`beige, blau, braun, bunt, creme, gelb, ..., rose, ...,
+sonstige`) — same enum across all 4 categories.
+
+Two sub-bugs in the existing color path:
+- `COLOR_EN_TO_KA_DE` returned **display names** (`Schwarz`,
+  `Marineblau`, `Mintgrün`, `Hellblau`) which after `.lower()` were
+  often invalid (`marineblau`, `hellblau`, `mintgrün` all missing
+  from KA's enum).
+- An explicit override `Rose → Rosé` then `.lower()` produced `rosé`
+  with accent — KA's enum has `rose` (no accent).
+
+Fix: dedicated `_KA_COLOR_SLUG` map in `listing_mappings.py`. Each of
+the 30 canonical English colors maps directly to a valid KA enum
+slug; out-of-enum colors fold to closest hue or `"sonstige"`.
+Dropped 3 now-unused `translations` imports.
+
+Added unit test
+`test_to_kleinanzeigen_color_uses_ka_enum_slugs` (covers `Rose →
+rose`, `Black → schwarz`, `ChartreuseUnicornGold → sonstige`).
+
+51/51 tests pass. EC2 redeploy.
+
+#### Prompt 5
+> "didnt work again" → user retried
+
+**Decision:** Pulled latest publishes. **Job 9: KA POSTED, real URL
+`https://www.kleinanzeigen.de/s-anzeige/3405034173`.** First successful
+KA publish ever. Confirmed end-to-end: VLM emits parent category,
+mapping resolves leaf id + prefix, attributes built with real enum
+slugs, KA accepts the listing, integration extracts the id, frontend
+opens the live URL.
+
+**What I learned:**
+1. **Iterative empirical debugging works for opaque APIs.** Each
+   commit unblocked one validation layer: category → art slot → color.
+   No way to predict what KA would gate on next without actually
+   trying. The "fail loud → see error → fix → ship → retry" loop
+   was the right shape.
+2. **The probe script was the highest-leverage piece of code.** A
+   one-off discovery utility that captured the *real* enum once gives
+   me ground truth for every subsequent fix. Worth committing the
+   output (`docs/ka_category_probe.json`) so the audit trail
+   survives even if the script doesn't.
+3. **Existing constants can be wrong.** The hardcoded
+   `kleidung_herren` prefix and `new_etikett`/`good` condition slugs
+   shipped without anyone confirming them against KA's actual API
+   schema. Treating "the old code worked once" as evidence of
+   correctness is dangerous when the old code never actually exercised
+   that path against the real platform.
+4. **Frontend silent failures hide backend success.** The KA mapping
+   bug existed in code for weeks, but nobody noticed because the user
+   never tried KA + the frontend silently swallowed the error. The
+   ResultsScreen banner fix exposed all subsequent debugging
+   information directly to the user, which is what made the rapid
+   iteration possible.
+
+---
+
+### Day 5 — 2026-05-10 (continued): inventory actions — Open / Change price / Relist / Delete
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Plan file:** overwrote prior plan (KA color fix shipped)
+**Commit:** `be49898` Inventory: Open / Change price / Relist /
+Delete actions per listing
+
+#### Prompt 1
+> "/plan I also want some features for the iventory tab Edit, Delete, Relist in Inventory, change price in inventory, bei edit categories"
+
+**Decision:** Plan mode. Read `InventoryScreen.tsx`,
+`backend/routes/inventory.py`, `backend/routes/verify.py`, and the
+existing publish + delete integrations.
+
+**Big shortcut found**: `ResultsScreen` is already a complete view +
+edit + publish surface. The post-upload flow uses it on a fresh
+prediction; it can be reused on a *stored* prediction by adding one
+endpoint that reshapes a saved prediction back into the same
+`UploadResponse` shape. That makes "Edit" essentially free — just a
+navigation hook.
+
+Per-design decisions baked into the plan:
+- "Edit" → "Open" (broader verb, opens ResultsScreen).
+- "Relist" stays as a separate one-click action (re-publishes to
+  whichever platform was previously posted, no edit step).
+- "Change price" = lightweight modal + new `PATCH
+  /listings/{id}/fields` that stores a new prediction row with
+  `source='edit'`. Doesn't re-VLM, doesn't recompute price band.
+- "Delete" = confirm → combined platform + local cleanup. Vinted
+  delete via existing `vinted_integration.delete_listing`; KA logs a
+  warning and continues (no delete API).
+- "Mark sold" stays as a separate menu item — sold ≠ deleted.
+
+#### Prompt 2 (via ExitPlanMode → approval)
+
+**Decision:** Backend first.
+- 3 new endpoints in `routes/inventory.py`: `GET
+  /listings/{id}/prediction`, `PATCH /listings/{id}/fields`, `DELETE
+  /listings/{id}`.
+- 1 new schema (`PatchFieldsRequest`).
+- 2 new db helpers (`get_latest_prediction`,
+  `get_publishes_for_listing`); extended `get_listing` to return
+  `vlm_backend`.
+- 51/51 tests pass.
+
+Frontend:
+- `api/inventory.ts`: `fetchListingPrediction`, `patchListingFields`,
+  `deleteListing`.
+- `types/api.ts`: `PatchFieldsRequest` interface.
+- `InventoryScreen.tsx` rewrite — added per-card kebab `⋮` button →
+  `ActionSheet` (bottom-sheet with backdrop, action items, Relist
+  hidden when item never posted), `PriceEditModal` (single numeric
+  input + save → PATCH), `ConfirmDialog` (red Delete confirm). All
+  helpers inline; no new files.
+- `page.tsx`: `handleOpenListing` (fetch prediction → results screen
+  with stored data + image URL via existing `/listings/{id}/image`
+  endpoint) and `handleRelistListing` (mirrors `handlePublish` but
+  skips the edit step; auto-picks Vinted when posted on both).
+
+`npm run build` clean (page bundle 13.2 → 14.6 kB). Vercel
+`dpl_EDQCzEwhCq2p8qPAaf6HJpaEbhRP` + EC2 redeploy.
+
+#### Smoke verification
+
+Hit `GET /inventory` — 8 items returned. Hit `GET
+/listings/{id}/prediction` for the first item — reshape works
+correctly (brand=`adidas`, category=`tshirts`, vinted q50=18.28).
+**Bonus discovery in the same DB query**: job 9 was actually a
+successful KA publish from the prior color-slug fix. So KA was
+working all along after `4954ac6`; the user just hadn't noticed the
+"posted" status in the inventory list.
+
+**What I learned:**
+1. **Reusing ResultsScreen was the leverage point.** Building a
+   parallel "edit listing" form would have been ~3x the code and
+   would have drifted from the upload-flow form over time. Single
+   form, single source of truth.
+2. **Don't conflate verbs the user explicitly distinguished.** My
+   first plan draft collapsed "Edit" and "Relist" into one "Open"
+   verb. The user listed both separately for a reason — Relist is a
+   one-click "put it back up" action, not "open the form and click
+   Publish." Reinstated as separate before exiting plan mode.
+3. **Lightweight PATCH > heavyweight /verify for price tweaks.**
+   /verify re-runs the VLM (~5-10s, costs $). For a "fix the price"
+   action that just stores a number, that's massive overkill.
+   Storing as `source='edit'` matches the existing audit-trail
+   pattern (upload + verify rows).
+4. **The kebab-menu pattern compresses 5 actions into one tap.**
+   Inline buttons would have crowded the 64×64-thumbnail card.
+   Bottom sheet matches the existing PlatformLoginModal vocabulary,
+   no new design language.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
