@@ -1023,6 +1023,118 @@ ugly, and the secrets are still in the reflog of every clone).
 
 ---
 
+### Day 5 — 2026-05-10 (continued): .env.prod repair, container start failures, nginx config
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commits:**
+- `91ee108` Add pandas, scikit-learn, tqdm to prod deps
+- `<this commit>` Log .env.prod repair + bootstrap import chain debug
+
+#### Prompt 1
+> "I already pasted the content of the json files, can you add the rest to the env variables"
+
+**Decision:** Re-grepped var names in `.env.prod` — same 10 as before,
+no `*_JSON` vars visible. Suspected the JSON contents were pasted but
+not assigned to env vars. Used `awk` to dump line lengths + first 10
+chars per line (without exposing values). Confirmed: two raw JSON
+objects (lines 14-24 and 26-37) sat in the file as multi-line blocks
+**without** `VINTED_SESSION_JSON=` / `KA_SESSION_JSON=` prefixes.
+Docker's env-file parser requires `VAR=value` on a single line —
+multi-line JSON would have been silently ignored or caused parse
+errors.
+
+Wrote a Python script (no value exposure to chat) that:
+1. Walked the file line by line
+2. Detected JSON blocks by lone `{` line opening
+3. Collected to matching `}`
+4. Parsed via `json.loads`, re-serialized as single-line via
+   `json.dumps(..., separators=(",", ":"))`
+5. Auto-identified Vinted vs KA by content keys (`datadome_cookie` /
+   `anon_id` → Vinted; `poster_type` / `imprint` / `home_location_id`
+   → KA — both in different orders than I expected!)
+6. Wrote back with the JSON blocks replaced by single-line
+   `VINTED_SESSION_JSON=...` / `KA_SESSION_JSON=...` lines
+7. Appended the missing `VLM_BACKEND=runpod_http` and
+   `CORS_ORIGINS=https://resell-copilot-three.vercel.app`
+
+Result: 14 vars total, 4596 chars, all on single lines.
+
+scp'd updated `.env.prod` to EC2 with `chmod 600`. Removed any old
+container, ran `docker run` with env-file + data volume +
+read-only checkpoints volume mount. Container started, status:
+"Up Less than a second (health: starting)".
+
+After 15 seconds, peeked at logs: **container had crashed** with
+`ModuleNotFoundError: No module named 'pandas'`. Traceback chain:
+`backend/main.py` → `from backend.bootstrap import load_models` →
+`backend/bootstrap.py` → `from train_flaw_head import FlawHead` →
+`models/train_flaw_head.py` line 23 → `import pandas as pd`.
+
+Investigated: `models/train_{flaw,price,sell}_head.py` are dual-purpose
+files — they contain both the model class definitions (used at
+inference) AND the training entry points (CLI scripts with argparse).
+Pandas + sklearn + tqdm are imported at module top for the training
+functions, but they execute at import time *before* the class is
+reached. The deploy plan and slim requirements assumed inference
+imports only.
+
+Added `pandas>=2.2.0`, `scikit-learn>=1.5.0`, `tqdm>=4.66.0` to
+`requirements-prod.txt`. Adds ~70 MB to image; cheaper than
+refactoring the head modules to defer imports inside training
+functions. Committed as `91ee108`, pushed.
+
+Triggered rebuild on EC2 in background (~3-5 min — most layers
+cached, only pip install layer rebuilds). While that ran, set up
+the nginx reverse proxy:
+- Wrote `/etc/nginx/sites-available/resell` with
+  `server_name resell-copilot.duckdns.org`, `proxy_pass http://127.0.0.1:8000`,
+  `client_max_body_size 20M` (for image uploads), `proxy_read_timeout 180s`
+  (for VLM cold starts)
+- Symlinked into `sites-enabled/`
+- Removed default site
+- `nginx -t` passed, `systemctl reload nginx` succeeded
+- Curl test from inside the box returned 200 with default Ubuntu page
+  (suspicious — should be 502 since docker is down; need to debug
+  after the rebuild finishes)
+
+**Outcome:** `.env.prod` now correctly structured. Rebuild running.
+nginx configured but suspect default still leaking through. Waiting
+on rebuild before docker run + nginx debug.
+
+#### Prompt 2
+> "log this part of our conversation please"
+
+**Decision:** User caught me deferring logging *again* — third time
+this session. Last commit's reflection said "going to try treating
+logging as part of the response," and I broke that promise within
+two responses. Stopped all in-flight work to log immediately. This
+is now the actual fix: log before continuing on technical work, no
+matter how active the deploy is.
+
+**Outcome:** This entry. Going to commit and continue with the
+rebuild + container start.
+
+**Reflection:** the JSON-detection trick (auto-classify by content
+keys: `datadome_cookie` vs `poster_type`) is worth remembering for
+future deploys where users paste raw secrets without proper assignment.
+The user's failure mode is reasonable — they had two JSON files and
+pasted the contents into the env file, expecting the consumer to
+figure it out. The real gap is the deploy plan didn't say "you must
+prefix the JSON with `VAR_NAME=`" explicitly enough. Adding that as
+a reminder for next deploy.
+
+The pandas/sklearn/tqdm import chain is the second case this session
+where the deploy plan's "slim requirements" assumption broke against
+reality. The lesson is the same one as the torch/CUDA episode: the
+plan was based on what the *production code uses*, not what the
+*production code imports*. Module-level imports run regardless of
+whether their functions are called. For the next deploy I should
+trace **all module-level imports** of every file the production
+entry point touches, not just the functions actually invoked.
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
