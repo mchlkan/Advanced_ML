@@ -154,22 +154,32 @@ def test_publish_raises_not_configured_when_session_file_missing(monkeypatch, tm
         asyncio.run(ka.publish(tmp_path / "img.jpg", {"title": "t"}))
 
 
-def test_to_kleinanzeigen_routes_clothing_to_category_160():
+def test_to_kleinanzeigen_routes_clothing_to_proper_leaves():
+    """KA-side prompt vocab (KLEINANZEIGEN_CATEGORIES_EN) maps to the
+    real KA leaf ids captured by scripts/probe_ka_categories.py."""
     import sys
     sys.path.insert(0, "shared")
     from listing_mappings import to_kleinanzeigen
 
-    out = to_kleinanzeigen({
-        "category": "tshirts", "title": "Tee", "description": "Nice", "price_eur": 5.0,
+    out_w = to_kleinanzeigen({
+        "category": "Women's clothing", "title": "Tee", "description": "Nice", "price_eur": 5.0,
     })
-    assert out["category_id"] == 160
-    assert out["title"] == "Tee"
-    assert out["price_eur"] == 5.0
+    assert out_w["category_id"] == 154   # Damenbekleidung
+    assert out_w["title"] == "Tee"
+    assert out_w["price_eur"] == 5.0
+    # Parent-tier input falls back to the per-cat default art slug
+    assert out_w["attributes"]["kleidung_damen.art"] == "sonstige"
+
+    out_m = to_kleinanzeigen({
+        "category": "Men's clothing", "title": "Hemd", "description": "x", "price_eur": 7.0,
+    })
+    assert out_m["category_id"] == 160   # Herrenbekleidung
+    assert out_m["attributes"]["kleidung_herren.art"] == "sonstige"
 
 
 def test_to_kleinanzeigen_drops_unmapped_category():
-    """Sneakers + scarves are intentionally unmapped — runner sees no
-    category_id and short-circuits with a clear error."""
+    """Vinted-side leaf vocab (e.g. "sneakers" alone) has no KA mapping —
+    runner sees no category_id and short-circuits with a clear error."""
     import sys
     sys.path.insert(0, "shared")
     from listing_mappings import to_kleinanzeigen

@@ -18,6 +18,7 @@ interface Props {
   onPublish: (platform: Platform, finalFields: Identification) => void;
   onReset: () => void;
   onConnectPlatform: (platform: Platform) => void;
+  error?: string | null;
 }
 
 function isPlatformReady(
@@ -324,6 +325,7 @@ export default function ResultsScreen({
   onPublish,
   onReset,
   onConnectPlatform,
+  error,
 }: Props) {
   const vintedReady = isPlatformReady(connectionStatus, "vinted");
   const kaReady = isPlatformReady(connectionStatus, "kleinanzeigen");
@@ -414,6 +416,21 @@ export default function ResultsScreen({
           paddingBottom: 120,
         } as React.CSSProperties}
       >
+        {error && (
+          <div style={{ padding: "12px 20px 0" }}>
+            <p style={{
+              fontSize: 13,
+              color: "#c0392b",
+              margin: 0,
+              padding: "10px 12px",
+              backgroundColor: "#fdf0ee",
+              borderRadius: 10,
+              border: "1px solid #f5c6c0",
+            }}>
+              {error}
+            </p>
+          </div>
+        )}
         {/* Top bar */}
         <div
           style={{

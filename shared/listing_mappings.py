@@ -21,50 +21,87 @@ from translations import (
 )
 
 
-# Kleinanzeigen numeric category IDs. 160 (Kleidung_Herren) is proven
-# working in the capture; the moderation queue accepts it for women's
-# items too, so we route all clothing through it for v1 and let the user
-# recategorise on the KA UI if they want a more specific leaf. Sneakers
-# live under a different parent (Damenschuhe / Herrenschuhe) and aren't
-# mapped here — those listings fall back to the URL path until we capture
-# the right leaf id.
+# KA category-id mapping for the parent-tier vocab the VLM emits on the
+# KA-side prompt (KLEINANZEIGEN_CATEGORIES_EN in shared/prompts.py).
+# IDs and per-category attribute schemas were captured empirically via
+# scripts/probe_ka_categories.py — see docs/ka_category_probe.json.
 KA_CATEGORY_TO_ID: dict[str, int] = {
-    "tshirts": 160,
-    "jackets": 160,
-    "jeans": 160,
+    "Women's clothing": 154,   # Damenbekleidung
+    "Men's clothing":   160,   # Herrenbekleidung
+    "Women's shoes":    159,   # Damenschuhe
+    "Men's shoes":      158,   # Herrenschuhe
 }
 
-# KA's per-category attribute schema, keyed by numeric category id. Even
-# though /api/ads/metadata/{cat}.json reports required=False, the publish
-# endpoint actually enforces presence beyond what metadata exposes
-# (omitting kleidung_herren.art returns "Bitte gib einen Wert ein.").
-# Add a new category by appending a sibling entry — to_kleinanzeigen
-# walks this registry without per-category branching.
+# KA's per-category attribute schema, keyed by numeric category id. The
+# publish endpoint enforces presence of the per-cat `art` slot beyond
+# what /api/ads/metadata/{cat}.json declares — omitting it returns
+# "Bitte gib einen Wert ein." Hence `default_art` per category for
+# parent-tier inputs that don't carry leaf info.
+#
+# Conditions, versand values, and the seller_badges slot are uniform
+# across the four clothing/shoes categories per the probe.
+_CONDITION_MAP = {
+    "New with tags": "new_with_tag",
+    "New":           "new",
+    "Very good":     "like_new",   # KA has no "very_good" / "sehr_gut" slug
+    "Good":          "ok",         # KA has no "good" slug
+}
 KA_ATTRS: dict[int, dict[str, dict]] = {
-    160: {  # kleidung_herren
-        # Fixed slots that aren't derived from canon fields
+    154: {  # Damenbekleidung — prefix kleidung_damen
+        "fixed": {
+            "kleidung_damen.versand": "ja",
+            "kleidung_damen.seller_badges": "none",
+        },
+        "art": {
+            # Vinted-side leaf vocab kept as a safety net — the model now
+            # emits parent labels on KA, but if a leaf ever leaks in, route
+            # to KA's nearest equivalent on the women's side.
+            "tshirts": "shirts_tops",
+            "jackets": "jacken_maentel",
+            "jeans":   "jeans",
+        },
+        "default_art": "sonstige",
+        "condition":   _CONDITION_MAP,
+        "prefix":      "kleidung_damen",
+    },
+    160: {  # Herrenbekleidung — prefix kleidung_herren
         "fixed": {
             "kleidung_herren.versand": "ja",
             "kleidung_herren.seller_badges": "none",
         },
-        # canonical category → "art" slug (clothing type)
         "art": {
             "tshirts": "shirts",
             "jackets": "jacken_maentel",
-            "jeans": "jeans",
+            "jeans":   "jeans",
         },
-        # canonical condition → KA condition slug. The capture confirmed
-        # only "Very good" → "like_new"; the others mirror Vinted-side
-        # patterns. If KA rejects one, the runner's error column shows
-        # the response so we can correct empirically.
-        "condition": {
-            "New with tags": "new_etikett",
-            "New": "new",
-            "Very good": "like_new",
-            "Good": "good",
+        "default_art": "sonstige",
+        "condition":   _CONDITION_MAP,
+        "prefix":      "kleidung_herren",
+    },
+    159: {  # Damenschuhe — prefix schuhe_damen
+        "fixed": {
+            "schuhe_damen.versand": "ja",
+            "schuhe_damen.seller_badges": "none",
         },
-        # Per-category attribute name prefix (e.g. "kleidung_herren.brand")
-        "prefix": "kleidung_herren",
+        "art": {
+            "sneakers": "sneaker_sportschuhe",
+        },
+        # Note trailing 's' — distinct from clothing's "sonstige".
+        "default_art": "sonstiges",
+        "condition":   _CONDITION_MAP,
+        "prefix":      "schuhe_damen",
+    },
+    158: {  # Herrenschuhe — prefix schuhe_herren
+        "fixed": {
+            "schuhe_herren.versand": "ja",
+            "schuhe_herren.seller_badges": "none",
+        },
+        "art": {
+            "sneakers": "sneaker_sportschuhe",
+        },
+        "default_art": "sonstiges",
+        "condition":   _CONDITION_MAP,
+        "prefix":      "schuhe_herren",
     },
 }
 
@@ -97,8 +134,11 @@ def _ka_attributes(canon: dict[str, Any], category_id: int) -> dict[str, str]:
     if cond and cond in spec["condition"]:
         attrs[f"{prefix}.condition"] = spec["condition"][cond]
     cat = canon.get("category")
-    if cat and cat in spec["art"]:
-        attrs[f"{prefix}.art"] = spec["art"][cat]
+    # KA's submit endpoint hard-rejects payloads missing <prefix>.art. For
+    # parent-tier categories ("Women's clothing" etc.) we don't know the
+    # leaf, so fall back to the per-category `default_art` ("sonstige" /
+    # "sonstiges") and let the user re-pick on the KA UI.
+    attrs[f"{prefix}.art"] = spec["art"].get(cat or "", spec["default_art"])
     return attrs
 
 # Used by /publish to redirect the user to the platform's new-listing form

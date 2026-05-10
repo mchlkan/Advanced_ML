@@ -96,6 +96,7 @@ export default function Page() {
   async function handlePublish(platform: Platform, finalFields: Identification) {
     if (state.screen !== "results") return;
     const { data, imageUrl, labelImageUrl } = state;
+    setUploadError(null);
     setState({ screen: "publishing", imageUrl, data, platform, labelImageUrl });
     try {
       const job = await publishListing({
@@ -164,6 +165,7 @@ export default function Page() {
           onPublish={handlePublish}
           onReset={handleReset}
           onConnectPlatform={setLoginModalPlatform}
+          error={uploadError}
         />
       );
     }

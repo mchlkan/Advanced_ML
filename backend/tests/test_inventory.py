@@ -28,7 +28,7 @@ def _seed_posted_publish(
     *,
     platform: str = "vinted",
     platform_listing_id: str = "1234567890",
-    platform_listing_url: str = "https://www.vinted.fr/items/1234567890",
+    platform_listing_url: str = "https://www.vinted.com/items/1234567890",
     updated_at_ms: int | None = None,
 ) -> int:
     """Insert a row directly into publishes with status='posted'. Returns the
@@ -225,7 +225,7 @@ def test_sync_endpoint_writes_snapshots(app_client, jpeg_bytes, monkeypatch, tmp
             "title": "Black tee",
             "price": {"amount": "8.50", "currency_code": "EUR"},
             "view_count": 12, "favourite_count": 1,
-            "url": "https://www.vinted.fr/items/111",
+            "url": "https://www.vinted.com/items/111",
             "photos": [{"url": "https://photo.cdn/111.jpg"}],
         },
         {
@@ -233,7 +233,7 @@ def test_sync_endpoint_writes_snapshots(app_client, jpeg_bytes, monkeypatch, tmp
             "title": "Levi 501",
             "price": {"amount": "29.00", "currency_code": "EUR"},
             "view_count": 80, "favourite_count": 9,
-            "url": "https://www.vinted.fr/items/222",
+            "url": "https://www.vinted.com/items/222",
             "photos": [{"url": "https://photo.cdn/222.jpg"}],
         },
     ]
@@ -295,7 +295,7 @@ def test_sync_lazy_refresh_inside_get_inventory(app_client, jpeg_bytes, monkeypa
             "id": 42, "title": "Found item",
             "price": {"amount": "20.0", "currency_code": "EUR"},
             "view_count": 5, "favourite_count": 0,
-            "url": "https://www.vinted.fr/items/42",
+            "url": "https://www.vinted.com/items/42",
             "photos": [],
         }]
 

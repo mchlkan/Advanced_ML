@@ -506,7 +506,10 @@ class VintedClient:
 
         body = resp.json()
         item_id = int(body.get("item", body.get("draft", {})).get("id", draft_id))
-        listing_url = f"{self.base_url}/items/{item_id}"
+        # Display URL is locale-agnostic vinted.com so users can share without
+        # exposing the .fr session host. Vinted normalises /items/{id} to the
+        # viewer's regional domain on resolve.
+        listing_url = f"https://www.vinted.com/items/{item_id}"
         return item_id, listing_url
 
 

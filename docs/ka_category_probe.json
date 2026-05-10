@@ -1,0 +1,788 @@
+{
+  "probed_at": "2026-05-10T20:06:37.140167+00:00",
+  "category_tree_path": "/api/categories.json",
+  "categories": {
+    "Women's clothing": {
+      "candidates": [
+        {
+          "id": 154,
+          "name": "Damenbekleidung",
+          "parent_path": [
+            "",
+            "Alle Kategorien",
+            "Mode & Beauty"
+          ],
+          "has_children": false,
+          "matched_label": "Damenbekleidung"
+        }
+      ],
+      "best": {
+        "id": 154,
+        "name": "Damenbekleidung",
+        "parent_path": [
+          "",
+          "Alle Kategorien",
+          "Mode & Beauty"
+        ],
+        "has_children": false,
+        "matched_label": "Damenbekleidung"
+      },
+      "metadata": {
+        "status": 200,
+        "prefix": "kleidung_damen",
+        "art_values": [
+          "anzuege",
+          "bademode",
+          "hemden_blusen",
+          "hochzeitsmode",
+          "hosen",
+          "jacken_maentel",
+          "jeans",
+          "kostueme_verkleidungen",
+          "pullover",
+          "roecke_kleider",
+          "shirts_tops",
+          "shorts",
+          "sportbekleidung",
+          "umstandsmode",
+          "sonstige"
+        ],
+        "attributes": [
+          {
+            "name": "kleidung_damen.art",
+            "write": "required",
+            "label": "Art",
+            "supported_count": 15,
+            "supported_values": [
+              "anzuege",
+              "bademode",
+              "hemden_blusen",
+              "hochzeitsmode",
+              "hosen",
+              "jacken_maentel",
+              "jeans",
+              "kostueme_verkleidungen",
+              "pullover",
+              "roecke_kleider",
+              "shirts_tops",
+              "shorts",
+              "sportbekleidung",
+              "umstandsmode",
+              "sonstige"
+            ]
+          },
+          {
+            "name": "kleidung_damen.versand",
+            "write": "required",
+            "label": "Versand",
+            "supported_count": 2,
+            "supported_values": [
+              "ja",
+              "nein"
+            ]
+          },
+          {
+            "name": "kleidung_damen.brand",
+            "write": "required",
+            "label": "Marke",
+            "supported_count": 2480,
+            "supported_values": [
+              "apc",
+              "aaiko",
+              "abc_design",
+              "abercrombie_fitch",
+              "acdc",
+              "accessoires",
+              "accessorize",
+              "acne",
+              "adagio",
+              "adidas",
+              "adler",
+              "aeronautica_militare",
+              "aropostale",
+              "agent_provocateur",
+              "agiva",
+              "aigle",
+              "aigner",
+              "airfield",
+              "ajc",
+              "akira",
+              "alberta_ferretti",
+              "aldi",
+              "aldo",
+              "alessandro",
+              "alex",
+              "alexander_mcqueen",
+              "alexander_wang",
+              "alexandre_laurent",
+              "allsaints",
+              "almatrichi",
+              "...(truncated)"
+            ]
+          },
+          {
+            "name": "kleidung_damen.groesse",
+            "write": "required",
+            "label": "Größe",
+            "supported_count": 15,
+            "supported_values": [
+              "unisize",
+              "xxxs",
+              "xxs",
+              "xs",
+              "s",
+              "m",
+              "l",
+              "xl",
+              "xxl",
+              "xxxl",
+              "4xl",
+              "5xl",
+              "6xl",
+              "7xl",
+              "8xl+"
+            ]
+          },
+          {
+            "name": "kleidung_damen.color",
+            "write": "required",
+            "label": "Farbe",
+            "supported_count": 22,
+            "supported_values": [
+              "beige",
+              "blau",
+              "braun",
+              "bunt",
+              "creme",
+              "gelb",
+              "gold",
+              "grau",
+              "grün",
+              "khaki",
+              "lavendel",
+              "lila",
+              "orange",
+              "pink",
+              "print",
+              "rose",
+              "rot",
+              "schwarz",
+              "silber",
+              "türkis",
+              "weiß",
+              "sonstige"
+            ]
+          },
+          {
+            "name": "kleidung_damen.condition",
+            "write": "required",
+            "label": "Zustand",
+            "supported_count": 5,
+            "supported_values": [
+              "new_with_tag",
+              "new",
+              "like_new",
+              "ok",
+              "alright"
+            ]
+          },
+          {
+            "name": "kleidung_damen.seller_badges",
+            "write": "optional",
+            "label": "Zusatzleistungen",
+            "supported_count": 3,
+            "supported_values": [
+              "none",
+              "thirty_days_return",
+              "guarantee"
+            ]
+          }
+        ]
+      }
+    },
+    "Men's clothing": {
+      "candidates": [
+        {
+          "id": 160,
+          "name": "Herrenbekleidung",
+          "parent_path": [
+            "",
+            "Alle Kategorien",
+            "Mode & Beauty"
+          ],
+          "has_children": false,
+          "matched_label": "Herrenbekleidung"
+        }
+      ],
+      "best": {
+        "id": 160,
+        "name": "Herrenbekleidung",
+        "parent_path": [
+          "",
+          "Alle Kategorien",
+          "Mode & Beauty"
+        ],
+        "has_children": false,
+        "matched_label": "Herrenbekleidung"
+      },
+      "metadata": {
+        "status": 200,
+        "prefix": "kleidung_herren",
+        "art_values": [
+          "anzuege",
+          "bademode",
+          "hemden",
+          "hochzeitsmode",
+          "hosen",
+          "jacken_maentel",
+          "jeans",
+          "kostueme_verkleidungen",
+          "pullover",
+          "shirts",
+          "shorts",
+          "sportbekleidung",
+          "sonstige"
+        ],
+        "attributes": [
+          {
+            "name": "kleidung_herren.art",
+            "write": "required",
+            "label": "Art",
+            "supported_count": 13,
+            "supported_values": [
+              "anzuege",
+              "bademode",
+              "hemden",
+              "hochzeitsmode",
+              "hosen",
+              "jacken_maentel",
+              "jeans",
+              "kostueme_verkleidungen",
+              "pullover",
+              "shirts",
+              "shorts",
+              "sportbekleidung",
+              "sonstige"
+            ]
+          },
+          {
+            "name": "kleidung_herren.versand",
+            "write": "required",
+            "label": "Versand",
+            "supported_count": 2,
+            "supported_values": [
+              "ja",
+              "nein"
+            ]
+          },
+          {
+            "name": "kleidung_herren.brand",
+            "write": "required",
+            "label": "Marke",
+            "supported_count": 1507,
+            "supported_values": [
+              "apc",
+              "abercrombie_fitch",
+              "acdc",
+              "acne",
+              "activision",
+              "addicted",
+              "adidas",
+              "adler",
+              "aeronautica_militare",
+              "aropostale",
+              "aigle",
+              "aigner",
+              "airfield",
+              "aldi",
+              "aldo",
+              "alessandro",
+              "alessi",
+              "alex",
+              "alexander_mcqueen",
+              "alexander_wang",
+              "allsaints",
+              "alpha_industries",
+              "alpinestars",
+              "alternative",
+              "american_apparel",
+              "american_eagle_outfitters",
+              "american_people",
+              "american_vintage",
+              "amor",
+              "and1",
+              "...(truncated)"
+            ]
+          },
+          {
+            "name": "kleidung_herren.groesse",
+            "write": "required",
+            "label": "Größe",
+            "supported_count": 14,
+            "supported_values": [
+              "unisize",
+              "xxs",
+              "xs",
+              "s",
+              "m",
+              "l",
+              "xl",
+              "xxl",
+              "xxxl",
+              "4xl",
+              "5xl",
+              "6xl",
+              "7xl",
+              "8xl+"
+            ]
+          },
+          {
+            "name": "kleidung_herren.color",
+            "write": "required",
+            "label": "Farbe",
+            "supported_count": 22,
+            "supported_values": [
+              "beige",
+              "blau",
+              "braun",
+              "bunt",
+              "creme",
+              "gelb",
+              "gold",
+              "grau",
+              "grün",
+              "khaki",
+              "lavendel",
+              "lila",
+              "orange",
+              "pink",
+              "print",
+              "rose",
+              "rot",
+              "schwarz",
+              "silber",
+              "türkis",
+              "weiß",
+              "sonstige"
+            ]
+          },
+          {
+            "name": "kleidung_herren.condition",
+            "write": "required",
+            "label": "Zustand",
+            "supported_count": 5,
+            "supported_values": [
+              "new_with_tag",
+              "new",
+              "like_new",
+              "ok",
+              "alright"
+            ]
+          },
+          {
+            "name": "kleidung_herren.seller_badges",
+            "write": "optional",
+            "label": "Zusatzleistungen",
+            "supported_count": 3,
+            "supported_values": [
+              "none",
+              "thirty_days_return",
+              "guarantee"
+            ]
+          }
+        ]
+      }
+    },
+    "Women's shoes": {
+      "candidates": [
+        {
+          "id": 159,
+          "name": "Damenschuhe",
+          "parent_path": [
+            "",
+            "Alle Kategorien",
+            "Mode & Beauty"
+          ],
+          "has_children": false,
+          "matched_label": "Damenschuhe"
+        }
+      ],
+      "best": {
+        "id": 159,
+        "name": "Damenschuhe",
+        "parent_path": [
+          "",
+          "Alle Kategorien",
+          "Mode & Beauty"
+        ],
+        "has_children": false,
+        "matched_label": "Damenschuhe"
+      },
+      "metadata": {
+        "status": 200,
+        "prefix": "schuhe_damen",
+        "art_values": [
+          "ballerinas",
+          "halb_schnuerschuhe",
+          "hausschuhe",
+          "outdoor_wanderschuhe",
+          "pumps",
+          "sandalen",
+          "sneaker_sportschuhe",
+          "stiefel",
+          "sonstiges"
+        ],
+        "attributes": [
+          {
+            "name": "schuhe_damen.art",
+            "write": "required",
+            "label": "Art",
+            "supported_count": 9,
+            "supported_values": [
+              "ballerinas",
+              "halb_schnuerschuhe",
+              "hausschuhe",
+              "outdoor_wanderschuhe",
+              "pumps",
+              "sandalen",
+              "sneaker_sportschuhe",
+              "stiefel",
+              "sonstiges"
+            ]
+          },
+          {
+            "name": "schuhe_damen.versand",
+            "write": "required",
+            "label": "Versand",
+            "supported_count": 2,
+            "supported_values": [
+              "ja",
+              "nein"
+            ]
+          },
+          {
+            "name": "schuhe_damen.brand",
+            "write": "required",
+            "label": "Marke",
+            "supported_count": 1387,
+            "supported_values": [
+              "apc",
+              "as98",
+              "abercrombie_fitch",
+              "acdc",
+              "accessoires",
+              "accessorize",
+              "acne",
+              "adidas",
+              "aerosoles",
+              "agent_provocateur",
+              "aigle",
+              "aigner",
+              "airstep",
+              "akira",
+              "albano",
+              "alberta_ferretti",
+              "aldi",
+              "aldo",
+              "alessandro",
+              "alex",
+              "alexander_mcqueen",
+              "alexander_wang",
+              "allsaints",
+              "alma_en_pena",
+              "alpe",
+              "alpina",
+              "alpinestars",
+              "alternative",
+              "alviero_martini",
+              "amazon",
+              "...(truncated)"
+            ]
+          },
+          {
+            "name": "schuhe_damen.groesse",
+            "write": "required",
+            "label": "Größe",
+            "supported_count": 32,
+            "supported_values": [
+              "less36",
+              "35",
+              "35.5",
+              "36",
+              "36.5",
+              "37",
+              "37.5",
+              "38",
+              "38.5",
+              "39",
+              "39.5",
+              "40",
+              "40.5",
+              "41",
+              "41.5",
+              "42",
+              "42.5",
+              "43",
+              "43.5",
+              "44",
+              "44.5",
+              "45",
+              "45.5",
+              "46",
+              "46.5",
+              "47",
+              "47.5",
+              "48",
+              "48.5",
+              "49",
+              "...(truncated)"
+            ]
+          },
+          {
+            "name": "schuhe_damen.color",
+            "write": "required",
+            "label": "Farbe",
+            "supported_count": 22,
+            "supported_values": [
+              "beige",
+              "blau",
+              "braun",
+              "bunt",
+              "creme",
+              "gelb",
+              "gold",
+              "grau",
+              "grün",
+              "khaki",
+              "lavendel",
+              "lila",
+              "orange",
+              "pink",
+              "print",
+              "rose",
+              "rot",
+              "schwarz",
+              "silber",
+              "türkis",
+              "weiß",
+              "sonstige"
+            ]
+          },
+          {
+            "name": "schuhe_damen.condition",
+            "write": "required",
+            "label": "Zustand",
+            "supported_count": 5,
+            "supported_values": [
+              "new_with_tag",
+              "new",
+              "like_new",
+              "ok",
+              "alright"
+            ]
+          },
+          {
+            "name": "schuhe_damen.seller_badges",
+            "write": "optional",
+            "label": "Zusatzleistungen",
+            "supported_count": 3,
+            "supported_values": [
+              "none",
+              "thirty_days_return",
+              "guarantee"
+            ]
+          }
+        ]
+      }
+    },
+    "Men's shoes": {
+      "candidates": [
+        {
+          "id": 158,
+          "name": "Herrenschuhe",
+          "parent_path": [
+            "",
+            "Alle Kategorien",
+            "Mode & Beauty"
+          ],
+          "has_children": false,
+          "matched_label": "Herrenschuhe"
+        }
+      ],
+      "best": {
+        "id": 158,
+        "name": "Herrenschuhe",
+        "parent_path": [
+          "",
+          "Alle Kategorien",
+          "Mode & Beauty"
+        ],
+        "has_children": false,
+        "matched_label": "Herrenschuhe"
+      },
+      "metadata": {
+        "status": 200,
+        "prefix": "schuhe_herren",
+        "art_values": [
+          "halb_schnuerschuhe",
+          "hausschuhe",
+          "sandalen",
+          "sneaker_sportschuhe",
+          "stiefel",
+          "outdoor_wanderschuhe",
+          "sonstiges"
+        ],
+        "attributes": [
+          {
+            "name": "schuhe_herren.art",
+            "write": "required",
+            "label": "Art",
+            "supported_count": 7,
+            "supported_values": [
+              "halb_schnuerschuhe",
+              "hausschuhe",
+              "sandalen",
+              "sneaker_sportschuhe",
+              "stiefel",
+              "outdoor_wanderschuhe",
+              "sonstiges"
+            ]
+          },
+          {
+            "name": "schuhe_herren.versand",
+            "write": "required",
+            "label": "Versand",
+            "supported_count": 2,
+            "supported_values": [
+              "ja",
+              "nein"
+            ]
+          },
+          {
+            "name": "schuhe_herren.brand",
+            "write": "required",
+            "label": "Marke",
+            "supported_count": 838,
+            "supported_values": [
+              "as98",
+              "acne",
+              "adidas",
+              "aeronautica_militare",
+              "aigle",
+              "aigner",
+              "airstep",
+              "aldi",
+              "aldo",
+              "alex",
+              "alexander_mcqueen",
+              "alexander_wang",
+              "allsaints",
+              "alpinestars",
+              "amazon",
+              "amor",
+              "and1",
+              "angelo_litrico",
+              "anti_social_social_club",
+              "antony_morato",
+              "apple",
+              "ara",
+              "arcteryx",
+              "arena",
+              "arizona",
+              "armani",
+              "armani_exchange",
+              "armani_jeans",
+              "ash",
+              "asics",
+              "...(truncated)"
+            ]
+          },
+          {
+            "name": "schuhe_herren.groesse",
+            "write": "required",
+            "label": "Größe",
+            "supported_count": 22,
+            "supported_values": [
+              "less40",
+              "40",
+              "40.5",
+              "41",
+              "41.5",
+              "42",
+              "42.5",
+              "43",
+              "43.5",
+              "44",
+              "44.5",
+              "45",
+              "45.5",
+              "46",
+              "46.5",
+              "47",
+              "47.5",
+              "48",
+              "48.5",
+              "49",
+              "49.5",
+              "greater45"
+            ]
+          },
+          {
+            "name": "schuhe_herren.color",
+            "write": "required",
+            "label": "Farbe",
+            "supported_count": 22,
+            "supported_values": [
+              "beige",
+              "blau",
+              "braun",
+              "bunt",
+              "creme",
+              "gelb",
+              "gold",
+              "grau",
+              "grün",
+              "khaki",
+              "lavendel",
+              "lila",
+              "orange",
+              "pink",
+              "print",
+              "rose",
+              "rot",
+              "schwarz",
+              "silber",
+              "türkis",
+              "weiß",
+              "sonstige"
+            ]
+          },
+          {
+            "name": "schuhe_herren.condition",
+            "write": "required",
+            "label": "Zustand",
+            "supported_count": 5,
+            "supported_values": [
+              "new_with_tag",
+              "new",
+              "like_new",
+              "ok",
+              "alright"
+            ]
+          },
+          {
+            "name": "schuhe_herren.seller_badges",
+            "write": "optional",
+            "label": "Zusatzleistungen",
+            "supported_count": 3,
+            "supported_values": [
+              "none",
+              "thirty_days_return",
+              "guarantee"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

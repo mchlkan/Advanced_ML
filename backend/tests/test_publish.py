@@ -100,7 +100,7 @@ def test_runner_posts_kleinanzeigen_successfully(app_client, jpeg_bytes, drain_p
     monkeypatch.setenv("KA_SESSION_PATH", str(session_file))
 
     async def fake_publish(image_path, payload):
-        assert payload["category_id"] == 160       # tshirts → Kleidung_Herren
+        assert payload["category_id"] == 160       # Men's clothing → Herrenbekleidung
         assert payload["title"] == "Olive You T-Shirt"
         assert payload["price_eur"] == 8.0
         return 2929292929, "https://www.kleinanzeigen.de/s-anzeige/2929292929"
@@ -109,7 +109,7 @@ def test_runner_posts_kleinanzeigen_successfully(app_client, jpeg_bytes, drain_p
 
     listing_id = _upload(app_client, jpeg_bytes)
     _, body = _enqueue(app_client, listing_id, "kleinanzeigen", {
-        "category": "tshirts", "condition": "Very good",
+        "category": "Men's clothing", "condition": "Very good",
         "title": "Olive You T-Shirt", "description": "Cotton tee, size M.",
         "price_eur": 8.0,
     })
@@ -179,7 +179,7 @@ def test_runner_posts_successfully(app_client, jpeg_bytes, drain_publish_jobs, m
     async def fake_publish(image_path, payload):
         assert payload["catalog_id"] == 221
         assert payload["condition_id"] == 2
-        return 1234567890, "https://www.vinted.fr/items/1234567890"
+        return 1234567890, "https://www.vinted.com/items/1234567890"
 
     monkeypatch.setattr("backend.queue.runner.vinted_integration.publish", fake_publish)
 
@@ -193,7 +193,7 @@ def test_runner_posts_successfully(app_client, jpeg_bytes, drain_publish_jobs, m
     job = _status(app_client, body["job_id"])
     assert job["status"] == "posted"
     assert job["platform_listing_id"] == "1234567890"
-    assert job["platform_listing_url"] == "https://www.vinted.fr/items/1234567890"
+    assert job["platform_listing_url"] == "https://www.vinted.com/items/1234567890"
     assert job["error"] is None
 
 
@@ -212,7 +212,7 @@ def test_runner_retries_on_blocked_then_succeeds(app_client, jpeg_bytes, drain_p
         call_count["n"] += 1
         if call_count["n"] < 3:
             raise VintedBlocked(f"draft create: DataDome blocked at status 429")
-        return 9999, "https://www.vinted.fr/items/9999"
+        return 9999, "https://www.vinted.com/items/9999"
 
     monkeypatch.setattr("backend.queue.runner.vinted_integration.publish", fake_publish)
 
