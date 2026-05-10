@@ -109,7 +109,7 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
                 boxShadow: "0 0 0 4px oklch(0.62 0.15 145 / 0.15)",
               }}
             />
-            <SmallCaps size={10.5}>Listing opened</SmallCaps>
+            <SmallCaps size={10.5}>Live on {PLATFORM_LABEL[platform]}</SmallCaps>
           </div>
 
           <h2
@@ -122,7 +122,7 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
               textWrap: "balance",
             } as React.CSSProperties}
           >
-            We pre-filled {PLATFORM_LABEL[platform]} in a new tab.
+            Your listing is live on {PLATFORM_LABEL[platform]}.
           </h2>
           <p
             style={{
@@ -132,8 +132,8 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
               lineHeight: 1.5,
             }}
           >
-            Switch over to review photos, confirm the price, and hit publish on{" "}
-            {PLATFORM_LABEL[platform]} itself. We don&apos;t post on your behalf.
+            We opened it in a new tab so you can give it a final check or share
+            the link.
           </p>
 
           {/* Summary */}
@@ -148,8 +148,7 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
             }}
           >
             <div style={{ color: "#0e0f0e", fontWeight: 500 }}>
-              {PLATFORM_LABEL[platform]} · {fmt(activeBlock.price.q50)} · drafted in{" "}
-              {(results.latency_ms / 1000).toFixed(1)}s
+              {PLATFORM_LABEL[platform]} · {fmt(activeBlock.price.q50)}
             </div>
             <div
               style={{

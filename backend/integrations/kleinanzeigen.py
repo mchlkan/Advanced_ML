@@ -709,23 +709,24 @@ class KAClient:
         # Try the Location header first (canonical place for created-resource ID)
         loc = resp.headers.get("location") or resp.headers.get("Location") or ""
         m = _LOCATION_ID_RE.search(loc)
+        ad: dict = {}
         if m:
             listing_id = int(m.group(1))
         else:
             # Fall back to scraping the JAXB-JSON response for the listing id
             data = resp.json()
-            ad = data.get("{http://www.ebayclassifiedsgroup.com/schema/ad/v1}ad", {}).get("value", {})
+            ad = data.get("{http://www.ebayclassifiedsgroup.com/schema/ad/v1}ad", {}).get("value", {}) or {}
             raw_id = ad.get("id") or ad.get("@id") or ""
             try:
                 listing_id = int(raw_id)
             except (TypeError, ValueError):
                 listing_id = 0
-        url_out = (
-            f"https://www.kleinanzeigen.de/s-anzeige/{listing_id}"
-            if listing_id
-            else "https://www.kleinanzeigen.de/m-meine-anzeigen.html"
-        )
-        return listing_id, url_out
+        if not listing_id:
+            raise KAError(
+                f"listing submit: no listing id in response "
+                f"(Location={loc!r}, body_keys={list(ad.keys()) or None})"
+            )
+        return listing_id, f"https://www.kleinanzeigen.de/s-anzeige/{listing_id}"
 
 
 def _classify_error(resp: httpx.Response, step: str) -> KAError:
