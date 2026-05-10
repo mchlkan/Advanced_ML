@@ -1135,6 +1135,64 @@ entry point touches, not just the functions actually invoked.
 
 ---
 
+### Day 5 — 2026-05-10 (continued): architectural question — Vercel vs all-EC2 hosting
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commits:** `<this commit>` Log Vercel-vs-EC2 architecture explainer
+
+#### Prompt 1
+> "Maybe dump question but why do we even need to host frontend through vercel what are the benefits compared to directly hosting it on the server aswell?"
+
+**Decision:** Treated as a genuine architecture question rather than
+a "should we switch?" question — the user explicitly framed it as
+"dump question" suggesting curiosity not commitment to change. Gave
+a balanced trade-off table covering both sides:
+
+Vercel wins:
+- Build runs on Vercel's infra (free 4 GB RAM machines) — npm build
+  on a t2.small would compete with DINOv2 + torch + FastAPI for the
+  2 GB RAM and could OOM
+- Global CDN for static assets (vs Stockholm-only on EC2)
+- Atomic deploys + instant rollback
+- Automatic SSL for *.vercel.app (no certbot)
+- Built-in image optimization for Next.js <Image>
+- Edge DDoS protection
+
+All-EC2 wins:
+- Same origin = no CORS (we currently work around with CORS_ORIGINS env var)
+- One control plane to monitor + debug
+- Simpler cookies (no SameSite cross-site dance)
+- No vendor dependency on Vercel
+- One bill
+
+Concluded honestly: for this 1-week course demo with one EU-region
+server and a small audience, the practical difference is minimal.
+If asked upfront I would have leaned Vercel mainly to keep `npm run
+build` off the RAM-tight t2.small. Now that we're already deployed,
+not worth switching unless there's a specific reason (e.g., wanting
+to demo full-control infra, avoiding Vercel credential sharing).
+
+Did NOT recommend a switch — the user asked an information question,
+not an action question. Left the decision to them.
+
+In parallel, stopped the old `resell-backend` container which was
+restart-looping on the pandas import error (waiting for the new
+image to finish building).
+
+**Outcome:** User got a balanced architectural explainer; no work
+done either way. Architectural status quo preserved.
+
+**Reflection:** when the user asks an "open" question with phrasing
+like "dump question," "stupid question," or "could we...," resist
+the impulse to assume they want action. Give the explainer they
+asked for, with honest pros/cons of both sides, and explicitly state
+your own recommendation but make it clear they decide. Saves churn
+versus assuming "you wouldn't ask if you weren't considering
+switching."
+
+---
+
 ### Day 6 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
