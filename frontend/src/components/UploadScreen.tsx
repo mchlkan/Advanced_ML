@@ -17,38 +17,54 @@ export default function UploadScreen({ onFileSelected, onInventory, error }: Pro
     if (!file) return;
     const url = URL.createObjectURL(file);
     onFileSelected(file, url);
-    // Reset so selecting the same file again still fires onChange
     e.target.value = "";
   }
 
   return (
     <div
       style={{
-        minHeight: "100dvh",
+        height: "100dvh",
         display: "flex",
         flexDirection: "column",
-        backgroundColor: "var(--color-bg)",
-        color: "var(--color-ink)",
-        fontFamily: "var(--font-sans)",
+        backgroundColor: "#fafaf8",
+        color: "#0e0f0e",
+        fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+        boxSizing: "border-box",
       }}
     >
-      {/* Header */}
+      {/* App header */}
       <header
         style={{
           padding: "20px 24px 0",
           display: "flex",
-          alignItems: "baseline",
-          gap: 10,
+          alignItems: "center",
+          gap: 8,
         }}
       >
-        <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.3px" }}>
+        <div
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 6,
+            backgroundColor: "oklch(0.62 0.15 145)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: "#fff" }} />
+        </div>
+        <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.2px" }}>
           Resell Copilot
         </span>
         <span
           style={{
-            fontSize: 11,
-            color: "var(--color-ink-tertiary)",
-            letterSpacing: "0.4px",
+            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+            fontSize: 10.5,
+            color: "#9b9c99",
+            textTransform: "uppercase",
+            letterSpacing: "1.2px",
           }}
         >
           v0.1 · demo
@@ -62,165 +78,226 @@ export default function UploadScreen({ onFileSelected, onInventory, error }: Pro
             cursor: "pointer",
             fontSize: 13,
             fontWeight: 500,
-            color: "var(--color-ink-secondary)",
+            color: "#3a3b3a",
             padding: 0,
-            letterSpacing: "-0.1px",
+            minHeight: 44,
+            fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
           }}
         >
           My Listings
         </button>
       </header>
 
-      {/* Main content */}
-      <main
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          padding: "0 24px",
-          gap: 0,
-        }}
-      >
-        {/* Hero */}
-        <div style={{ marginBottom: 20 }}>
-          <h1
-            style={{
-              fontSize: 34,
-              fontWeight: 590,
-              letterSpacing: "-1.2px",
-              lineHeight: 1.05,
-              margin: 0,
-            }}
-          >
-            Photo → listing.
-            <br />
-            In seconds.
-          </h1>
-        </div>
-
+      {/* Hero */}
+      <div style={{ padding: "36px 24px 28px" }}>
+        <h1
+          style={{
+            margin: 0,
+            fontSize: 34,
+            fontWeight: 600,
+            letterSpacing: "-1.1px",
+            lineHeight: 1.05,
+          }}
+        >
+          Photo&nbsp;→ listing.
+          <br />
+          <span style={{ color: "#6b6c6a" }}>In seconds.</span>
+        </h1>
         <p
           style={{
+            margin: "14px 0 0",
             fontSize: 15,
-            color: "var(--color-ink-secondary)",
-            lineHeight: 1.5,
-            margin: "0 0 36px",
+            lineHeight: 1.45,
+            color: "#3a3b3a",
+            maxWidth: 320,
           }}
         >
-          Snap a piece you want to sell. We identify it, price it across Vinted
-          and Kleinanzeigen, and draft the listing.
+          Snap a piece you want to sell. We identify it, price it across Vinted and
+          Kleinanzeigen, and draft the listing.
         </p>
+      </div>
 
-        {/* Upload zone */}
+      {/* Viewfinder zone */}
+      <div style={{ padding: "0 20px", flex: 1, display: "flex", flexDirection: "column" }}>
         <div
           style={{
-            backgroundColor: "var(--color-bg-card)",
-            padding: "28px 24px",
-            marginBottom: 24,
+            flex: 1,
+            position: "relative",
+            background: "#fff",
+            border: "1px solid #e7e5e0",
+            borderRadius: 18,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
           }}
         >
-          {/* Guidelines */}
+          {/* Viewfinder grid */}
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "6px 12px",
-              marginBottom: 20,
+              position: "absolute",
+              inset: 18,
+              backgroundImage: `
+                linear-gradient(#efece6 1px, transparent 1px),
+                linear-gradient(90deg, #efece6 1px, transparent 1px)
+              `,
+              backgroundSize: "33.33% 33.33%",
+              opacity: 0.7,
+            }}
+          />
+          {/* Corner brackets */}
+          {[
+            { top: 14, left: 14, borderTopWidth: 2, borderLeftWidth: 2 } as React.CSSProperties & { top?: number; left?: number; right?: number; bottom?: number },
+            { top: 14, right: 14, borderTopWidth: 2, borderRightWidth: 2 } as React.CSSProperties & { top?: number; left?: number; right?: number; bottom?: number },
+            { bottom: 14, left: 14, borderBottomWidth: 2, borderLeftWidth: 2 } as React.CSSProperties & { top?: number; left?: number; right?: number; bottom?: number },
+            { bottom: 14, right: 14, borderBottomWidth: 2, borderRightWidth: 2 } as React.CSSProperties & { top?: number; left?: number; right?: number; bottom?: number },
+          ].map((p, i) => (
+            <div
+              key={i}
+              style={{
+                position: "absolute",
+                width: 22,
+                height: 22,
+                borderColor: "#0e0f0e",
+                borderStyle: "solid",
+                borderWidth: 0,
+                ...p,
+              }}
+            />
+          ))}
+
+          {/* Camera icon + helper */}
+          <div
+            style={{
+              position: "relative",
+              zIndex: 1,
+              textAlign: "center",
+              padding: 20,
             }}
           >
-            {["Center the item", "Plain background", "Good light", "One piece per photo"].map((tip) => (
-              <span
-                key={tip}
-                style={{
-                  fontSize: 11,
-                  color: "var(--color-ink-tertiary)",
-                  letterSpacing: "0.4px",
-                  textTransform: "uppercase",
-                }}
-              >
-                {tip}
-              </span>
-            ))}
+            <div
+              style={{
+                width: 62,
+                height: 62,
+                borderRadius: 31,
+                background: "#0e0f0e",
+                color: "#fff",
+                margin: "0 auto 18px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxShadow: "0 6px 16px rgba(14,15,14,0.18)",
+              }}
+            >
+              <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+                <path
+                  d="M3 8a2 2 0 012-2h2.5l1.5-2h8l1.5 2H21a2 2 0 012 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinejoin="round"
+                />
+                <circle cx="13" cy="14" r="4.2" stroke="currentColor" strokeWidth="1.6" />
+              </svg>
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: "#0e0f0e", marginBottom: 4 }}>
+              Center the item
+            </div>
+            <div
+              style={{
+                fontSize: 13,
+                color: "#6b6c6a",
+                maxWidth: 220,
+                margin: "0 auto",
+                lineHeight: 1.4,
+              }}
+            >
+              Plain background · good light · one piece per photo
+            </div>
           </div>
+        </div>
 
+        {/* Buttons */}
+        <div style={{ padding: "20px 0 16px", display: "flex", flexDirection: "column", gap: 10 }}>
           {error && (
             <p
               style={{
                 fontSize: 13,
                 color: "#c0392b",
-                margin: "0 0 16px",
+                margin: "0 0 4px",
                 padding: "10px 12px",
                 backgroundColor: "#fdf0ee",
-                borderLeft: "3px solid #c0392b",
+                borderRadius: 10,
+                border: "1px solid #f5c6c0",
               }}
             >
               {error}
             </p>
           )}
-
-          {/* Camera button */}
           <button
             onClick={() => cameraInputRef.current?.click()}
             style={{
-              display: "block",
               width: "100%",
-              padding: "16px 0",
-              backgroundColor: "var(--color-ink)",
-              color: "var(--color-bg)",
-              fontSize: 15,
-              fontWeight: 600,
-              letterSpacing: "-0.2px",
+              height: 54,
+              borderRadius: 14,
               border: "none",
               cursor: "pointer",
-              marginBottom: 10,
-              minHeight: 52,
+              backgroundColor: "oklch(0.62 0.15 145)",
+              color: "#fff",
+              fontSize: 16,
+              fontWeight: 600,
+              letterSpacing: "-0.1px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10,
+              boxShadow:
+                "0 1px 0 rgba(255,255,255,0.4) inset, 0 4px 12px oklch(0.62 0.15 145 / 0.25)",
+              fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
             }}
           >
+            <svg width="18" height="18" viewBox="0 0 26 26" fill="none">
+              <path
+                d="M3 8a2 2 0 012-2h2.5l1.5-2h8l1.5 2H21a2 2 0 012 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinejoin="round"
+              />
+              <circle cx="13" cy="14" r="4.2" stroke="currentColor" strokeWidth="1.8" />
+            </svg>
             Take a photo
           </button>
-
-          {/* Library button */}
           <button
             onClick={() => libraryInputRef.current?.click()}
             style={{
-              display: "block",
               width: "100%",
-              padding: "15px 0",
-              backgroundColor: "transparent",
-              color: "var(--color-ink)",
+              height: 50,
+              borderRadius: 14,
+              border: "1px solid #e7e5e0",
+              cursor: "pointer",
+              backgroundColor: "#fff",
+              color: "#0e0f0e",
               fontSize: 15,
               fontWeight: 500,
-              letterSpacing: "-0.2px",
-              border: "1.5px solid var(--color-border)",
-              cursor: "pointer",
-              minHeight: 52,
+              fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
             }}
           >
             Choose from library
           </button>
         </div>
-      </main>
+      </div>
 
       {/* Footer */}
-      <footer
+      <div
         style={{
-          padding: "0 24px 28px",
+          padding: "0 24px 36px",
           textAlign: "center",
+          fontSize: 12,
+          color: "#9b9c99",
         }}
       >
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--color-ink-tertiary)",
-            margin: 0,
-          }}
-        >
-          No account · No clutter · You publish on the platform
-        </p>
-      </footer>
+        No account · No clutter · You publish on the platform
+      </div>
 
-      {/* Visually hidden file inputs — position:absolute avoids the mobile crash
-          that display:none triggers when programmatically opening a file picker */}
       <input
         ref={cameraInputRef}
         type="file"

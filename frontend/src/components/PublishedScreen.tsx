@@ -23,17 +23,12 @@ function shortId(id: string) {
   return id.slice(0, 8);
 }
 
-export default function PublishedScreen({
-  platform,
-  listingUrl,
-  results,
-  onReset,
-}: Props) {
+const ACCENT = "oklch(0.62 0.15 145)";
+
+export default function PublishedScreen({ platform, listingUrl, results, onReset }: Props) {
   const tabRef = useRef<Window | null>(null);
 
-  const activePlatform = platform;
   const otherPlatform: Platform = platform === "vinted" ? "kleinanzeigen" : "vinted";
-
   const activeBlock = platform === "vinted" ? results.vinted : results.kleinanzeigen;
   const otherBlock = platform === "vinted" ? results.kleinanzeigen : results.vinted;
 
@@ -45,188 +40,284 @@ export default function PublishedScreen({
     }
   }
 
+  const receiptRows: [string, string][] = [
+    ["Platform", PLATFORM_LABEL[platform]],
+    ["Suggested", fmt(activeBlock.price.q50)],
+    ["Title", activeBlock.identification.title ?? "—"],
+    ["Listing ID", `#${shortId(results.listing_id)}`],
+    ["Drafted", `${(results.latency_ms / 1000).toFixed(1)}s`],
+  ];
+
   return (
     <div
       style={{
-        minHeight: "100dvh",
+        height: "100dvh",
         display: "flex",
         flexDirection: "column",
-        backgroundColor: "var(--color-bg)",
-        color: "var(--color-ink)",
-        fontFamily: "var(--font-sans)",
+        backgroundColor: "#fafaf8",
+        color: "#0e0f0e",
+        fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+        boxSizing: "border-box",
       }}
     >
       {/* Header */}
-      <header
-        style={{
-          padding: "20px 24px 16px",
-          borderBottom: "1px solid var(--color-border)",
-        }}
-      >
-        <button
-          onClick={onReset}
-          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 15, fontWeight: 600, letterSpacing: "-0.3px", color: "var(--color-ink)", minHeight: 44 }}
-        >
-          Resell Copilot
-        </button>
-      </header>
-
-      <main style={{ flex: 1, padding: "28px 24px 0" }}>
-        {/* Success heading */}
-        <h2
+      <header style={{ padding: "20px 24px 16px", display: "flex", alignItems: "center", gap: 8 }}>
+        <div
           style={{
-            fontSize: 26,
-            fontWeight: 590,
-            letterSpacing: "-0.7px",
-            margin: "0 0 8px",
+            width: 22,
+            height: 22,
+            borderRadius: 6,
+            backgroundColor: ACCENT,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
           }}
         >
-          Listed on {PLATFORM_LABEL[activePlatform]}
-        </h2>
+          <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: "#fff" }} />
+        </div>
+        <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.2px" }}>
+          Resell Copilot
+        </span>
+      </header>
 
-        <p
+      <div
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
+          padding: "8px 20px 0",
+        } as React.CSSProperties}
+      >
+        {/* Receipt card */}
+        <div
           style={{
-            fontSize: 15,
-            color: "var(--color-ink-secondary)",
-            margin: "0 0 6px",
+            background: "#fff",
+            borderRadius: 18,
+            border: "1px solid #e7e5e0",
+            padding: "22px 22px 20px",
+          }}
+        >
+          {/* Status badge */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              fontSize: 10.5,
+              color: "#9b9c99",
+              textTransform: "uppercase",
+              letterSpacing: "1.4px",
+              marginBottom: 18,
+            }}
+          >
+            <div
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 6,
+                background: ACCENT,
+                boxShadow: "0 0 0 4px oklch(0.62 0.15 145 / 0.15)",
+              }}
+            />
+            Listing opened
+          </div>
+
+          <h2
+            style={{
+              margin: 0,
+              fontSize: 24,
+              fontWeight: 600,
+              letterSpacing: "-0.7px",
+              lineHeight: 1.15,
+              textWrap: "balance",
+            } as React.CSSProperties}
+          >
+            We pre-filled {PLATFORM_LABEL[platform]} in a new tab.
+          </h2>
+          <p
+            style={{
+              margin: "10px 0 0",
+              fontSize: 14,
+              color: "#6b6c6a",
+              lineHeight: 1.5,
+            }}
+          >
+            Switch over to review photos, confirm the price, and hit publish on{" "}
+            {PLATFORM_LABEL[platform]} itself. We don&apos;t post on your behalf.
+          </p>
+
+          {/* Receipt rows */}
+          <div
+            style={{
+              marginTop: 22,
+              paddingTop: 18,
+              borderTop: "1px dashed #e7e5e0",
+              display: "grid",
+              gap: 10,
+              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              fontSize: 12,
+              color: "#3a3b3a",
+            }}
+          >
+            {receiptRows.map(([k, v]) => (
+              <div
+                key={k}
+                style={{ display: "flex", justifyContent: "space-between", gap: 16 }}
+              >
+                <span
+                  style={{
+                    color: "#9b9c99",
+                    textTransform: "uppercase",
+                    letterSpacing: "1px",
+                    flexShrink: 0,
+                  }}
+                >
+                  {k}
+                </span>
+                <span
+                  style={{
+                    color: "#0e0f0e",
+                    fontWeight: 500,
+                    textAlign: "right",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    maxWidth: "60%",
+                  }}
+                >
+                  {v}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Reopen button */}
+          <button
+            onClick={reopenTab}
+            style={{
+              marginTop: 20,
+              width: "100%",
+              padding: "12px 14px",
+              borderRadius: 12,
+              border: "1px solid #e7e5e0",
+              background: "#fff",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+              fontSize: 14,
+              fontWeight: 500,
+              color: "#0e0f0e",
+            }}
+          >
+            <span>Reopen {PLATFORM_LABEL[platform]} tab</span>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path
+                d="M5 2h7v7M12 2L5 9M2 6v6h6"
+                stroke="#0e0f0e"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+
+        {/* Cross-post tip */}
+        <div
+          style={{
+            marginTop: 16,
+            padding: "12px 14px",
+            borderRadius: 12,
+            background: "#fff",
+            border: "1px solid #efece6",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            fontSize: 13,
+            color: "#3a3b3a",
             lineHeight: 1.45,
           }}
         >
-          Your listing is live — opened in a new tab.
-        </p>
-
-        <p
-          style={{
-            fontSize: 13,
-            color: "var(--color-ink-tertiary)",
-            margin: "0 0 32px",
-            lineHeight: 1.5,
-          }}
-        >
-          All fields were filled automatically from your photo analysis.
-          You can edit or unpublish the listing directly on {PLATFORM_LABEL[activePlatform]}.
-        </p>
-
-        {/* Summary table */}
-        <div
-          style={{
-            backgroundColor: "var(--color-bg-card)",
-            padding: "20px",
-            marginBottom: 24,
-          }}
-        >
-          {[
-            ["Platform", PLATFORM_LABEL[activePlatform]],
-            ["Suggested", fmt(activeBlock.price.q50)],
-            [
-              "Title",
-              activeBlock.identification.title ?? "—",
-            ],
-            ["Listing ID", `#${shortId(results.listing_id)}`],
-            ["Drafted in", `${(results.latency_ms / 1000).toFixed(1)}s`],
-          ].map(([key, value]) => (
-            <div
-              key={key}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                gap: 16,
-                paddingBottom: 12,
-                marginBottom: 12,
-                borderBottom: "1px solid var(--color-border)",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  letterSpacing: "0.8px",
-                  textTransform: "uppercase",
-                  color: "var(--color-ink-tertiary)",
-                  flexShrink: 0,
-                  paddingTop: 1,
-                }}
-              >
-                {key}
-              </span>
-              <span
-                style={{
-                  fontSize: 13,
-                  color: "var(--color-ink)",
-                  textAlign: "right",
-                  lineHeight: 1.4,
-                  wordBreak: "break-word",
-                }}
-              >
-                {value}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {/* Reopen button */}
-        <button
-          onClick={reopenTab}
-          style={{
-            display: "block",
-            width: "100%",
-            padding: "16px 0",
-            backgroundColor: "var(--color-ink)",
-            color: "var(--color-bg)",
-            fontSize: 15,
-            fontWeight: 600,
-            letterSpacing: "-0.2px",
-            border: "none",
-            cursor: "pointer",
-            minHeight: 52,
-            marginBottom: 20,
-          }}
-        >
-          Reopen {PLATFORM_LABEL[activePlatform]} tab
-        </button>
-
-        {/* Cross-post callout */}
-        <div
-          style={{
-            padding: "16px",
-            backgroundColor: "var(--color-bg-subtle)",
-            borderLeft: "3px solid var(--color-border)",
-            marginBottom: 32,
-          }}
-        >
-          <p style={{ fontSize: 13, color: "var(--color-ink-secondary)", margin: 0, lineHeight: 1.5 }}>
+          <div
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 9,
+              flexShrink: 0,
+              background: "oklch(0.62 0.13 55 / 0.1)",
+              color: "oklch(0.62 0.13 55)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 12,
+              fontWeight: 700,
+            }}
+          >
+            i
+          </div>
+          <div>
             Want to cross-post? You can also publish to{" "}
-            <strong style={{ color: "var(--color-ink)" }}>
+            <span style={{ color: "#0e0f0e", fontWeight: 600 }}>
               {PLATFORM_LABEL[otherPlatform]}
-            </strong>{" "}
+            </span>{" "}
             at {fmt(otherBlock.price.q50)} —{" "}
-            {otherPlatform === "kleinanzeigen" ? "faster local sale." : "better price."}
-          </p>
+            {otherPlatform === "kleinanzeigen" ? "faster local sale." : "larger fashion audience."}
+          </div>
         </div>
-      </main>
 
-      {/* Footer */}
-      <footer
+        <div style={{ height: 24 }} />
+      </div>
+
+      {/* Bottom actions */}
+      <div
         style={{
-          padding: "0 24px calc(24px + env(safe-area-inset-bottom))",
-          textAlign: "center",
+          flexShrink: 0,
+          padding: "0 20px calc(20px + env(safe-area-inset-bottom))",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
         }}
       >
         <button
           onClick={onReset}
           style={{
-            background: "none",
-            border: "none",
-            fontSize: 14,
-            color: "var(--color-ink-secondary)",
+            width: "100%",
+            height: 54,
+            borderRadius: 14,
+            border: "1.5px solid #0e0f0e",
             cursor: "pointer",
-            minHeight: 44,
+            background: "#0e0f0e",
+            color: "#fff",
+            fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+            fontSize: 16,
+            fontWeight: 600,
+            letterSpacing: "-0.1px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
           }}
         >
-          Start a new listing →
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M8 3v10M3 8h10" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+          Sell another piece
         </button>
-      </footer>
+        <div
+          style={{
+            textAlign: "center",
+            fontSize: 12,
+            color: "#9b9c99",
+            paddingBottom: 4,
+          }}
+        >
+          No history kept · No account · Privacy by default
+        </div>
+      </div>
     </div>
   );
 }

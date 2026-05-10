@@ -11,40 +11,78 @@ const PLATFORM_LABEL: Record<Platform, string> = {
   kleinanzeigen: "Kleinanzeigen",
 };
 
+const ACCENT = "oklch(0.62 0.15 145)";
+
 export default function PublishingScreen({ platform }: Props) {
   return (
     <div
       style={{
-        minHeight: "100dvh",
+        height: "100dvh",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "var(--color-bg)",
-        color: "var(--color-ink)",
-        fontFamily: "var(--font-sans)",
+        backgroundColor: "#fafaf8",
+        color: "#0e0f0e",
+        fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
         padding: "0 24px",
-        gap: 16,
+        gap: 24,
       }}
     >
+      {/* Logo */}
+      <div
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: 6,
+          backgroundColor: ACCENT,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: "#fff" }} />
+      </div>
+
+      {/* Spinner */}
       <div
         style={{
           width: 36,
           height: 36,
-          border: "3px solid var(--color-border)",
-          borderTopColor: "var(--color-ink)",
+          border: "3px solid #e7e5e0",
+          borderTopColor: ACCENT,
           borderRadius: "50%",
-          animation: "spin 0.8s linear infinite",
+          animation: "rcSpin 0.8s linear infinite",
         }}
       />
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      <p style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.3px", margin: 0 }}>
-        Preparing draft on {PLATFORM_LABEL[platform]}…
-      </p>
-      <p style={{ fontSize: 13, color: "var(--color-ink-secondary)", margin: 0, textAlign: "center", lineHeight: 1.5 }}>
-        Uploading your photo and filling in all fields.
-        You&apos;ll review and publish on {PLATFORM_LABEL[platform]} yourself.
-      </p>
+
+      <div style={{ textAlign: "center" }}>
+        <p
+          style={{
+            fontSize: 17,
+            fontWeight: 600,
+            letterSpacing: "-0.3px",
+            margin: "0 0 8px",
+          }}
+        >
+          Preparing draft on {PLATFORM_LABEL[platform]}…
+        </p>
+        <p
+          style={{
+            fontSize: 13,
+            color: "#6b6c6a",
+            margin: 0,
+            textAlign: "center",
+            lineHeight: 1.5,
+            maxWidth: 280,
+          }}
+        >
+          Uploading your photo and filling in all fields. You&apos;ll review and publish on{" "}
+          {PLATFORM_LABEL[platform]} yourself.
+        </p>
+      </div>
+
+      <style>{`@keyframes rcSpin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
