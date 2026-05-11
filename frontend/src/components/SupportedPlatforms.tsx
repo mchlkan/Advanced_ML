@@ -1,20 +1,22 @@
 "use client";
 
 /**
- * "Marketplaces" strip — shows where Resell Copilot can publish (Vinted,
- * Kleinanzeigen) and what's on the roadmap (Depop, Vestiaire Collective,
- * tagged "soon"). Wordmarks are styled text in each brand's casing/colour
- * — no logo artwork, no emoji. Designed to sit on the home (Pick) screen.
+ * "Marketplaces" strip — where Resell Copilot publishes (Vinted,
+ * Kleinanzeigen) and what's on the roadmap (Depop, Vestiaire
+ * Collective, tagged "soon"). Live platforms show their app-icon mark
+ * (self-hosted in /public/logos, sourced via Brandfetch) + a styled
+ * wordmark; roadmap ones are wordmark-only with a "soon" tag. No emoji.
+ * Designed to sit on the home (Pick) screen.
  */
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 const SERIF = 'Georgia, "Times New Roman", serif';
 
-// App brand tokens (kept in sync with globals.css @theme).
-const VINTED = "oklch(0.5 0.09 196)";
-const VINTED_SOFT = "oklch(0.975 0.02 196)";
-const KA = "oklch(0.6 0.14 50)";
-const KA_SOFT = "oklch(0.975 0.03 65)";
+// Per-brand accent (text + border + glow). Tuned to each platform's real
+// mark — Vinted's petrol teal, Kleinanzeigen's leaf green — rather than
+// the amber the rest of the app uses for KA badges.
+const VINTED = "oklch(0.46 0.075 201)";
+const KA = "oklch(0.5 0.135 132)";
 
 const MUTED = "#9b9c99";
 const SOON_BG = "#efece6";
@@ -25,9 +27,10 @@ type Platform = {
   live: boolean;
   /** brand-coloured wordmark, rendered inside the chip */
   word: React.ReactNode;
-  /** brand text colour + soft tint — only used when live */
+  /** path to the self-hosted app-icon mark (live platforms only) */
+  logo?: string;
+  /** brand accent — text colour, border, glow (live platforms only) */
   color?: string;
-  soft?: string;
 };
 
 const PLATFORMS: Platform[] = [
@@ -35,7 +38,7 @@ const PLATFORMS: Platform[] = [
     key: "vinted",
     live: true,
     color: VINTED,
-    soft: VINTED_SOFT,
+    logo: "/logos/vinted.jpg",
     word: (
       <span style={{ fontWeight: 700, letterSpacing: "-0.4px", fontSize: 14 }}>
         vinted
@@ -46,7 +49,7 @@ const PLATFORMS: Platform[] = [
     key: "kleinanzeigen",
     live: true,
     color: KA,
-    soft: KA_SOFT,
+    logo: "/logos/kleinanzeigen.jpg",
     word: (
       <span style={{ fontWeight: 600, letterSpacing: "-0.15px", fontSize: 13 }}>
         kleinanzeigen
@@ -66,7 +69,7 @@ const PLATFORMS: Platform[] = [
     key: "vestiaire",
     live: false,
     word: (
-      <span style={{ fontFamily: SERIF, color: "inherit", whiteSpace: "nowrap" }}>
+      <span style={{ fontFamily: SERIF, whiteSpace: "nowrap" }}>
         <span style={{ fontSize: 11, fontWeight: 500, letterSpacing: "1.4px" }}>
           VESTIAIRE
         </span>{" "}
@@ -78,6 +81,24 @@ const PLATFORMS: Platform[] = [
   },
 ];
 
+function LogoMark({ src }: { src: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt=""
+      width={19}
+      height={19}
+      style={{
+        borderRadius: 5,
+        display: "block",
+        flexShrink: 0,
+        objectFit: "cover",
+      }}
+    />
+  );
+}
+
 function Chip({ p }: { p: Platform }) {
   if (p.live) {
     return (
@@ -85,15 +106,17 @@ function Chip({ p }: { p: Platform }) {
         style={{
           display: "inline-flex",
           alignItems: "center",
-          minHeight: 30,
-          padding: "0 11px",
+          gap: 7,
+          minHeight: 32,
+          padding: "0 11px 0 6px",
           borderRadius: 9,
           color: p.color,
-          background: p.soft,
-          border: `1px solid color-mix(in oklch, ${p.color} 26%, transparent)`,
-          boxShadow: `0 1px 7px color-mix(in oklch, ${p.color} 14%, transparent)`,
+          background: "#fff",
+          border: `1px solid color-mix(in oklch, ${p.color} 24%, transparent)`,
+          boxShadow: `0 1px 7px color-mix(in oklch, ${p.color} 13%, transparent)`,
         }}
       >
+        {p.logo && <LogoMark src={p.logo} />}
         {p.word}
       </span>
     );
@@ -104,7 +127,7 @@ function Chip({ p }: { p: Platform }) {
         display: "inline-flex",
         alignItems: "center",
         gap: 7,
-        minHeight: 30,
+        minHeight: 32,
         padding: "0 7px 0 11px",
         borderRadius: 9,
         color: MUTED,
