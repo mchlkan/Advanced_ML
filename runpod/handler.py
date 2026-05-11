@@ -132,10 +132,21 @@ def handler(event):
         return {"error": f"unexpected hidden state shape {tuple(hidden_tensor.shape)}, expected ({EXPECTED_HIDDEN_DIM},)"}
     hidden = hidden_tensor.numpy().tolist()
 
-    new_tokens = gen.sequences[0, inputs["input_ids"].shape[1]:]
+    prompt_tokens = int(inputs["input_ids"].shape[1])
+    new_tokens = gen.sequences[0, prompt_tokens:]
     raw_text = _processor.decode(new_tokens, skip_special_tokens=True).strip()
+    print(
+        f"[infer] platform={platform} prompt_tokens={prompt_tokens} "
+        f"new_tokens={int(new_tokens.shape[0])}",
+        flush=True,
+    )
 
-    return {"hidden_state": hidden, "raw_text": raw_text}
+    return {
+        "hidden_state": hidden,
+        "raw_text": raw_text,
+        "prompt_tokens": prompt_tokens,
+        "output_tokens": int(new_tokens.shape[0]),
+    }
 
 
 runpod.serverless.start({"handler": handler})

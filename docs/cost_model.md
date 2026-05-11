@@ -51,32 +51,65 @@ keeps vision-token counts in the ~1 K range.
 
 ---
 
-## 2. Token accounting per scan
+## 2. Token accounting per scan — the actual numbers
 
-Qwen3-VL emits roughly **1 vision token per 28×28 px region** of the
-(downscaled) image, bounded by the processor's min/max-pixel limits. A typical
-~4:3 phone photo capped at 1024 px long-side ≈ 1024×768 ≈ 786 K px ≈ **~1,000
-vision tokens** (square crops hit ~1,280; 16:9 ~590).
+### Vision tokens (exact — deterministic from the image dimensions)
 
-Per single platform invocation:
+Qwen-VL's processor `smart_resize`s each image so both sides are multiples of
+**28 px** (a 14 px patch × a 2×2 merge), bounded by min/max-pixel limits, then
+emits **one token per 28×28 region** → `tokens = (h/28) × (w/28)`. The backend
+first downscales to **max 1024 px on the long side** (`resize_and_b64`), so the
+count is fully determined:
+
+| input photo | after 1024 px cap + smart_resize | vision tokens |
+|---|---|---|
+| **4:3 / 3:4 phone photo** (e.g. 4032×3024) — **the common case** | 1036×756 | **999** |
+| square crop (e.g. 3000×3000) | 980×980 | 1,225 |
+| 16:9 (e.g. 4096×2304) | 1036×588 | 777 |
+| already-small (≤ ~900 px, e.g. 800×600) | 812×588 | 609 |
+| a tight care-label crop (e.g. 1200×900, ~4:3) | 1036×756 | 999 |
+
+So: **~1,000 vision tokens per photo** for a normal phone shot; a square crop
+is the worst case at ~1,225.
+
+### Text tokens (measured with the Qwen tokenizer)
 
 | component | tokens | note |
 |---|---|---|
-| vision, item photo | ~1,000 (±~300) | 1024 px cap; ~1 token / 784 px |
-| vision, 2nd (care-label) photo | +~1,000 | only when a label photo is uploaded |
-| prompt text + chat scaffolding | ~250 | `get_prompt()` (6-field JSON spec) + `<\|im_start\|>` wrappers + image placeholders; `hints` adds ~10–30 when present |
-| generated output | ~50–90 | the 6-field JSON; hard cap `MAX_NEW_TOKENS=256`, but greedy stops at EOS so the cap rarely binds |
+| `get_prompt("vinted")` | **143** | the fixed 6-field JSON-spec prompt (507 chars) |
+| `get_prompt("kleinanzeigen")` | **144** | same, German-platform category vocab (541 chars) |
+| chat-template scaffolding | **~20** | default system line (`You are a helpful assistant.`) + `<\|im_start\|>`/`user`/`assistant` turn headers + `<\|vision_start\|>`/`<\|vision_end\|>` delimiters; +2 for a 2nd image |
+| `hints` (optional, on `/verify`) | ~10–30 | only when the user re-analyzes with corrections |
+| generated output | **~46–50** typical; ~50–70 with a long brand/title | the 6-field JSON (+1 EOS); hard cap `MAX_NEW_TOKENS=256`, but greedy stops at EOS so the cap essentially never binds |
 
-Per `/upload` (= 2 platform invocations):
+### Per request (one platform invocation)
 
-| | prompt tokens consumed | tokens generated |
+| | input tokens | output tokens | request total |
+|---|---|---|---|
+| **1 photo** | 999 + 143 + 20 ≈ **~1,160** | ~50 | **≈ 1,210** |
+| **2 photos** (item + label) | 999 + 999 + 144 + 22 ≈ **~2,165** | ~50 | **≈ 2,215** |
+
+(`/upload` issues two of these — Vinted + Kleinanzeigen — so per **upload**:
+**~2,320 in / ~100 out (≈ 2,420 total) for 1 photo**, **~4,330 in / ~100 out
+(≈ 4,430 total) for 2 photos**. Adding the second photo ≈ doubles the upload's
+prompt-token volume — the label image is added to *both* platform calls and the
+text prompt is tiny next to the images.)
+
+### Compute (the thing that costs GPU-seconds)
+
+Prefill dominates; one prefill of ~1,160–2,165 tokens >> ~50 decode steps.
+After the prefill fusion (§5.1) each invocation prefills **once**:
+
+| per `/upload` | prefill+decode token-equivalents | vs. before the fusion (2 prefills/call) |
 |---|---|---|
-| **1 photo** | ~2,500 (2 × ~1,250) | ~140 |
-| **2 photos** (item + label) | ~4,500 (2 × ~2,250) | ~140 |
+| 1 photo | 2 × (~1,160 + ~50) ≈ **~2,420** | 2 × (~2,320 + ~50) ≈ ~4,740 |
+| 2 photos | 2 × (~2,165 + ~50) ≈ **~4,430** | 2 × (~4,330 + ~50) ≈ ~8,760 |
 
-**Adding the second photo roughly doubles the prompt-token volume per upload**
-— the label image (~1 K tokens) is added to *both* platform calls, and the
-text prompt is tiny next to the images.
+> **Ground truth going forward:** the handler now logs `[infer] platform=… 
+> prompt_tokens=… new_tokens=…` per request and returns `prompt_tokens` /
+> `output_tokens` in its response (`runpod/handler.py`), so the real per-request
+> counts are visible in the RunPod worker logs once the new image is deployed —
+> use those to replace the estimates above if they drift.
 
 ---
 
@@ -135,10 +168,10 @@ while volume is low and bursty (i.e. now).
 
 **5.1 Fuse the two prefills.** The handler used to run a standalone
 `output_hidden_states` forward *and then* `generate()`, which re-prefilled the
-same ~1.25–2.25 K-token prompt from scratch. Replaced with a single
+same ~1.2–2.2 K-token prompt (§2) from scratch. Replaced with a single
 `generate(..., output_hidden_states=True, return_dict_in_generate=True)` and
 read the prefill last-token hidden state from `gen.hidden_states[0][-1][0,-1,:]`.
-Prefill dwarfs the ~70 decode steps, so dropping one prefill is **≈ −30–45 %
+Prefill dwarfs the ~50 decode steps, so dropping one prefill is **≈ −30–45 %
 GPU-seconds per invocation**. No infra change, no retrain. (`runpod/handler.py`)
 
 **5.2 bf16 instead of bnb 4-bit.** The 4B model is ~8 GB in bf16 — fits a
@@ -270,10 +303,10 @@ real cost because they exclude idle/cold GPU; the API numbers are all-in.
 
 ## 7. How to recompute
 
-**Vision tokens for an image** ≈ `round(width_px × height_px / 784)` after the
-backend's 1024 px-long-side downscale (Qwen3-VL: ~1 token per 28×28 px region;
-bounded by the processor's min/max-pixel limits, ~1,280 max for a square crop
-at 1024 px).
+**Vision tokens for an image** — exact: downscale so the long side ≤ 1024 px,
+round each side to the nearest multiple of 28, then `tokens = (h/28) × (w/28)`
+(bounded by the processor's min/max-pixel limits). See the table in §2; rough
+shortcut ≈ `round(downscaled_w × downscaled_h / 784)`.
 
 **Self-hosted $ per scan** ≈ `warm_latency_s × $_per_s × calls_per_scan`. Today
 `calls_per_scan = 2` (the platform fan-out); `$_per_s` from the table in §3;
