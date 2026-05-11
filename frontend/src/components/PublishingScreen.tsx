@@ -27,8 +27,8 @@ export default function PublishingScreen({ platforms, progress }: Props) {
   const subtitle = allDone
     ? "Wrapping up…"
     : platforms.length > 1
-      ? "Posting both listings in parallel. Usually 10–20 seconds; cold starts can be longer."
-      : "Posting the listing. Usually 5–10 seconds; cold starts can be longer.";
+      ? "Posting both listings in parallel. Usually 5–15 seconds."
+      : "Posting the listing. Usually 5–10 seconds.";
 
   return (
     <div
