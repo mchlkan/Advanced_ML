@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { InventoryItem } from "@/types/api";
 import {
   BASE,
@@ -141,14 +141,6 @@ function OpenIcon() {
     </svg>
   );
 }
-function PriceTagIcon() {
-  return (
-    <svg {...ICON_PROPS}>
-      <path d="M8.4 2.6H3.5a.9.9 0 0 0-.9.9v4.9c0 .24.1.47.26.64l5.7 5.7a.9.9 0 0 0 1.28 0l4.9-4.9a.9.9 0 0 0 0-1.28l-5.7-5.7a.9.9 0 0 0-.64-.26Z" strokeWidth="1.4" {...STROKE} />
-      <circle cx="5.6" cy="5.6" r="1.05" strokeWidth="1.3" stroke="currentColor" />
-    </svg>
-  );
-}
 function RelistIcon() {
   return (
     <svg {...ICON_PROPS}>
@@ -221,7 +213,6 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
-  const [priceEdit, setPriceEdit] = useState<InventoryItem | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<InventoryItem | null>(null);
 
   useEffect(() => {
@@ -304,8 +295,21 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
     setBusyState(item.listing_id, true);
     try {
       const res = await patchListingFields(item.listing_id, { price_eur: newPrice });
-      // Refresh inventory in the background so the card's title/brand/category
-      // reflects any side effects, but don't block the modal on it.
+      // Reflect the new price on the card immediately; the background
+      // refetch reconciles any other side effects.
+      setListings((prev) =>
+        prev.map((it) =>
+          it.listing_id === item.listing_id && it.prediction
+            ? {
+                ...it,
+                prediction: {
+                  ...it.prediction,
+                  english_fields: { ...it.prediction.english_fields, price_eur: newPrice },
+                },
+              }
+            : it,
+        ),
+      );
       void refetch();
       return res;
     } finally {
@@ -467,127 +471,104 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
             <div
               key={item.listing_id}
               style={{
-                display: "flex", flexDirection: "column",
+                display: "flex", gap: 14, alignItems: "flex-start",
                 padding: "16px 0",
                 borderBottom: "1px solid #e7e5e0",
               }}
             >
-              <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-                <button
-                  onClick={() => handleOpen(item)}
+              <button
+                onClick={() => handleOpen(item)}
+                style={{
+                  background: "none", border: "none", padding: 0,
+                  cursor: "pointer", flexShrink: 0,
+                }}
+                aria-label="Open listing"
+              >
+                <img
+                  src={`${BASE}${item.thumbnail_url}`}
+                  alt={title ?? "listing"}
                   style={{
-                    background: "none", border: "none", padding: 0,
-                    cursor: "pointer", flexShrink: 0,
+                    width: 64, height: 64, objectFit: "cover",
+                    backgroundColor: "#efece6",
+                    imageOrientation: "from-image",
+                    borderRadius: 10, border: "1px solid #e7e5e0",
+                    display: "block",
                   }}
-                  aria-label="Open listing"
-                >
-                  <img
-                    src={`${BASE}${item.thumbnail_url}`}
-                    alt={title ?? "listing"}
-                    style={{
-                      width: 64, height: 64, objectFit: "cover",
-                      backgroundColor: "#efece6",
-                      imageOrientation: "from-image",
-                      borderRadius: 10, border: "1px solid #e7e5e0",
-                      display: "block",
-                    }}
-                  />
-                </button>
-
-                <div
-                  style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
-                  onClick={() => handleOpen(item)}
-                >
-                  <div style={{
-                    display: "flex", alignItems: "baseline", gap: 8, marginBottom: 3,
-                  }}>
-                    <p style={{
-                      margin: 0, flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600,
-                      letterSpacing: "-0.2px", whiteSpace: "nowrap",
-                      overflow: "hidden", textOverflow: "ellipsis",
-                    }}>
-                      {title ?? "Untitled"}
-                    </p>
-                    {priceVal != null && (
-                      <span style={{
-                        flexShrink: 0,
-                        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                        fontSize: 13.5, fontWeight: 600, color: "#0e0f0e",
-                        letterSpacing: "-0.02em",
-                      }}>
-                        €{Math.round(priceVal)}
-                      </span>
-                    )}
-                  </div>
-                  <p style={{ margin: "0 0 6px", fontSize: 12, color: "#6b6c6a" }}>
-                    {[brand, category].filter(Boolean).join(" · ") || "—"}
-                  </p>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                    {publishedPlatforms.map((p) => (
-                      <PlatformBadge key={p} platform={p} />
-                    ))}
-                    {publishedPlatforms.length === 0 && (
-                      <SmallCaps size={10}>not published</SmallCaps>
-                    )}
-                    {item.vinted?.live && (
-                      <span style={{
-                        display: "inline-flex", alignItems: "center", gap: 8,
-                        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                        fontSize: 11, color: STAT_COLOR,
-                      }}>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
-                          title="views">
-                          <EyeIcon /> {item.vinted.live.views ?? 0}
-                        </span>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
-                          title="favourites">
-                          <HeartIcon /> {item.vinted.live.favourites ?? 0}
-                        </span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
+                />
+              </button>
 
               <div
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  display: "flex", justifyContent: "flex-end", gap: 7,
-                  marginTop: 11,
-                  opacity: isBusy ? 0.4 : 1,
-                  pointerEvents: isBusy ? "none" : "auto",
-                }}
+                style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+                onClick={() => handleOpen(item)}
               >
-                <IconBtn label="Open" onClick={() => handleOpen(item)}>
-                  <OpenIcon />
-                </IconBtn>
-                <IconBtn label="Change price" onClick={() => setPriceEdit(item)}>
-                  <PriceTagIcon />
-                </IconBtn>
-                {canRelist && (
-                  <IconBtn label="Relist" onClick={() => handleRelist(item)}>
-                    <RelistIcon />
+                <div style={{
+                  display: "flex", alignItems: "baseline", gap: 8, marginBottom: 3,
+                }}>
+                  <p style={{
+                    margin: 0, flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600,
+                    letterSpacing: "-0.2px", whiteSpace: "nowrap",
+                    overflow: "hidden", textOverflow: "ellipsis",
+                  }}>
+                    {title ?? "Untitled"}
+                  </p>
+                  <InlinePrice current={priceVal} onSave={(n) => handleSavePrice(item, n)} />
+                </div>
+                <p style={{ margin: "0 0 6px", fontSize: 12, color: "#6b6c6a" }}>
+                  {[brand, category].filter(Boolean).join(" · ") || "—"}
+                </p>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  {publishedPlatforms.map((p) => (
+                    <PlatformBadge key={p} platform={p} />
+                  ))}
+                  {publishedPlatforms.length === 0 && (
+                    <SmallCaps size={10}>not published</SmallCaps>
+                  )}
+                  {item.vinted?.live && (
+                    <span style={{
+                      display: "inline-flex", alignItems: "center", gap: 8,
+                      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                      fontSize: 11, color: STAT_COLOR,
+                    }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
+                        title="views">
+                        <EyeIcon /> {item.vinted.live.views ?? 0}
+                      </span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
+                        title="favourites">
+                        <HeartIcon /> {item.vinted.live.favourites ?? 0}
+                      </span>
+                    </span>
+                  )}
+                </div>
+
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    display: "flex", gap: 7, marginTop: 11, cursor: "default",
+                    opacity: isBusy ? 0.4 : 1,
+                    pointerEvents: isBusy ? "none" : "auto",
+                  }}
+                >
+                  <IconBtn label="Open" onClick={() => handleOpen(item)}>
+                    <OpenIcon />
                   </IconBtn>
-                )}
-                <IconBtn label="Mark sold" onClick={() => handleMarkSold(item)}>
-                  <SoldIcon />
-                </IconBtn>
-                <IconBtn label="Delete" destructive onClick={() => setDeleteConfirm(item)}>
-                  <TrashIcon />
-                </IconBtn>
+                  {canRelist && (
+                    <IconBtn label="Relist" onClick={() => handleRelist(item)}>
+                      <RelistIcon />
+                    </IconBtn>
+                  )}
+                  <IconBtn label="Mark sold" onClick={() => handleMarkSold(item)}>
+                    <SoldIcon />
+                  </IconBtn>
+                  <IconBtn label="Delete" destructive onClick={() => setDeleteConfirm(item)}>
+                    <TrashIcon />
+                  </IconBtn>
+                </div>
               </div>
             </div>
           );
         })}
       </main>
-
-      {priceEdit && (
-        <PriceEditModal
-          item={priceEdit}
-          onClose={() => setPriceEdit(null)}
-          onSaveAsync={(p) => handleSavePrice(priceEdit, p)}
-        />
-      )}
 
       {deleteConfirm && (
         <ConfirmDialog
@@ -622,165 +603,127 @@ function Backdrop({ onClick }: { onClick: () => void }) {
   );
 }
 
-const PLATFORM_LABELS_FULL: Record<string, string> = {
-  vinted: "Vinted",
-  kleinanzeigen: "Kleinanzeigen",
-};
-
-function PriceEditModal({
-  item,
-  onClose,
-  onSaveAsync,
+// Inline-editable price shown beside the listing title — tap the number,
+// type a new one, Enter / blur to save (Esc to cancel). Saving patches the
+// listing and pushes the new price to any live platform listings.
+function InlinePrice({
+  current,
+  onSave,
 }: {
-  item: InventoryItem;
-  onClose: () => void;
-  onSaveAsync: (price: number) => Promise<PatchFieldsResponse>;
+  current: number | null;
+  onSave: (n: number) => Promise<unknown>;
 }) {
-  const currentPrice =
-    (item.prediction?.english_fields?.price_eur as number | undefined) ??
-    item.prediction?.vinted?.q50 ??
-    null;
-  const [value, setValue] = useState<string>(
-    currentPrice != null ? String(Math.round(currentPrice)) : "",
-  );
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState("");
   const [saving, setSaving] = useState(false);
-  const [result, setResult] = useState<PatchFieldsResponse | null>(null);
-  const [topError, setTopError] = useState<string | null>(null);
-  const postedPlatforms = getPostedPlatforms(item);
-  const parsed = parseFloat(value.replace(",", "."));
-  const valid = Number.isFinite(parsed) && parsed > 0;
+  const [err, setErr] = useState(false);
+  const doneRef = useRef(false);
 
-  async function doSave() {
-    if (!valid) return;
+  const textStyle: React.CSSProperties = {
+    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+    fontSize: 13.5,
+    fontWeight: 600,
+    letterSpacing: "-0.02em",
+  };
+
+  function startEdit(e: React.MouseEvent) {
+    e.stopPropagation();
+    setVal(current != null ? String(Math.round(current)) : "");
+    setErr(false);
+    doneRef.current = false;
+    setEditing(true);
+  }
+
+  async function commit() {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    const n = parseFloat(val.replace(",", "."));
+    if (
+      !Number.isFinite(n) ||
+      n <= 0 ||
+      (current != null && Math.round(current) === Math.round(n))
+    ) {
+      setEditing(false);
+      return;
+    }
     setSaving(true);
-    setTopError(null);
     try {
-      const res = await onSaveAsync(parsed);
-      setResult(res);
-      // Auto-close on full success; stay open if any platform push errored
-      // so the user can read the message.
-      if (Object.values(res.pushed).every((p) => p?.ok)) {
-        setTimeout(onClose, 1200);
-      }
-    } catch (err) {
-      setTopError(err instanceof Error ? err.message : "Save failed");
+      await onSave(n);
+      setEditing(false);
+    } catch {
+      setErr(true);
+      doneRef.current = false; // allow retry
     } finally {
       setSaving(false);
     }
   }
 
-  return (
-    <>
-      <Backdrop onClick={saving ? () => {} : onClose} />
-      <div
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={startEdit}
+        title="Edit price"
         style={{
-          position: "fixed", left: 24, right: 24, bottom: "30%",
-          background: "#fff", borderRadius: 18,
-          padding: "20px 22px",
-          boxShadow: "0 12px 40px rgba(14,15,14,0.25)",
-          zIndex: 51,
-          fontFamily: FONT,
+          ...textStyle,
+          flexShrink: 0,
+          color: current != null ? "#0e0f0e" : "#9b9c99",
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          padding: 0,
         }}
       >
-        <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.3px", marginBottom: 4 }}>
-          Change price
-        </div>
-        <div style={{ fontSize: 13, color: "#6b6c6a", marginBottom: 16 }}>
-          {postedPlatforms.length === 0
-            ? "Saved locally. Will be used the next time you publish."
-            : `Pushes the new price live to ${postedPlatforms
-                .map((p) => PLATFORM_LABELS_FULL[p])
-                .join(" + ")}.`}
-        </div>
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8,
-          padding: "10px 14px", border: "1.5px solid #e7e5e0",
-          borderRadius: 12, background: "#fafaf8",
-          opacity: saving ? 0.6 : 1,
-        }}>
-          <span style={{ fontSize: 18, color: "#6b6c6a", fontWeight: 500 }}>€</span>
-          <input
-            autoFocus
-            type="number"
-            inputMode="decimal"
-            value={value}
-            disabled={saving}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="0"
-            style={{
-              flex: 1, fontSize: 18, fontWeight: 600,
-              border: "none", outline: "none", background: "transparent",
-              fontFamily: FONT,
-            }}
-          />
-        </div>
+        {current != null ? `€${Math.round(current)}` : "Set price"}
+      </button>
+    );
+  }
 
-        {(saving || result || topError) && (
-          <div style={{
-            marginTop: 14, padding: "10px 12px", borderRadius: 10,
-            background: "#fafaf8", border: "1px solid #efece6",
-            fontSize: 13, lineHeight: 1.5, color: "#3a3b3a",
-          }}>
-            {saving && <div>Saving and pushing to live listings…</div>}
-            {topError && (
-              <div style={{ color: "#c0392b" }}>{topError}</div>
-            )}
-            {result && (
-              <>
-                <div style={{ color: "#0e0f0e", fontWeight: 500 }}>
-                  ✓ Saved locally
-                </div>
-                {(["vinted", "kleinanzeigen"] as const).map((p) => {
-                  const r = result.pushed[p];
-                  if (!r) return null;
-                  return r.ok ? (
-                    <div key={p} style={{ color: "#0e0f0e" }}>
-                      ✓ {PLATFORM_LABELS_FULL[p]} updated
-                    </div>
-                  ) : (
-                    <div key={p} style={{ color: "#c0392b" }}>
-                      ✗ {PLATFORM_LABELS_FULL[p]}: {r.error}
-                    </div>
-                  );
-                })}
-              </>
-            )}
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-          <button
-            onClick={onClose}
-            disabled={saving}
-            style={{
-              flex: 1, height: 46, borderRadius: 12,
-              border: "1px solid #e7e5e0", background: "#fff",
-              cursor: saving ? "default" : "pointer",
-              opacity: saving ? 0.5 : 1,
-              fontSize: 14, fontWeight: 500,
-              color: "#0e0f0e", fontFamily: FONT,
-            }}
-          >
-            {result ? "Done" : "Cancel"}
-          </button>
-          {!result && (
-            <button
-              onClick={doSave}
-              disabled={!valid || saving}
-              style={{
-                flex: 1, height: 46, borderRadius: 12,
-                border: "none",
-                background: valid && !saving ? "oklch(0.62 0.15 145)" : "#9b9c99",
-                cursor: valid && !saving ? "pointer" : "default",
-                fontSize: 14, fontWeight: 600, color: "#fff", fontFamily: FONT,
-              }}
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-          )}
-        </div>
-      </div>
-    </>
+  return (
+    <span
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        ...textStyle,
+        flexShrink: 0,
+        display: "inline-flex",
+        alignItems: "baseline",
+        color: "#0e0f0e",
+      }}
+    >
+      <span>€</span>
+      <input
+        autoFocus
+        type="text"
+        inputMode="decimal"
+        value={val}
+        disabled={saving}
+        onChange={(e) => setVal(e.target.value.replace(/[^\d.,]/g, ""))}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          else if (e.key === "Escape") {
+            doneRef.current = true;
+            setEditing(false);
+          }
+        }}
+        onBlur={commit}
+        style={{
+          ...textStyle,
+          color: "#0e0f0e",
+          width: `${Math.max(1, val.length || 1) + 1.2}ch`,
+          minWidth: "2.6ch",
+          maxWidth: "7ch",
+          border: "none",
+          borderBottom: `1.6px solid ${err ? "#c0392b" : "oklch(0.62 0.15 145)"}`,
+          outline: "none",
+          background: "transparent",
+          padding: "0 1px 1px",
+          opacity: saving ? 0.5 : 1,
+        }}
+      />
+      {saving && (
+        <span style={{ fontSize: 11, color: "#9b9c99", marginLeft: 3 }}>…</span>
+      )}
+    </span>
   );
 }
 
