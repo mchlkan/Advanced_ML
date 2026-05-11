@@ -1,18 +1,15 @@
-"""Model #6 — Grounded listing-copy generator: English title + German description.
+"""Model #6 — Grounded listing-copy generator (English title + English description).
 
 One Groq (Llama 3.1 8B) call per platform, grounded on Model #1's structured
-fields and Model #2's visual_wear_probability. It produces:
-  - a compact English title in the form "{brand} {garment} {colour} {size}"
-    (that wording reads fine on Vinted.de / Kleinanzeigen.de), and
-  - a German listing description in the platform's house style — Vinted: short
-    and casual (catchy opener → the item → condition & flaws → fit/material if
-    known → friendly sign-off); Kleinanzeigen: longer and matter-of-fact (what's
-    for sale → details → condition & flaws → shipping/pickup → the standard
-    private-sale disclaimer, which is appended deterministically).
+fields and Model #2's visual_wear_probability. Produces:
+  - a compact English title in the form "{brand} {garment} {colour} {size}", and
+  - an English listing description in the platform's house style — Vinted: short,
+    casual, friendly closer; Kleinanzeigen: longer, factual, with a shipping/
+    pickup line and a private-sale disclaimer (appended deterministically).
 
-Falls back to deterministic templates (English title, German description) on any
-failure, so the main pipeline is never blocked. Skips the API call (templates
-only) when VLM_BACKEND=stub so tests stay deterministic and network-free.
+Falls back to deterministic templates on any failure, so the main pipeline is
+never blocked. Skips the API call (templates only) when VLM_BACKEND=stub so
+tests stay deterministic and network-free.
 """
 
 from __future__ import annotations
@@ -30,105 +27,105 @@ GROQ_MODEL = "llama-3.1-8b-instant"
 _TIMEOUT = 10.0
 _TITLE_MAX_LEN = 90
 
-# Legally important — appended to every Kleinanzeigen description.
-_KA_DISCLAIMER = (
-    "Da es sich um einen Privatverkauf handelt, keine Garantie, "
-    "Gewährleistung oder Rücknahme."
-)
-
-_CONDITION_DE = {
-    "New with tags": "neu mit Etikett",
-    "New": "neu, ungetragen",
-    "Very good": "sehr guter Zustand",
-    "Good": "guter Zustand",
-}
+# Appended to every Kleinanzeigen description (private sales on KA come with no
+# warranty / right of return; the disclaimer protects the seller).
+_KA_DISCLAIMER = "This is a private sale — no warranty, guarantee, or right of return."
 
 
-def _condition_de(condition: str | None) -> str:
+def _condition_phrase(condition: str | None) -> str:
     if not condition:
-        return "gebraucht"
-    return _CONDITION_DE.get(condition, condition.lower())
+        return "second-hand"
+    return condition.lower()  # "new with tags", "very good", "good", …
 
 
-def _defects_de(visual_wear: float) -> str:
+def _wear_phrase(visual_wear: float) -> str:
     if visual_wear < 0.25:
-        return "keine nennenswerten Gebrauchsspuren"
+        return "no notable signs of wear"
     if visual_wear < 0.55:
-        return "leichte Gebrauchsspuren, nichts Gravierendes"
-    return "sichtbare Gebrauchsspuren – bitte die Fotos genau ansehen"
+        return "light signs of wear, nothing serious"
+    return "visible signs of wear — please check the photos closely"
+
+
+def _size_short(size) -> str | None:
+    if not size:
+        return None
+    toks = str(size).replace("/", " ").split()
+    return toks[0] if toks else None
 
 
 # --- prompt pieces -----------------------------------------------------------
 
 _TITLE_RULES = (
-    "TITLE — English, EXACTLY four space-separated parts in this order and "
-    "NOTHING else: {brand} {garment type} {colour} {size}. No condition, notes, "
-    "parentheses, quotes, commas, or trailing punctuation. Drop a part only if it "
-    "is genuinely missing (no brand → start with the garment type; no size → end "
-    "with the colour). Brand: from the Brand field, else from the rough title (it "
-    'usually leads with the brand: "Polo Ralph Lauren" → "Ralph Lauren") — '
-    "include it even if low-confidence. Garment type: a clean noun phrase from the "
-    'rough title + category — "Polo Shirt", "Hoodie", "Bomber Jacket", "Slim '
-    'Jeans", "Air Max 90"; "polo" anywhere → "Polo Shirt" (not "T-Shirt") even if '
-    'the category slug is "tshirts". Never echo the rough title verbatim — rewrite it.'
+    "TITLE — EXACTLY four space-separated parts in this order and NOTHING else: "
+    "{brand} {garment type} {colour} {size}. No condition, notes, parentheses, "
+    "quotes, commas, or trailing punctuation. Drop a part only if it is genuinely "
+    "missing (no brand → start with the garment type; no size → end with the "
+    "colour). Brand: from the Brand field, else from the rough title (it usually "
+    'leads with the brand: "Polo Ralph Lauren" → "Ralph Lauren") — include it '
+    "even if low-confidence. Garment type: a clean noun phrase from the rough "
+    'title + category — "Polo Shirt", "Hoodie", "Bomber Jacket", "Slim Jeans", '
+    '"Air Max 90"; "polo" anywhere → "Polo Shirt" (not "T-Shirt") even if the '
+    'category slug is "tshirts". Never echo the rough title verbatim — rewrite it.'
 )
 
 _VINTED_DESC_RULES = (
-    "DESCRIPTION — Vinted style, in GERMAN: short, casual, friendly, easy to "
-    "skim — about 3–5 short sentences in this order:\n"
+    "DESCRIPTION — Vinted style: short, casual, friendly, easy to skim — about "
+    "3–5 short sentences in this order:\n"
     "1. one catchy opening line about the item;\n"
     "2. what it is (brand, type, colour, size);\n"
     "3. the condition, with any flaws stated honestly;\n"
     "4. fit / material / a nice detail — ONLY if you actually know it from the data;\n"
-    '5. a friendly closer such as "Bei Fragen gerne melden :)".'
+    '5. a friendly closer like "Happy to answer any questions :)".'
 )
 
 _KA_DESC_RULES = (
-    "DESCRIPTION — Kleinanzeigen style, in GERMAN: a bit longer, factual and "
-    "trustworthy — about 4–7 sentences in this order:\n"
+    "DESCRIPTION — Kleinanzeigen style: a bit longer, factual and trustworthy — "
+    "about 4–7 sentences in this order:\n"
     "1. a short line on what is being sold;\n"
     "2. the product details (brand, type, colour, size, plus a model name if the "
     "rough title gives one);\n"
     "3. condition and flaws, stated transparently;\n"
-    '4. one line on shipping/pickup — write exactly "Versand oder Abholung möglich.";\n'
+    '4. one line on shipping/pickup — write exactly "Shipping or local pickup available.";\n'
     "5. do NOT write the legal private-sale disclaimer yourself — it is appended automatically."
 )
 
 _GENERAL_DESC_RULES = (
-    "DESCRIPTION rules for both platforms: fluent, natural GERMAN; do not sound "
+    "DESCRIPTION rules for both platforms: fluent, natural ENGLISH; do not sound "
     "like AI; no hype or superlatives; honest about condition and flaws; never "
     "mention a price; never promise things you weren't told (material, fit, "
-    "model) — if you don't know, leave it out; at most a single minimal emoji in "
-    'a sign-off (":)"), nothing else.'
+    "model name) — if you don't know, leave it out; refer to the item by the "
+    "garment type you put in the title (don't drift to a different garment word "
+    'in the description); at most a single minimal emoji in a sign-off (":)"), '
+    "nothing else."
 )
 
 _BASE_SYSTEM = (
     "You turn structured data (extracted from a photo) into one product listing. "
     "Use ONLY the given facts — never invent details, prices, brands, or "
     "materials that aren't there. Start your reply with a `Title:` line, then "
-    "`Description:` followed by the German listing text.\n\n"
+    "`Description:` followed by the listing text.\n\n"
 )
 
 _VINTED_EXAMPLE = (
     "[Example]\n"
     "Brand: Levi's | Colour: blue | Size: 32 | Category: jeans | "
-    "Condition (DE): guter Zustand | Flaws (DE): leichte Gebrauchsspuren, nichts Gravierendes | "
+    "Condition: good | Wear: light signs of wear, nothing serious | "
     "Rough title: Levi's 511 slim denim\n"
     "Title: Levi's 511 Jeans Blue 32\n"
-    "Description: Schöne Levi's 511 in klassischem Mittelblau, Größe 32. Slim Fit, fällt true to size aus. "
-    "Guter Zustand – leichte Trage- und Waschspuren, aber keine Löcher oder Flecken. "
-    "Trage ich kaum noch, deshalb gebe ich sie weiter. Bei Fragen gerne melden :)"
+    "Description: Classic Levi's 511 in mid-blue, size 32. Slim fit, true to size. "
+    "Good condition — light wear and a touch of fading from regular use, but no holes or stains. "
+    "Don't reach for them much anymore, so passing them on. Happy to answer any questions :)"
 )
 
 _KA_EXAMPLE = (
     "[Example]\n"
     "Brand: Nike | Colour: white | Size: 42 | Category: sneakers | "
-    "Condition (DE): sehr guter Zustand | Flaws (DE): leichte Gebrauchsspuren, nichts Gravierendes | "
+    "Condition: very good | Wear: light signs of wear, nothing serious | "
     "Rough title: Nike Air Max 90 sneakers\n"
     "Title: Nike Air Max 90 White 42\n"
-    "Description: Verkaufe ein Paar Nike Air Max 90 in Weiß, Größe 42. Klassisches Modell, vielseitig kombinierbar. "
-    "Der Zustand ist sehr gut – die Schuhe wurden nur wenig getragen, kleine Gebrauchsspuren an der Sohle, "
-    "das Obermaterial ist sauber. Versand oder Abholung möglich. Bei Fragen einfach melden."
+    "Description: Selling a pair of Nike Air Max 90 in white, size 42. Classic model, easy to pair with anything. "
+    "Condition is very good — only lightly worn, with small scuffs on the outer sole; the uppers are clean. "
+    "Shipping or local pickup available. Feel free to message with any questions."
 )
 
 
@@ -145,15 +142,15 @@ def _build_prompt(fields: dict, platform: str, visual_wear: float, field_review:
         if v:
             parts.append(f"{key.capitalize()}: {v}")
     parts.append(f"Category: {fields.get('category', 'clothing')}")
-    parts.append(f"Condition (DE): {_condition_de(fields.get('condition'))}")
-    parts.append(f"Flaws (DE): {_defects_de(visual_wear)}")
+    parts.append(f"Condition: {_condition_phrase(fields.get('condition'))}")
+    parts.append(f"Wear: {_wear_phrase(visual_wear)}")
     rough = (fields.get("title") or "").strip()
     if rough:
         parts.append(f"Rough title: {rough}")
     summary = " | ".join(parts)
     low_conf = (
         f"\nLow-confidence reads ({', '.join(unreliable)}): keep them in the title; "
-        "hedge them or leave them out of the German description."
+        "hedge them or leave them out of the description."
         if unreliable
         else ""
     )
@@ -167,7 +164,6 @@ _CONDITION_WORDS = (
     "new with tags", "new with tag", "brand new", "like new", "very good condition",
     "good condition", "fair condition", "very good", "good", "fair", "used",
     "pre-owned", "preowned", "worn",
-    "neu mit etikett", "sehr guter zustand", "guter zustand", "neuwertig", "gebraucht",
 )
 
 # Letter sizes the model occasionally expands ("L" → "Large"); enforce the short
@@ -204,13 +200,6 @@ def _clean_title(t: str, fields: dict) -> str:
     return t[:_TITLE_MAX_LEN].strip()
 
 
-def _size_short(size) -> str | None:
-    if not size:
-        return None
-    toks = str(size).replace("/", " ").split()
-    return toks[0] if toks else None
-
-
 # --- deterministic fallbacks -------------------------------------------------
 
 def _title_fallback(fields: dict) -> str:
@@ -230,22 +219,23 @@ def _title_fallback(fields: dict) -> str:
 
 def _description_fallback(fields: dict, platform: str, visual_wear: float) -> str:
     brand = fields.get("brand")
-    cat = fields.get("category") or "Artikel"
+    cat = fields.get("category") or "item"
     color = fields.get("color")
     size = fields.get("size")
-    cond = _condition_de(fields.get("condition"))
-    flaws = _defects_de(visual_wear)
-    what = " ".join(str(x) for x in ([brand] if brand else []) + [cat] + ([color.lower()] if color else []))
-    size_de = f" in Größe {size}" if size else ""
-    cond_line = f"Zustand: {cond} – {flaws}."
+    cond = _condition_phrase(fields.get("condition"))
+    wear = _wear_phrase(visual_wear)
+    what = " ".join(str(x) for x in ([brand] if brand else []) + ([color.lower()] if color else []) + [cat])
+    size_str = f", size {size}" if size else ""
+    cond_line = f"Condition: {cond} — {wear}."
     if platform == "vinted":
-        return f"{what.capitalize()}{size_de}. {cond_line} Bei Fragen gerne melden :)"
-    return _finalize_ka(f"Verkaufe {what}{size_de}. {cond_line} Versand oder Abholung möglich.")
+        return f"{what.capitalize()}{size_str}. {cond_line} Happy to answer any questions :)"
+    return _finalize_ka(f"Selling a {what}{size_str}. {cond_line} Shipping or local pickup available.")
 
 
 def _finalize_ka(desc: str) -> str:
     d = (desc or "").strip()
-    if "privatverkauf" not in d.lower():
+    # Use a stable substring of the disclaimer to detect "already appended".
+    if "private sale" not in d.lower():
         d = f"{d}\n\n{_KA_DISCLAIMER}"
     return d
 
@@ -266,11 +256,11 @@ def _parse_copy(content: str, fields: dict, platform: str, visual_wear: float) -
     for raw in content.splitlines():
         s = raw.strip().lstrip("*#-• ").strip()
         low = s.lower()
-        if title is None and (low.startswith("title:") or low.startswith("titel:")):
+        if title is None and low.startswith("title:"):
             title = s[s.index(":") + 1:].strip().strip("\"'*. ").strip()
             capturing = False
             continue
-        if low.startswith("description:") or low.startswith("beschreibung:"):
+        if low.startswith("description:"):
             desc_lines = [s[s.index(":") + 1:].strip()]
             capturing = True
             continue
@@ -296,7 +286,7 @@ async def generate_listing_copy(
     visual_wear: float,
     field_review: dict | None = None,
 ) -> dict[str, str]:
-    """Generate ``{"title": <English>, "description": <German>}`` for a listing.
+    """Generate ``{"title": ..., "description": ...}`` for a listing.
 
     Returns deterministic template copy if GROQ_API_KEY is missing, the VLM
     backend is set to stub (test mode), or the API call fails. Never raises.
