@@ -20,9 +20,76 @@ const DETAIL_FIELDS: { key: DetailKey; label: string }[] = [
   { key: "size", label: "Size" },
 ];
 const CONDITION_OPTIONS = ["New with tags", "New", "Very good", "Good"];
+// Canonical garment vocab the publish mapper understands (= VINTED_CATEGORY_TO_CATALOG_ID keys).
+const CATEGORY_OPTIONS = ["tshirts", "jackets", "jeans", "sneakers"];
+const CLOTHING_SIZES = ["XS", "S", "M", "L", "XL", "XXL"];
+const SHOE_SIZES = ["36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46"];
+const ONE_SIZE = ["One size"];
+
+function sizeOptionsFor(category: string): string[] {
+  if (/shoe|schuh|sneaker/i.test(category)) return [...SHOE_SIZES, ...ONE_SIZE];
+  if (category) return [...CLOTHING_SIZES, ...ONE_SIZE];
+  return [...CLOTHING_SIZES, ...SHOE_SIZES, ...ONE_SIZE];
+}
+
+function ordinal(n: number): string {
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return `${n}th`;
+  return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+}
+
+// Rough percentile of price `p` within the q10/q50/q90 band, by piecewise-linear
+// interpolation (the "~" signals it's an estimate off three quantiles).
+function percentLabel(p: number, b: { q10: number; q50: number; q90: number }): string {
+  if (p < b.q10) return "below the recommended range";
+  if (p > b.q90) return "above the recommended range";
+  let pct: number;
+  if (p < b.q50) pct = b.q50 > b.q10 ? 10 + (40 * (p - b.q10)) / (b.q50 - b.q10) : 50;
+  else pct = b.q90 > b.q50 ? 50 + (40 * (p - b.q50)) / (b.q90 - b.q50) : 50;
+  const n = Math.round(pct);
+  const tone = n < 30 ? "below market" : n > 75 ? "premium" : "fair";
+  return `~${ordinal(n)} pct · ${tone}`;
+}
 
 const SANS = '"Inter", -apple-system, system-ui, sans-serif';
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
+
+function DetailSelect({
+  value,
+  options,
+  onPick,
+}: {
+  value: string;
+  options: string[];
+  onPick: (v: string) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onPick(e.target.value)}
+      style={{
+        flex: 1,
+        minWidth: 0,
+        border: "none",
+        outline: "none",
+        background: "transparent",
+        fontSize: 14,
+        fontWeight: 500,
+        color: value ? "#0e0f0e" : "#9b9c99",
+        fontFamily: SANS,
+        cursor: "pointer",
+      }}
+    >
+      {!value && <option value="">—</option>}
+      {value && !options.includes(value) && <option value={value}>{value}</option>}
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 interface Props {
   imageUrl: string;
@@ -128,6 +195,9 @@ interface PlatformCardProps {
   qualitativeNote?: string;
   verifying: boolean;
   disconnected?: boolean;
+  currentPrice: number;
+  onPrice: (n: number) => void;
+  onPriceCommit: (n: number) => void;
   onClick: () => void;
 }
 
@@ -140,15 +210,32 @@ function PlatformCard({
   qualitativeNote,
   verifying,
   disconnected,
+  currentPrice,
+  onPrice,
+  onPriceCommit,
   onClick,
 }: PlatformCardProps) {
   const accent = PLATFORM_ACCENT[platform];
   const soft = PLATFORM_SOFT[platform];
   const kicker = PLATFORM_KICKER[platform];
 
+  const sliderLo = Math.max(1, Math.floor(Math.min(price.q10, currentPrice) * 0.5));
+  const sliderHi = Math.ceil(Math.max(price.q90, currentPrice) * 1.7);
+  const sliderSpan = Math.max(1, sliderHi - sliderLo);
+  const tickPos = (v: number) =>
+    `${Math.max(0, Math.min(100, ((v - sliderLo) / sliderSpan) * 100))}%`;
+
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       style={{
         display: "block",
         width: "100%",
@@ -220,33 +307,74 @@ function PlatformCard({
         <SmallCaps size={10}>{kicker}</SmallCaps>
       </div>
 
-      {/* Price */}
+      {/* Price + slider */}
       {verifying ? (
         <div style={{ fontSize: 13, color: "#9b9c99", height: 42 }}>…</div>
       ) : (
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <div
-            style={{
-              fontSize: 38,
-              fontWeight: 600,
-              letterSpacing: "-1.2px",
-              color: "#0e0f0e",
-              fontVariantNumeric: "tabular-nums",
-              lineHeight: 1,
-            }}
-          >
-            {fmt(price.q50)}
+        <>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+            <div
+              style={{
+                fontSize: 38,
+                fontWeight: 600,
+                letterSpacing: "-1.2px",
+                color: "#0e0f0e",
+                fontVariantNumeric: "tabular-nums",
+                lineHeight: 1,
+              }}
+            >
+              {fmt(currentPrice)}
+            </div>
+            <div style={{ fontSize: 12, color: "#6b6c6a" }}>
+              rec. <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmt(price.q50)}</span>
+              {" · "}
+              {percentLabel(currentPrice, price)}
+            </div>
           </div>
-          <div
-            style={{
-              fontSize: 12,
-              color: "#6b6c6a",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {fmt(price.q10)}–{fmt(price.q90)}
+          <div style={{ marginTop: 12 }}>
+            <input
+              type="range"
+              min={sliderLo}
+              max={sliderHi}
+              step={1}
+              value={currentPrice}
+              onChange={(e) => onPrice(Number(e.target.value))}
+              onPointerUp={(e) => onPriceCommit(Number((e.target as HTMLInputElement).value))}
+              onBlur={(e) => onPriceCommit(Number(e.target.value))}
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              style={{
+                width: "100%",
+                display: "block",
+                accentColor: accent,
+                cursor: "pointer",
+              }}
+            />
+            <div style={{ position: "relative", height: 16, marginTop: 3 }}>
+              {([
+                ["q10", price.q10, false],
+                ["q50", price.q50, true],
+                ["q90", price.q90, false],
+              ] as const).map(([k, v, emph]) => (
+                <div
+                  key={k}
+                  style={{
+                    position: "absolute",
+                    left: tickPos(v),
+                    transform: "translateX(-50%)",
+                    fontSize: 9.5,
+                    fontFamily: MONO,
+                    color: emph ? "#3a3b3a" : "#9b9c99",
+                    fontWeight: emph ? 600 : 400,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {fmt(v)}
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Sell prob */}
@@ -297,7 +425,7 @@ function PlatformCard({
           {qualitativeNote}
         </div>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -330,15 +458,12 @@ export default function ResultsScreen({
 
   const activeId =
     selectedPlatform === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
-  const activeBand = selectedPlatform === "vinted" ? data.vinted.price : data.kleinanzeigen.price;
 
   const detailVal = (f: DetailKey): string =>
     (fieldEdits[f] as string | undefined) ?? (data.vinted.identification[f] as string | null) ?? "";
 
   const listingTitle = titleEdits[selectedPlatform] ?? activeId.title ?? "";
   const listingDesc = descEdits[selectedPlatform] ?? activeId.description ?? "";
-  const defaultPrice = Math.round((activeId.price_eur as number | null) ?? activeBand.q50);
-  const listingPrice = priceEdits[selectedPlatform] ?? String(defaultPrice);
 
   const wearDetected = data.visual_wear_probability > 0.4;
   const conditionVal = detailVal("condition");
@@ -659,27 +784,21 @@ export default function ResultsScreen({
                     }}>
                       {label}{needsReview ? " · ?" : ""}
                     </span>
-                    {key === "condition" ? (
-                      <select
+                    {key === "condition" || key === "category" || key === "size" ? (
+                      <DetailSelect
                         value={value}
-                        onChange={(e) => {
-                          setDetail("condition", e.target.value);
-                          persistFields({ condition: e.target.value || null });
+                        options={
+                          key === "condition"
+                            ? CONDITION_OPTIONS
+                            : key === "category"
+                              ? CATEGORY_OPTIONS
+                              : sizeOptionsFor(detailVal("category"))
+                        }
+                        onPick={(v) => {
+                          setDetail(key, v);
+                          persistFields({ [key]: v || null } as Partial<Identification>);
                         }}
-                        style={{
-                          flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent",
-                          fontSize: 14, fontWeight: 500, color: value ? "#0e0f0e" : "#9b9c99",
-                          fontFamily: SANS, cursor: "pointer",
-                        }}
-                      >
-                        {!value && <option value="">—</option>}
-                        {value && !CONDITION_OPTIONS.includes(value) && (
-                          <option value={value}>{value}</option>
-                        )}
-                        {CONDITION_OPTIONS.map((c) => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
+                      />
                     ) : (
                       <input
                         type="text"
@@ -714,6 +833,9 @@ export default function ResultsScreen({
               sellProbability={data.vinted.sell_probability}
               verifying={verifying}
               disconnected={!vintedReady}
+              currentPrice={priceFor("vinted")}
+              onPrice={(n) => setPriceEdits((e) => ({ ...e, vinted: String(n) }))}
+              onPriceCommit={(n) => persistFields({ price_eur: n })}
               onClick={() => setSelectedPlatform("vinted")}
             />
             <PlatformCard
@@ -724,6 +846,9 @@ export default function ResultsScreen({
               qualitativeNote={data.kleinanzeigen.qualitative_note}
               verifying={verifying}
               disconnected={!kaReady}
+              currentPrice={priceFor("kleinanzeigen")}
+              onPrice={(n) => setPriceEdits((e) => ({ ...e, kleinanzeigen: String(n) }))}
+              onPriceCommit={(n) => persistFields({ price_eur: n })}
               onClick={() => setSelectedPlatform("kleinanzeigen")}
             />
           </div>
@@ -779,44 +904,6 @@ export default function ResultsScreen({
                     fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
                   }}
                 />
-              </div>
-              <div style={{ height: 1, background: "#efece6" }} />
-              {/* Price */}
-              <div style={{
-                padding: "12px 14px", display: "flex", alignItems: "flex-end",
-                justifyContent: "space-between", gap: 12,
-              }}>
-                <div>
-                  <SmallCaps size={10} style={{ display: "block", marginBottom: 6 }}>
-                    Price
-                  </SmallCaps>
-                  <span style={{
-                    display: "inline-flex", alignItems: "baseline", gap: 1,
-                    fontSize: 16, fontWeight: 600, color: "#0e0f0e", fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
-                  }}>
-                    <span>€</span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={listingPrice}
-                      onChange={(e) =>
-                        setPriceEdits((p) => ({ ...p, [selectedPlatform]: e.target.value.replace(/[^\d]/g, "") }))
-                      }
-                      onBlur={(e) => {
-                        const n = parseInt(e.target.value, 10);
-                        if (Number.isFinite(n) && n > 0) persistFields({ price_eur: n });
-                      }}
-                      style={{
-                        width: "4.5ch", border: "none", outline: "none", background: "transparent",
-                        fontSize: 16, fontWeight: 600, color: "#0e0f0e",
-                        fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
-                      }}
-                    />
-                  </span>
-                </div>
-                <span style={{ fontSize: 11.5, color: "#9b9c99", fontFamily: MONO, paddingBottom: 2 }}>
-                  rec. {fmt(activeBand.q50)}
-                </span>
               </div>
               <div style={{ height: 1, background: "#efece6" }} />
               {/* Description */}
