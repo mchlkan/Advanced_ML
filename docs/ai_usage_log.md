@@ -3036,7 +3036,157 @@ side; our backend just keeps talking to the same endpoint).
 
 ---
 
-### Day 6 — YYYY-MM-DD: <topic>
+### Day 6 — 2026-05-11: integrate Mike's multi-v3 adapter + v3 price head, sync branches, EC2 redeploy
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep` (also `main` — kept in lockstep)
+**Commits pulled (Mike's, on `origin/main`):**
+- `27e2ae9` Ship multi-v3: KA-inclusive training, +27 pp KA size accuracy
+- `12cb56e` Update doc: v3 adapter is public on HF Hub
+**No new commits authored this session** — all changes were a fast-forward sync + a gitignored checkpoint swap + an EC2 redeploy.
+
+This was a short "is the new stuff actually wired in?" session. Mike
+had shipped the v3 KA-inclusive retrain (the §4.4 work flagged at the
+end of Day 5) overnight: a new VLM adapter
+(`mchlkan/qwen3vl4b-resell-adapter-multi-v3`) and a retrained price
+head trained on the v3 VLM features. The question was what, if
+anything, our side needed to do to pick it up.
+
+#### Prompt 1
+> "Okay my teammate said he pushed the newest models to the backend can you check if those are used already?"
+
+**Investigation recipe (same as the Day 5 debug sessions):** check
+git state first, then code-walk. Findings:
+- `origin/main` had 2 commits not in our deployable branch
+  (`feature/deploy-prep`): the two v3 commits above.
+- They bump the default adapter id `multi-v2` → `multi-v3` in
+  `runpod/handler.py:38` and `models/extract_vlm_features.py:57`, and
+  make `scripts/build_manifest.py` KA-inclusive (discovers both
+  `clothing_*` Vinted and `ka_clothing_*` KA scrape dirs, merges on
+  `(platform, listing_id)`).
+- Critically: **the deployed EC2 backend doesn't load any VLM adapter
+  itself** — it talks to a RunPod Serverless endpoint
+  (`VLM_BACKEND=runpod_http`), and the adapter is determined by the
+  RunPod *worker's* `ADAPTER_ID` env var / baked-in image, not by
+  anything in this repo. So merging the code into our branch does
+  *nothing* for the live model on its own.
+
+Reported: not used yet; two things needed — (a) fast-forward our
+branch to `origin/main`, (b) flip the RunPod endpoint.
+
+#### Prompt 2
+> "No I mean on main branch not our current branch, because I think our current branch should be on time with main branch"
+
+**Decision:** Both local `main` and `feature/deploy-prep` were sitting
+at `955aabc`; `origin/main` was 2 ahead. Clean fast-forwards both
+ways — no merge commit, no conflict, no commits on our branch not on
+origin/main:
+```
+git checkout main && git merge --ff-only origin/main          # 955aabc → 12cb56e
+git checkout feature/deploy-prep && git merge --ff-only main   # 955aabc → 12cb56e
+```
+All three (`main`, `origin/main`, `feature/deploy-prep`) now at
+`12cb56e`. Handler default is now `…-multi-v3`.
+
+#### Prompt 3
+> "/Users/leonschmidt/Downloads/price_head.pt is this also integrated already?"
+
+**Investigation:** compared the Downloads file (dated today 12:10,
+md5 `a779fbf6…`) against the repo's `models/checkpoints/price_head.pt`
+(dated May 10, md5 `6415c6df…`) — **different files**. Loaded both
+with `torch.load`: identical wrapper schema (`model_state_dict`,
+`model_config`, `vocab`, `quantiles`, `uses_visual_wear_probability`,
+`seed`), identical architecture (`vlm_dim=2560`, 501-brand embedding,
+`net.0.weight = (512, 2608)`, where `2608 = 2560 + numeric(2) +
+brand(32) + cat(8) + cond(4) + plat(2)`) — only the weights differ.
+That matches `docs/model_stack_evolution.md` §4.4's "retrained price
+head v3 on the new features." Checkpoints are gitignored, so this
+file never comes through `git pull` — it has to be copied in by hand
+(same pattern as Mike's earlier `.bak.preMike` swap).
+
+Reported: not integrated; and a caveat — the v3 price head was
+trained on **v3 VLM hidden states**, so it pairs with the v3 adapter.
+Same architecture as the old one, so it won't crash if it runs
+against v2 features; it just won't give the full lift (§4.4 reports
+−€0.88 MAE / −4.6 pp MAPE vs v2). Both should ship together.
+
+#### Prompt 4
+> "do 2 and yeah push it also please"
+
+(= integrate the price head locally + redeploy EC2, and push
+`feature/deploy-prep` to origin.)
+
+**Actions:**
+1. **Local checkpoint swap.** `cp -p price_head.pt
+   price_head_v2features.pt` (backup), then `cp -p
+   ~/Downloads/price_head.pt models/checkpoints/price_head.pt`.
+   Verified md5 (`a779fbf6` live, `6415c6df` backup) and ran a
+   structural sanity check on `model_config` / state-dict shapes —
+   consistent with the v2 schema, so `bootstrap._load_mlp` will load
+   it identically. (Gitignored — local parity only.)
+2. **Push.** `git push origin feature/deploy-prep` —
+   `955aabc..12cb56e`. Now `== origin/main`.
+3. **EC2.** SSH'd in to check state before deploying — and found the
+   v3 price head was *already* on the box:
+   `/opt/resell/checkpoints/price_head.pt` had md5 `a779fbf6` with
+   mtime `May 11 10:15 UTC`, the old one preserved as
+   `price_head.pt.bak.v2`, and the container had started at
+   `10:16:01 UTC` — i.e. it had already loaded v3. (Mike must have
+   scp'd it up when he shipped the retrain.) The only gap on EC2 was
+   the *code*: `/opt/resell/app` was at `38ef4b3`, 4 commits behind.
+   Ran `scripts/ec2_redeploy.sh` (`git pull --ff-only` →
+   `38ef4b3..12cb56e` → `docker restart resell-backend`) — health
+   check passed. Post-deploy verification:
+   - `git HEAD` on EC2 = `12cb56e`
+   - `GET /healthz` → `{"ok":true,"vlm_backend":"runpod_http",
+     "models_loaded":["DINOv2 (facebook/dinov2-base)","FlawHead
+     (in_dim=768)","PriceHead (uses_flaw=True)","SellHead
+     (uses_vlm=False, uses_flaw=True)"],"device":"cpu"}`
+   - external `https://resell-copilot.duckdns.org/health` →
+     `{"status":"ok"}`
+   - host `price_head.pt` md5 still `a779fbf6` ✓
+
+**Still open after this session:** the **RunPod endpoint** is (almost
+certainly) still serving the **v2** adapter — the deployed worker
+uses its own `ADAPTER_ID` env var, not the repo default. So as of end
+of this session production runs a v3-trained price head reading v2
+VLM features. To close it: set
+`ADAPTER_ID=mchlkan/qwen3vl4b-resell-adapter-multi-v3` on the RunPod
+Serverless endpoint and recycle the workers (no image rebuild needed
+— the adapter is pulled from HF Hub at worker boot), or rebuild +
+push the worker image from the current code. See the §"RunPod v3
+cutover" notes added to `docs/development.md` (scenario E) this
+session.
+
+#### What I learned
+
+1. **"Is it integrated?" has three independent layers in this stack
+   — git, the gitignored checkpoint files, and the RunPod worker
+   config — and a "yes" to one is not a "yes" to the others.** The
+   code default (`runpod/handler.py`) is just a default; the live
+   adapter is whatever env var the deployed worker has. The
+   checkpoints live outside git entirely (`/opt/resell/checkpoints/`
+   on EC2, hand-copied). Worth saying explicitly every time.
+2. **Check prod state before "deploying" — it may already be done.**
+   The v3 price head was already on EC2 and already loaded; the
+   "redeploy" turned into a code-sync + clean-boot confirmation
+   rather than the risky checkpoint swap I'd planned for. Cheap SSH
+   `ls -la` + `docker inspect -f '{{.State.StartedAt}}'` answered it.
+3. **Pair the heads with the features that trained them.** A retrained
+   downstream head (price/sell) is only fully valid against the same
+   upstream embedding version. Same architecture means no crash, but
+   "won't crash" ≠ "is the model we measured." Ship the adapter and
+   the head together, or note the mismatch loudly.
+
+#### Prompt 5
+> "yeah log it and pull my through"
+
+→ this entry, plus the RunPod cutover walk-through delivered in chat
+(and mirrored into `docs/development.md` scenario E).
+
+---
+
+### Day 7 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
 

@@ -14,7 +14,7 @@ Quick operational reference. For the full engineering retrospective see
 | Backend dependency (`requirements-prod.txt` or `Dockerfile`) | `git push && ssh ... '/opt/resell/app/scripts/ec2_rebuild.sh'` | ~3-5 min |
 | Frontend (anything under `frontend/`) | `cd frontend && vercel deploy --prod --yes` | ~30 s |
 | ML head checkpoint (`*.pt` file under `models/checkpoints/`) | `scp -i ~/Downloads/Resell_Copilot.pem models/checkpoints/foo.pt ubuntu@13.49.21.29:/opt/resell/checkpoints/ && ssh ... 'sudo docker restart resell-backend'` | ~30 s |
-| VLM adapter (RunPod side) | Edit `runpod/handler.py:ADAPTER_ID` default → push → rebuild RunPod worker from the dashboard | ~10 min |
+| VLM adapter (RunPod side) | RunPod console → endpoint → Settings → set env `ADAPTER_ID=<hf-repo>` → Save → recycle workers (also keep `runpod/handler.py` default in sync). Rebuild the worker image only if you changed handler logic/deps. | ~2 min (env) / ~10 min (rebuild) |
 
 EC2 IP: `13.49.21.29`. Public URLs: API
 `https://resell-copilot.duckdns.org`, frontend
@@ -349,12 +349,46 @@ automatically — no code change needed.
 
 ### E) VLM adapter update (RunPod side)
 
-Two changes needed:
+`runpod/handler.py` reads the adapter id from the `ADAPTER_ID` env
+var, falling back to a baked-in default. So there are two ways to
+cut over to a new adapter — pick based on whether the adapter is
+already public on HF Hub.
+
+**Fast path (recommended — no image rebuild, ~2 min):** the adapter
+is pulled from HF Hub at worker boot, so just point the env var at
+the new repo and recycle the workers.
+
+1. RunPod console → https://www.runpod.io/console/serverless →
+   your endpoint.
+2. **Settings → Edit Endpoint** (or **Edit Template**) →
+   **Environment Variables** → set
+   `ADAPTER_ID = mchlkan/qwen3vl4b-resell-adapter-multi-v3` →
+   **Save**. (Confirm `HF_TOKEN` is still set — the adapter repo is
+   gated/private; if it's been made public a token isn't strictly
+   needed but leave it.)
+3. Saving bumps the endpoint version → in-flight workers drain and
+   new workers boot with the new env var. To force it immediately:
+   **Workers** tab → kill the idle/active workers (or set min
+   workers 0 then back), so the next `/run` cold-starts on the new
+   version.
+4. Verify: send a real photo through the app (or
+   `curl -X POST $RUNPOD_BASE/run …`); the worker boot log prints
+   `[boot] ADAPTER_ID: …` — confirm it says `…-multi-v3`. Backend
+   side: `GET /healthz` still shows `vlm_backend":"runpod_http`
+   (unchanged — the backend doesn't know or care which adapter the
+   endpoint serves).
+5. **Keep the repo in sync** so a future image rebuild doesn't
+   silently revert: `runpod/handler.py:ADAPTER_ID` default should
+   already match (it's `…-multi-v3` as of Day 6). If you bump again,
+   `git commit -am "Adapter vN" && git push` first.
+
+**Slow path (only if you changed `handler.py` logic / deps /
+`Dockerfile`):** rebuild the worker image.
 
 ```bash
 # 1. Bump the default in the worker source
 edit runpod/handler.py:ADAPTER_ID
-git commit -am "Adapter v3"
+git commit -am "Adapter vN"
 git push
 
 # 2. Rebuild the RunPod worker from the dashboard:
@@ -362,11 +396,21 @@ git push
 #    → your endpoint → Settings → Edit Template → save (triggers rebuild)
 ```
 
-The backend doesn't need redeployment — it just talks to whatever
-endpoint `RUNPOD_ENDPOINT_ID` is set to in `.env.prod`. If you spin
-up a NEW endpoint with the new adapter, update `RUNPOD_ENDPOINT_ID`
-on EC2 and `docker rm -f resell-backend && ec2_rebuild.sh` (env-file
-isn't re-read on simple restart).
+> **Pair downstream heads with the adapter that trained them.** The
+> price head (`models/checkpoints/price_head.pt`) is trained on the
+> VLM's last-token hidden states, so a v3 price head expects v3
+> features. Same architecture across versions ⇒ it won't crash on a
+> mismatch, but the numbers won't match what was measured. When you
+> flip the adapter, also make sure the matching `.pt` is deployed
+> (scenario D). As of Day 6 the v3 price head is live on EC2; the
+> RunPod endpoint flip to `…-multi-v3` is the remaining step.
+
+The backend doesn't need redeployment for either path — it just
+talks to whatever endpoint `RUNPOD_ENDPOINT_ID` is set to in
+`.env.prod`. If you spin up a NEW endpoint instead of editing the
+existing one, update `RUNPOD_ENDPOINT_ID` on EC2 and
+`docker rm -f resell-backend && ec2_rebuild.sh` (env-file isn't
+re-read on a simple `docker restart`).
 
 ### F) Secrets / `.env.prod` change
 
