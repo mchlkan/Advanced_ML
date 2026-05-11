@@ -182,7 +182,7 @@ function IconBtn({
       title={label}
       aria-label={label}
       style={{
-        width: 32, height: 32, borderRadius: 9,
+        width: 30, height: 30, borderRadius: 8,
         border: `1px solid ${destructive ? "#ecc9c4" : "#e7e5e0"}`,
         background: destructive ? "#fdf6f5" : "#fff",
         color: destructive ? "#c0392b" : "#3a3b3a",
@@ -502,16 +502,41 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
                 onClick={() => handleOpen(item)}
               >
                 <div style={{
-                  display: "flex", alignItems: "baseline", gap: 8, marginBottom: 3,
+                  display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                  marginBottom: 4,
                 }}>
                   <p style={{
-                    margin: 0, flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600,
+                    margin: 0, flex: 1, minWidth: 96, fontSize: 14, fontWeight: 600,
                     letterSpacing: "-0.2px", whiteSpace: "nowrap",
                     overflow: "hidden", textOverflow: "ellipsis",
                   }}>
                     {title ?? "Untitled"}
                   </p>
                   <InlinePrice current={priceVal} onSave={(n) => handleSavePrice(item, n)} />
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      display: "flex", gap: 6, marginLeft: 4, flexShrink: 0,
+                      cursor: "default",
+                      opacity: isBusy ? 0.4 : 1,
+                      pointerEvents: isBusy ? "none" : "auto",
+                    }}
+                  >
+                    <IconBtn label="Open" onClick={() => handleOpen(item)}>
+                      <OpenIcon />
+                    </IconBtn>
+                    {canRelist && (
+                      <IconBtn label="Relist" onClick={() => handleRelist(item)}>
+                        <RelistIcon />
+                      </IconBtn>
+                    )}
+                    <IconBtn label="Mark sold" onClick={() => handleMarkSold(item)}>
+                      <SoldIcon />
+                    </IconBtn>
+                    <IconBtn label="Delete" destructive onClick={() => setDeleteConfirm(item)}>
+                      <TrashIcon />
+                    </IconBtn>
+                  </div>
                 </div>
                 <p style={{ margin: "0 0 6px", fontSize: 12, color: "#6b6c6a" }}>
                   {[brand, category].filter(Boolean).join(" · ") || "—"}
@@ -539,30 +564,6 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
                       </span>
                     </span>
                   )}
-                </div>
-
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  style={{
-                    display: "flex", gap: 7, marginTop: 11, cursor: "default",
-                    opacity: isBusy ? 0.4 : 1,
-                    pointerEvents: isBusy ? "none" : "auto",
-                  }}
-                >
-                  <IconBtn label="Open" onClick={() => handleOpen(item)}>
-                    <OpenIcon />
-                  </IconBtn>
-                  {canRelist && (
-                    <IconBtn label="Relist" onClick={() => handleRelist(item)}>
-                      <RelistIcon />
-                    </IconBtn>
-                  )}
-                  <IconBtn label="Mark sold" onClick={() => handleMarkSold(item)}>
-                    <SoldIcon />
-                  </IconBtn>
-                  <IconBtn label="Delete" destructive onClick={() => setDeleteConfirm(item)}>
-                    <TrashIcon />
-                  </IconBtn>
                 </div>
               </div>
             </div>
