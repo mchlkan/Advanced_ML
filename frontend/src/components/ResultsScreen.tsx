@@ -96,7 +96,7 @@ interface Props {
   labelImageUrl?: string;
   data: UploadResponse;
   connectionStatus: OnboardingStatus | null;
-  onPublish: (platform: Platform, finalFields: Identification) => void;
+  onPublishMany: (items: Array<{ platform: Platform; finalFields: Identification }>) => void;
   onReset: () => void;
   onConnectPlatform: (platform: Platform) => void;
   error?: string | null;
@@ -460,7 +460,7 @@ export default function ResultsScreen({
   labelImageUrl,
   data: initialData,
   connectionStatus,
-  onPublish,
+  onPublishMany,
   onReset,
   onConnectPlatform,
   error,
@@ -547,20 +547,31 @@ export default function ResultsScreen({
     }
   }
 
-  function handlePublish(platform: Platform) {
+  function buildFinalFields(platform: Platform): Identification {
     const id =
       platform === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
-    onPublish(platform, {
+    return {
       ...id,
       ...fieldEdits,
       title: titleEdits[platform] ?? id.title,
       description: descEdits[platform] ?? id.description,
       price_eur: priceFor(platform),
-    });
+    };
   }
 
-  const otherPlatform: Platform =
-    selectedPlatform === "vinted" ? "kleinanzeigen" : "vinted";
+  function handlePublish(platform: Platform) {
+    onPublishMany([{ platform, finalFields: buildFinalFields(platform) }]);
+  }
+
+  function handlePublishBoth() {
+    onPublishMany([
+      { platform: "vinted", finalFields: buildFinalFields("vinted") },
+      { platform: "kleinanzeigen", finalFields: buildFinalFields("kleinanzeigen") },
+    ]);
+  }
+
+  const bothReady = vintedReady && kaReady;
+  const missingPlatform: Platform = vintedReady ? "kleinanzeigen" : "vinted";
 
   const ACCENT = "oklch(0.62 0.15 145)";
 
@@ -980,11 +991,12 @@ export default function ResultsScreen({
           gap: 8,
         }}
       >
+        {/* Primary: publish on both. When one platform is disconnected, this
+            button prompts to reconnect that platform; the per-platform secondary
+            buttons below still let you publish on whatever IS connected. */}
         <button
           onClick={() =>
-            isReady(selectedPlatform)
-              ? handlePublish(selectedPlatform)
-              : onConnectPlatform(selectedPlatform)
+            bothReady ? handlePublishBoth() : onConnectPlatform(missingPlatform)
           }
           style={{
             width: "100%",
@@ -1007,11 +1019,11 @@ export default function ResultsScreen({
           }}
         >
           <span>
-            {isReady(selectedPlatform)
-              ? `Publish on ${PLATFORM_LABEL[selectedPlatform]}`
-              : `Reconnect ${PLATFORM_LABEL[selectedPlatform]} to publish`}
+            {bothReady
+              ? "Publish on Vinted & Kleinanzeigen"
+              : `Reconnect ${PLATFORM_LABEL[missingPlatform]} to publish on both`}
           </span>
-          {isReady(selectedPlatform) && (
+          {bothReady && (
             <span
               style={{
                 display: "flex",
@@ -1022,42 +1034,44 @@ export default function ResultsScreen({
                 opacity: 0.92,
               }}
             >
-              {fmt(priceFor(selectedPlatform))}
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path
-                  d="M3 7h8m0 0L7 3m4 4l-4 4"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              {fmt(priceFor("vinted"))} + {fmt(priceFor("kleinanzeigen"))}
             </span>
           )}
         </button>
-        <button
-          onClick={() =>
-            isReady(otherPlatform)
-              ? handlePublish(otherPlatform)
-              : onConnectPlatform(otherPlatform)
-          }
-          style={{
-            width: "100%",
-            height: 38,
-            borderRadius: 10,
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
-            fontSize: 13.5,
-            fontWeight: 500,
-            color: "#6b6c6a",
-          }}
-        >
-          {isReady(otherPlatform)
-            ? `Or publish on ${PLATFORM_LABEL[otherPlatform]} · ${fmt(priceFor(otherPlatform))}`
-            : `Or reconnect ${PLATFORM_LABEL[otherPlatform]}`}
-        </button>
+
+        {/* Per-platform fallbacks — equal-weight, side-by-side. */}
+        <div style={{ display: "flex", gap: 8 }}>
+          {(["vinted", "kleinanzeigen"] as const).map((p) => {
+            const ready = isReady(p);
+            return (
+              <button
+                key={p}
+                onClick={() => (ready ? handlePublish(p) : onConnectPlatform(p))}
+                style={{
+                  flex: 1,
+                  height: 40,
+                  borderRadius: 10,
+                  border: "1px solid #e7e5e0",
+                  background: "#fff",
+                  cursor: "pointer",
+                  fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  color: ready ? "#0e0f0e" : "#6b6c6a",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {ready
+                  ? `Just ${PLATFORM_LABEL[p]} · ${fmt(priceFor(p))}`
+                  : `Reconnect ${PLATFORM_LABEL[p]}`}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

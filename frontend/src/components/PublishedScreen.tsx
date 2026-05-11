@@ -1,12 +1,16 @@
 "use client";
 
-import { useRef } from "react";
 import type { Platform, UploadResponse } from "@/types/api";
 import SmallCaps from "./ui/SmallCaps";
 
-interface Props {
+export interface PublishOutcome {
   platform: Platform;
-  listingUrl: string;
+  listingUrl: string | null;
+  error: string | null;
+}
+
+interface Props {
+  outcomes: PublishOutcome[];
   results: UploadResponse;
   onReset: () => void;
 }
@@ -16,6 +20,13 @@ const PLATFORM_LABEL: Record<Platform, string> = {
   kleinanzeigen: "Kleinanzeigen",
 };
 
+const PLATFORM_ACCENT: Record<Platform, string> = {
+  vinted: "oklch(0.55 0.08 195)",
+  kleinanzeigen: "oklch(0.62 0.13 55)",
+};
+
+const ACCENT = "oklch(0.62 0.15 145)";
+
 function fmt(n: number) {
   return `€${Math.round(n)}`;
 }
@@ -24,22 +35,39 @@ function shortId(id: string) {
   return id.slice(0, 8);
 }
 
-const ACCENT = "oklch(0.62 0.15 145)";
+function priceFor(platform: Platform, results: UploadResponse): number {
+  const block = platform === "vinted" ? results.vinted : results.kleinanzeigen;
+  return Math.round((block.identification.price_eur as number | null) ?? block.price.q50);
+}
 
-export default function PublishedScreen({ platform, listingUrl, results, onReset }: Props) {
-  const tabRef = useRef<Window | null>(null);
+function ExternalArrow({ color = "#0e0f0e" }: { color?: string }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path
+        d="M5 2h7v7M12 2L5 9M2 6v6h6"
+        stroke={color}
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
-  const otherPlatform: Platform = platform === "vinted" ? "kleinanzeigen" : "vinted";
-  const activeBlock = platform === "vinted" ? results.vinted : results.kleinanzeigen;
-  const otherBlock = platform === "vinted" ? results.kleinanzeigen : results.vinted;
-
-  function reopenTab() {
-    if (tabRef.current && !tabRef.current.closed) {
-      tabRef.current.focus();
-    } else {
-      tabRef.current = window.open(listingUrl, "_blank") ?? null;
-    }
-  }
+export default function PublishedScreen({ outcomes, results, onReset }: Props) {
+  const successes = outcomes.filter((o) => o.listingUrl);
+  const failures = outcomes.filter((o) => !o.listingUrl);
+  const successLabels = successes.map((o) => PLATFORM_LABEL[o.platform]);
+  const headline =
+    successes.length === 0
+      ? "Couldn't post the listing."
+      : successes.length === 1
+        ? `Your listing is live on ${successLabels[0]}.`
+        : `Your listings are live on ${successLabels.join(" & ")}.`;
+  const subhead =
+    successes.length === 0
+      ? "Both platforms returned an error — see below."
+      : "Tap to open and check or share.";
 
   return (
     <div
@@ -105,11 +133,20 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
                 width: 6,
                 height: 6,
                 borderRadius: 6,
-                background: ACCENT,
-                boxShadow: "0 0 0 4px oklch(0.62 0.15 145 / 0.15)",
+                background: successes.length > 0 ? ACCENT : "#c0392b",
+                boxShadow:
+                  successes.length > 0
+                    ? "0 0 0 4px oklch(0.62 0.15 145 / 0.15)"
+                    : "0 0 0 4px oklch(0.55 0.18 25 / 0.15)",
               }}
             />
-            <SmallCaps size={10.5}>Live on {PLATFORM_LABEL[platform]}</SmallCaps>
+            <SmallCaps size={10.5}>
+              {successes.length === 0
+                ? "Publishing failed"
+                : successes.length === 1
+                  ? `Live on ${successLabels[0]}`
+                  : "Live on both"}
+            </SmallCaps>
           </div>
 
           <h2
@@ -122,7 +159,7 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
               textWrap: "balance",
             } as React.CSSProperties}
           >
-            Your listing is live on {PLATFORM_LABEL[platform]}.
+            {headline}
           </h2>
           <p
             style={{
@@ -132,110 +169,36 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
               lineHeight: 1.5,
             }}
           >
-            We opened it in a new tab so you can give it a final check or share
-            the link.
+            {subhead}
           </p>
 
-          {/* Summary */}
+          {/* Per-platform rows */}
           <div
             style={{
               marginTop: 22,
               paddingTop: 18,
               borderTop: "1px solid #efece6",
-              fontSize: 14,
-              color: "#3a3b3a",
-              lineHeight: 1.5,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
             }}
           >
-            <div style={{ color: "#0e0f0e", fontWeight: 500 }}>
-              {PLATFORM_LABEL[platform]} · {fmt(activeBlock.price.q50)}
-            </div>
-            <div
-              style={{
-                marginTop: 4,
-                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                fontSize: 11,
-                color: "#9b9c99",
-                letterSpacing: "0.06em",
-              }}
-            >
-              #{shortId(results.listing_id)}
-            </div>
+            {outcomes.map((o) => (
+              <PlatformRow key={o.platform} outcome={o} priceEur={priceFor(o.platform, results)} />
+            ))}
           </div>
 
-          {/* Reopen button */}
-          <button
-            onClick={reopenTab}
-            style={{
-              marginTop: 20,
-              width: "100%",
-              padding: "12px 14px",
-              borderRadius: 12,
-              border: "1px solid #e7e5e0",
-              background: "#fff",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
-              fontSize: 14,
-              fontWeight: 500,
-              color: "#0e0f0e",
-            }}
-          >
-            <span>Reopen {PLATFORM_LABEL[platform]} tab</span>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path
-                d="M5 2h7v7M12 2L5 9M2 6v6h6"
-                stroke="#0e0f0e"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-        </div>
-
-        {/* Cross-post tip */}
-        <div
-          style={{
-            marginTop: 16,
-            padding: "12px 14px",
-            borderRadius: 12,
-            background: "#fff",
-            border: "1px solid #efece6",
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 10,
-            fontSize: 13,
-            color: "#3a3b3a",
-            lineHeight: 1.45,
-          }}
-        >
+          {/* Listing id */}
           <div
             style={{
-              width: 18,
-              height: 18,
-              borderRadius: 9,
-              flexShrink: 0,
-              background: "oklch(0.62 0.13 55 / 0.1)",
-              color: "oklch(0.62 0.13 55)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 12,
-              fontWeight: 700,
+              marginTop: 18,
+              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              fontSize: 11,
+              color: "#9b9c99",
+              letterSpacing: "0.06em",
             }}
           >
-            i
-          </div>
-          <div>
-            Want to cross-post? You can also publish to{" "}
-            <span style={{ color: "#0e0f0e", fontWeight: 600 }}>
-              {PLATFORM_LABEL[otherPlatform]}
-            </span>{" "}
-            at {fmt(otherBlock.price.q50)} —{" "}
-            {otherPlatform === "kleinanzeigen" ? "faster local sale." : "larger fashion audience."}
+            #{shortId(results.listing_id)}
           </div>
         </div>
 
@@ -288,6 +251,83 @@ export default function PublishedScreen({ platform, listingUrl, results, onReset
           No history kept · No account · Privacy by default
         </div>
       </div>
+    </div>
+  );
+}
+
+function PlatformRow({
+  outcome,
+  priceEur,
+}: {
+  outcome: PublishOutcome;
+  priceEur: number;
+}) {
+  const accent = PLATFORM_ACCENT[outcome.platform];
+  const label = PLATFORM_LABEL[outcome.platform];
+  const live = !!outcome.listingUrl;
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          marginBottom: 8,
+        }}
+      >
+        <div style={{ width: 8, height: 8, borderRadius: 8, background: accent }} />
+        <span style={{ fontSize: 14, fontWeight: 600, color: "#0e0f0e", letterSpacing: "-0.1px" }}>
+          {label}
+        </span>
+        <span
+          style={{
+            marginLeft: "auto",
+            fontSize: 13,
+            color: "#3a3b3a",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {fmt(priceEur)}
+        </span>
+      </div>
+      {live ? (
+        <a
+          href={outcome.listingUrl as string}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "11px 14px",
+            borderRadius: 12,
+            border: "1px solid #e7e5e0",
+            background: "#fff",
+            color: "#0e0f0e",
+            textDecoration: "none",
+            fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+            fontSize: 14,
+            fontWeight: 500,
+          }}
+        >
+          <span>Open {label} listing</span>
+          <ExternalArrow />
+        </a>
+      ) : (
+        <div
+          style={{
+            padding: "10px 12px",
+            borderRadius: 12,
+            background: "#fdf0ee",
+            border: "1px solid #f5c6c0",
+            color: "#c0392b",
+            fontSize: 13,
+            lineHeight: 1.45,
+          }}
+        >
+          {outcome.error ?? "Publishing failed."}
+        </div>
+      )}
     </div>
   );
 }

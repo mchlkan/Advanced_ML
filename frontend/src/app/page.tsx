@@ -14,11 +14,13 @@ import { BASE, fetchListingPrediction } from "@/api/inventory";
 import UploadScreen from "@/components/UploadScreen";
 import AnalyzingScreen from "@/components/AnalyzingScreen";
 import ResultsScreen from "@/components/ResultsScreen";
-import PublishedScreen from "@/components/PublishedScreen";
+import PublishedScreen, { type PublishOutcome } from "@/components/PublishedScreen";
 import PublishingScreen from "@/components/PublishingScreen";
 import InventoryScreen from "@/components/InventoryScreen";
 import PlatformConnectionBanner from "@/components/PlatformConnectionBanner";
 import PlatformLoginModal from "@/components/PlatformLoginModal";
+
+type PublishItem = { platform: Platform; finalFields: Identification };
 
 type AppState =
   | { screen: "upload" }
@@ -40,13 +42,12 @@ type AppState =
       screen: "publishing";
       imageUrl: string;
       data: UploadResponse;
-      platform: Platform;
+      platforms: Platform[];
       labelImageUrl?: string;
     }
   | {
       screen: "published";
-      platform: Platform;
-      listingUrl: string;
+      outcomes: PublishOutcome[];
       results: UploadResponse;
     };
 
@@ -94,38 +95,73 @@ export default function Page() {
     }
   }
 
-  async function handlePublish(platform: Platform, finalFields: Identification) {
-    if (state.screen !== "results") return;
-    const { data, imageUrl, labelImageUrl } = state;
+  async function _runPublishes(
+    listingId: string,
+    items: PublishItem[],
+    data: UploadResponse,
+    imageUrl: string,
+    labelImageUrl?: string,
+  ): Promise<void> {
+    if (items.length === 0) return;
     setUploadError(null);
-    setState({ screen: "publishing", imageUrl, data, platform, labelImageUrl });
-    try {
-      const job = await publishListing({
-        listing_id: data.listing_id,
-        platform,
-        final_fields: finalFields,
-      });
-      // Backend's PublishRunner does the actual platform call asynchronously;
-      // poll until terminal status (posted | failed).
-      const result = await pollPublishStatus(job.job_id);
-      if (result.status === "posted" && result.platform_listing_url) {
-        window.open(result.platform_listing_url, "_blank");
-        setState({
-          screen: "published",
-          platform,
-          listingUrl: result.platform_listing_url,
-          results: data,
+    setState({
+      screen: "publishing",
+      imageUrl,
+      data,
+      platforms: items.map((i) => i.platform),
+      labelImageUrl,
+    });
+    // Backend's PublishRunner does the actual platform call asynchronously;
+    // poll each job until terminal status (posted | failed). Run all the
+    // platforms in parallel via Promise.allSettled — one platform failing
+    // shouldn't take down the others.
+    const settled = await Promise.allSettled(
+      items.map(async (item) => {
+        const job = await publishListing({
+          listing_id: listingId,
+          platform: item.platform,
+          final_fields: item.finalFields,
         });
-      } else {
-        setUploadError(`Publishing failed: ${result.error ?? "unknown error"}`);
-        setState({ screen: "results", imageUrl, data, labelImageUrl });
+        const result = await pollPublishStatus(job.job_id);
+        return { item, result };
+      }),
+    );
+    const outcomes: PublishOutcome[] = settled.map((s, i) => {
+      const platform = items[i].platform;
+      if (s.status === "rejected") {
+        return {
+          platform,
+          listingUrl: null,
+          error: s.reason instanceof Error ? s.reason.message : String(s.reason ?? "unknown"),
+        };
       }
-    } catch (err) {
+      const { result } = s.value;
+      if (result.status === "posted" && result.platform_listing_url) {
+        return { platform, listingUrl: result.platform_listing_url, error: null };
+      }
+      return {
+        platform,
+        listingUrl: null,
+        error: result.error ?? "Publish did not complete.",
+      };
+    });
+    if (outcomes.every((o) => !o.listingUrl)) {
+      // All failed — bounce back to results with the combined error so the user
+      // can adjust and retry, instead of staring at an empty Published screen.
       setUploadError(
-        `Publishing failed: ${err instanceof Error ? err.message : "unknown error"}`,
+        "Publishing failed: " +
+          outcomes.map((o) => `${o.platform} — ${o.error ?? "unknown"}`).join(" · "),
       );
       setState({ screen: "results", imageUrl, data, labelImageUrl });
+      return;
     }
+    setState({ screen: "published", outcomes, results: data });
+  }
+
+  async function handlePublishMany(items: PublishItem[]) {
+    if (state.screen !== "results" || items.length === 0) return;
+    const { data, imageUrl, labelImageUrl } = state;
+    await _runPublishes(data.listing_id, items, data, imageUrl, labelImageUrl);
   }
 
   function handleReset() {
@@ -175,32 +211,7 @@ export default function Page() {
     const finalFields =
       target === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
     const imageUrl = `${BASE}/listings/${listingId}/image`;
-    setState({ screen: "publishing", imageUrl, data, platform: target });
-    try {
-      const job = await publishListing({
-        listing_id: listingId,
-        platform: target,
-        final_fields: finalFields,
-      });
-      const result = await pollPublishStatus(job.job_id);
-      if (result.status === "posted" && result.platform_listing_url) {
-        window.open(result.platform_listing_url, "_blank");
-        setState({
-          screen: "published",
-          platform: target,
-          listingUrl: result.platform_listing_url,
-          results: data,
-        });
-      } else {
-        setUploadError(`Publishing failed: ${result.error ?? "unknown error"}`);
-        setState({ screen: "results", imageUrl, data });
-      }
-    } catch (err) {
-      setUploadError(
-        `Publishing failed: ${err instanceof Error ? err.message : "unknown error"}`,
-      );
-      setState({ screen: "results", imageUrl, data });
-    }
+    await _runPublishes(listingId, [{ platform: target, finalFields }], data, imageUrl);
   }
 
   function renderScreen() {
@@ -238,7 +249,7 @@ export default function Page() {
           labelImageUrl={state.labelImageUrl}
           data={state.data}
           connectionStatus={connectionStatus}
-          onPublish={handlePublish}
+          onPublishMany={handlePublishMany}
           onReset={handleReset}
           onConnectPlatform={setLoginModalPlatform}
           error={uploadError}
@@ -246,13 +257,12 @@ export default function Page() {
       );
     }
     if (state.screen === "publishing") {
-      return <PublishingScreen platform={state.platform} />;
+      return <PublishingScreen platforms={state.platforms} />;
     }
     if (state.screen === "published") {
       return (
         <PublishedScreen
-          platform={state.platform}
-          listingUrl={state.listingUrl}
+          outcomes={state.outcomes}
           results={state.results}
           onReset={handleReset}
         />
