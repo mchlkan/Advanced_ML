@@ -168,25 +168,27 @@ function TrashIcon() {
 }
 
 function IconBtn({
-  label, onClick, destructive, children,
+  label, onClick, destructive, disabled, children,
 }: {
   label: string;
   onClick: () => void;
   destructive?: boolean;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       title={label}
       aria-label={label}
       style={{
         width: 30, height: 30, borderRadius: 8,
-        border: `1px solid ${destructive ? "#ecc9c4" : "#e7e5e0"}`,
-        background: destructive ? "#fdf6f5" : "#fff",
-        color: destructive ? "#c0392b" : "#3a3b3a",
-        cursor: "pointer", flexShrink: 0,
+        border: `1px solid ${disabled ? "#eeece8" : destructive ? "#ecc9c4" : "#e7e5e0"}`,
+        background: disabled ? "#fafaf8" : destructive ? "#fdf6f5" : "#fff",
+        color: disabled ? "#cac8c3" : destructive ? "#c0392b" : "#3a3b3a",
+        cursor: disabled ? "default" : "pointer", flexShrink: 0,
         display: "inline-flex", alignItems: "center", justifyContent: "center",
         padding: 0, fontFamily: FONT,
       }}
@@ -525,11 +527,9 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
                     <IconBtn label="Open" onClick={() => handleOpen(item)}>
                       <OpenIcon />
                     </IconBtn>
-                    {canRelist && (
-                      <IconBtn label="Relist" onClick={() => handleRelist(item)}>
-                        <RelistIcon />
-                      </IconBtn>
-                    )}
+                    <IconBtn label="Relist" disabled={!canRelist} onClick={() => handleRelist(item)}>
+                      <RelistIcon />
+                    </IconBtn>
                     <IconBtn label="Mark sold" onClick={() => handleMarkSold(item)}>
                       <SoldIcon />
                     </IconBtn>
@@ -668,6 +668,9 @@ function InlinePrice({
         style={{
           ...textStyle,
           flexShrink: 0,
+          minWidth: 44,
+          textAlign: "right",
+          display: "inline-block",
           color: current != null ? "#0e0f0e" : "#9b9c99",
           background: "none",
           border: "none",
@@ -686,8 +689,10 @@ function InlinePrice({
       style={{
         ...textStyle,
         flexShrink: 0,
+        minWidth: 44,
         display: "inline-flex",
         alignItems: "baseline",
+        justifyContent: "flex-end",
         color: "#0e0f0e",
       }}
     >
