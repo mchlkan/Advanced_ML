@@ -3476,11 +3476,172 @@ re-probe against the live ACTIVE ad:
 
 ---
 
-### Day 7 — YYYY-MM-DD: <topic>
+### Day 6 — 2026-05-11 (continued): frontend polish — Marketplaces strip, inventory card redesign, inline price edit, filter + sort
 
-(empty — fill in next session)
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commits:**
+- `25c5dd7` Add a "Marketplaces" strip on the home screen (Vinted/Kleinanzeigen live, Depop/Vestiaire "soon")
+- `6ddb214` → reverted by `7dffc20` (fake app-icon squares)
+- `cd8da4a` Use real Vinted & Kleinanzeigen icons in the Marketplaces strip
+- `b3c8270` Inventory cards: show the price, replace the kebab menu with an inline icon toolbar
+- `7ddd94c` Inventory cards: move the action toolbar under the title; edit the price inline
+- `0cb6261` Inventory cards: put the action toolbar on the title row beside the price
+- `74c675c` Inventory cards: align the price column across rows
+- `ba5fee4` simplify: dedup font const, flatten ternaries, drop redundant refetch
+- `88fc087` Add filter + sort to the Inventory list
+- (this log entry)
+
+A long, iterative front-end session — all via the `/frontend-design`
+skill and a `/simplify` pass. Each change shipped to Vercel prod
+(`vercel deploy --prod` from `frontend/`) and to `feature/deploy-prep`.
+Theme of the session: I **could not visually smoke-test anything** (the
+Claude-in-Chrome extension wasn't connected here, and the local dev
+server sits behind the same middleware password gate as prod), so every
+change was build-checked (`npm run build` = the TS/lint gate) and then
+deployed for the user to eyeball — and the user iterated by screenshot.
+
+#### Prompt 1 — "/frontend-design: integrate the logos of vinted, kleinanzeigen, Depop, Vestiaire; coming-soon for depop, vestiaire"
+
+Built `frontend/src/components/SupportedPlatforms.tsx` — a "Marketplaces"
+strip on the home/Pick screen (slotted between the hero and the
+viewfinder; hero copy tightened to make room). Chips: Vinted /
+Kleinanzeigen as "live" (brand-tinted, soft glow), Depop / Vestiaire
+Collective as wordmark + a mono "soon" tag (dashed muted chip — the
+app's "nothing here yet" vocabulary). Designed within the app's existing
+refined-minimal system (inline styles, `oklch()` tokens, the mono/Inter
+font stacks) rather than introducing a new aesthetic.
+
+> "Can you also add vinted and kleinanzeigen logos? in the same way?"
+
+First attempt was stylized `[v]`/`[k]` brand-coloured rounded-square
+badges (like the app's own header mark). User: **"this is not the
+kleinanzeigen logo neither the vinted one"** → reverted (`7dffc20`).
+Explained honestly: I can't faithfully reproduce either company's real
+logo from memory, and I won't fetch logo files off the web (can't
+reliably know the right official URL; won't `curl` arbitrary assets to
+ship; logos are trademarked — the app owner should be the one to grab
+them) — asked the user to drop the official SVGs into `public/logos/`.
+
+> "can you use this one? <2 Brandfetch CDN urls>"
+
+The user supplied the source, so: `curl`ed the two `cdn.brandfetch.io`
+icon JPEGs (needed a browser `User-Agent` — without one the CDN serves
+a "Logo API Usage Guidelines" HTML page), inspected them with the Read
+tool — the two URLs were **swapped** (URL 1 = Vinted's teal "v" square,
+URL 2 = Kleinanzeigen's lime "k" square) — `sips`-downscaled both to
+128px JPEGs into `frontend/public/logos/{vinted,kleinanzeigen}.jpg`
+(self-hosted; the demo-client-ID CDN URLs would've been fragile to
+rely on), and wired them in as ~19px rounded-square marks before each
+wordmark. Retuned the chip accents to each brand's *real* colour
+(Vinted petrol teal, Kleinanzeigen leaf green — not the app's KA amber)
+on a white background so the colourful icons read cleanly. (`cd8da4a`)
+
+#### Prompt 2 — "/frontend-design: look at the kebab menu — I'd rather have the price displayed and the options as icons inline"
+
+`InventoryScreen.tsx` card redesign: dropped the `⋮` kebab + the
+bottom-sheet `ActionSheet`/`SheetButton`/`Divider`; added a price beside
+the title and an inline icon toolbar (Open / Change price / Relist /
+Mark sold / Delete) on each card. New inline-`<svg>` icons + an
+`IconBtn` component; the modals (`PriceEditModal`, `ConfirmDialog`) now
+trigger straight from the icons. (`b3c8270`)
+
+> "move the list here [under the content, not floating far-right]; price change make directly in the numbers — edit the number itself"
+
+Moved the toolbar onto the title row; made the price **inline-editable**
+— new `InlinePrice` component (tap the `€N` → it becomes a small
+`<input>` → Enter / blur saves, Esc cancels; commit guarded by a
+`doneRef` against the Enter-then-blur double-fire; `handleSavePrice`
+patches the listing and optimistically updates the card). Removed
+`PriceEditModal` and the "Change price" icon. (`7ddd94c`)
+
+> "put the toolbar besides the price in line — don't waste so much space"
+
+Moved the toolbar onto the title line (right after the price), with
+`flexWrap` so it drops below the title on narrow screens instead of
+squeezing it; icon buttons trimmed 32→30px. Saves a row per card on
+desktop. (`0cb6261`)
+
+> "have price always at the same point" (screenshot — prices jiggling between rows)
+
+Root cause: the toolbar was a different width per card because "Relist"
+only showed on posted listings. Fix: render "Relist" always —
+greyed/`disabled` when the listing isn't posted — so the toolbar is a
+fixed 4-icon width and the price sits at the same x; also gave the price
+a fixed-min, right-aligned box. Added a `disabled` variant to
+`IconBtn`. (`74c675c`)
+
+#### Prompt 3 — "/simplify (first), after that we plan the filters"
+
+Ran the three-agent `/simplify` review on the session's frontend diff.
+Fixes applied (`ba5fee4`): added a `MONO` font const (the JetBrains-Mono
+stack was inlined 4×) — *gotcha: a blind `sed` replace turned
+`const MONO = '...'` into `const MONO = MONO;`, caught and fixed*;
+replaced `handleSync`'s 3-level nested ternary with a `SYNC_ERRORS`
+lookup keyed by HTTP status; collapsed `IconBtn`'s four parallel
+`disabled?…:destructive?…:` ternaries into one `ICON_BTN_VARIANTS`
+table; **dropped the redundant `void refetch()` after a price edit**
+(the optimistic `setListings` already reflects the only thing that
+changed — was a full `/inventory` GET + double list re-render per edit);
+dropped the now-unused `PatchFieldsResponse` import; in
+`SupportedPlatforms`, hoisted the repeated chip / "soon"-tag / label
+inline styles to module consts and shared a `CHIP_BASE` between the
+live/soon `Chip` branches. Deliberately skipped: a cross-file shared
+font/icon/colour module (the app's convention is per-file consts, and
+the new code follows it — not a regression); `InlinePrice`'s `doneRef`
+guard and `ch`-based input width (they work).
+
+#### Prompt 4 — "/plan filter and sort for the inventory"
+
+Wrote the plan (overwriting the now-shipped wardrobe-sync plan file);
+approved; implemented (`88fc087`). All client-side over the already-fetched
+`listings`:
+- A collapsible bar above the list: a styled native `<select>` for sort
+  (Newest [default] / Price ↓ / Price ↑ / Most views / A→Z; price uses
+  the set price falling back to the Vinted q50; no-price items sink) and
+  a "Filters · N ▾" toggle (chip turns green when N>0) + a "Clear" link.
+- The panel: listing-place status pills (All / Vinted / Kleinanzeigen /
+  Not published / Failed — single-select, the platform pills tinted with
+  their brand colour); brand pills + category pills (multi-select, built
+  from the values present, shown only if ≥2 distinct); price min/max
+  inputs (digit-filtered, reusing the `InlinePrice` input pattern).
+  Filters combine AND across groups, OR within brand/category.
+- Header count shows "N of M items" when filtered; a "no listings match
+  · Clear filters" state for the empty result; the truly-empty "No
+  listings yet" state is unchanged.
+- New inline components: `Pill`, `FilterGroup`, `PriceInput`,
+  `ChevronDownIcon`, `FilterSortBar`, `FilterPanel`; module-level
+  accessors (`itemPrice/itemBrand/itemCategory/itemTitle/itemViews`),
+  `matchesStatus`/`matchesFilters`, `SORTERS`/`SORT_LABELS`,
+  `toggleInArray`, `countActiveFilters`. No backend / `types/api.ts`
+  change (`InventoryItem` already carries `created_at`,
+  `english_fields.{title,brand,category,price_eur}`, the per-platform
+  `status`, `vinted.live.views`).
+
+#### What I learned
+1. **Don't reproduce trademarked logos from memory** — produce
+   wrong-looking approximations. The right move is to ask the user for
+   the official asset (or an exact URL they trust), then self-host it.
+   Brandfetch URLs serve an HTML "usage guidelines" page to non-browser
+   clients — set a browser `User-Agent` to get the actual image.
+2. **`sed -i` for "replace all occurrences of string X with const NAME"
+   is a footgun** when the const's own definition contains string X —
+   it self-referentializes the definition (`const MONO = MONO;`). Build
+   caught it, but a scoped Edit (or excluding the definition line) is
+   safer.
+3. **Optimistic update + refetch is one-too-many** — pick one. For an
+   inline edit that touches a single field, the optimistic `setListings`
+   is enough; a full-list refetch afterwards is a wasted round-trip and
+   a wasted re-render.
+4. **Iterating UI by screenshot works** when you can't drive a browser
+   yourself — but say so explicitly each time ("couldn't visually
+   smoke-test; deployed for you to check") rather than implying it's
+   verified. The user caught the swapped logo URLs and the fake-square
+   misfire by screenshot; build-passing ≠ looks-right.
 
 ---
+
+### Day 7 — YYYY-MM-DD: <topic>
 
 ## 8. One-paragraph submission summary
 
