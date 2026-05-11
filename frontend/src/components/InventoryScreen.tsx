@@ -9,7 +9,6 @@ import {
   markAsSold,
   patchListingFields,
   syncWardrobe,
-  type PatchFieldsResponse,
 } from "@/api/inventory";
 import SmallCaps from "./ui/SmallCaps";
 
@@ -30,6 +29,15 @@ const PLATFORM_SOFT: Record<string, string> = {
 };
 
 const FONT = '"Inter", -apple-system, system-ui, sans-serif';
+const MONO = '"JetBrains Mono", ui-monospace, monospace';
+
+// User-facing error messages for /inventory/sync, keyed by HTTP status
+// (syncWardrobe throws `sync <status>`).
+const SYNC_ERRORS: Record<string, string> = {
+  "409": "Connect Vinted to sync live stats.",
+  "401": "Vinted session expired — reconnect.",
+  "429": "Vinted is rate-limiting — try again shortly.",
+};
 
 function PlatformBadge({ platform }: { platform: string }) {
   const accent = PLATFORM_ACCENT[platform] ?? "#9b9c99";
@@ -124,7 +132,7 @@ function RefreshIcon() {
   );
 }
 
-// ---- per-card action icons (inline toolbar; replaces the kebab sheet) ----
+// ---- per-card action toolbar (icons) ----
 
 const ICON_PROPS = {
   width: 15, height: 15, viewBox: "0 0 16 16", fill: "none",
@@ -167,6 +175,12 @@ function TrashIcon() {
   );
 }
 
+const ICON_BTN_VARIANTS = {
+  default: { border: "#e7e5e0", bg: "#fff", fg: "#3a3b3a" },
+  danger: { border: "#ecc9c4", bg: "#fdf6f5", fg: "#c0392b" },
+  off: { border: "#eeece8", bg: "#fafaf8", fg: "#cac8c3" },
+} as const;
+
 function IconBtn({
   label, onClick, destructive, disabled, children,
 }: {
@@ -176,6 +190,7 @@ function IconBtn({
   disabled?: boolean;
   children: React.ReactNode;
 }) {
+  const v = ICON_BTN_VARIANTS[disabled ? "off" : destructive ? "danger" : "default"];
   return (
     <button
       type="button"
@@ -185,9 +200,9 @@ function IconBtn({
       aria-label={label}
       style={{
         width: 30, height: 30, borderRadius: 8,
-        border: `1px solid ${disabled ? "#eeece8" : destructive ? "#ecc9c4" : "#e7e5e0"}`,
-        background: disabled ? "#fafaf8" : destructive ? "#fdf6f5" : "#fff",
-        color: disabled ? "#cac8c3" : destructive ? "#c0392b" : "#3a3b3a",
+        border: `1px solid ${v.border}`,
+        background: v.bg,
+        color: v.fg,
         cursor: disabled ? "default" : "pointer", flexShrink: 0,
         display: "inline-flex", alignItems: "center", justifyContent: "center",
         padding: 0, fontFamily: FONT,
@@ -253,16 +268,8 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
       await syncWardrobe();
       await refetch();
     } catch (e) {
-      const code = e instanceof Error ? e.message : "";
-      setSyncMsg(
-        code.includes("409")
-          ? "Connect Vinted to sync live stats."
-          : code.includes("401")
-          ? "Vinted session expired — reconnect."
-          : code.includes("429")
-          ? "Vinted is rate-limiting — try again shortly."
-          : "Couldn't sync live stats. Try again.",
-      );
+      const status = /\b\d{3}\b/.exec(e instanceof Error ? e.message : "")?.[0] ?? "";
+      setSyncMsg(SYNC_ERRORS[status] ?? "Couldn't sync live stats. Try again.");
     } finally {
       setSyncing(false);
     }
@@ -293,12 +300,12 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
     }
   }
 
-  async function handleSavePrice(item: InventoryItem, newPrice: number): Promise<PatchFieldsResponse> {
+  async function handleSavePrice(item: InventoryItem, newPrice: number) {
     setBusyState(item.listing_id, true);
     try {
-      const res = await patchListingFields(item.listing_id, { price_eur: newPrice });
-      // Reflect the new price on the card immediately; the background
-      // refetch reconciles any other side effects.
+      await patchListingFields(item.listing_id, { price_eur: newPrice });
+      // Reflect the new price on the card immediately — the patch only
+      // touches the price, so there's nothing else to refetch.
       setListings((prev) =>
         prev.map((it) =>
           it.listing_id === item.listing_id && it.prediction
@@ -312,8 +319,6 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
             : it,
         ),
       );
-      void refetch();
-      return res;
     } finally {
       setBusyState(item.listing_id, false);
     }
@@ -395,7 +400,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
             </button>
             {!loading && (
               <span style={{
-                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                fontFamily: MONO,
                 fontSize: 11, color: "#9b9c99",
                 textTransform: "uppercase", letterSpacing: "1px",
               }}>
@@ -407,7 +412,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
         {(syncMsg || lastSyncedAt != null) && (
           <span style={{
             marginLeft: 48,
-            fontFamily: syncMsg ? FONT : '"JetBrains Mono", ui-monospace, monospace',
+            fontFamily: syncMsg ? FONT : MONO,
             fontSize: 11,
             color: syncMsg ? "#c0392b" : "#9b9c99",
             textTransform: syncMsg ? "none" : "uppercase",
@@ -551,7 +556,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
                   {item.vinted?.live && (
                     <span style={{
                       display: "inline-flex", alignItems: "center", gap: 8,
-                      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                      fontFamily: MONO,
                       fontSize: 11, color: STAT_COLOR,
                     }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
@@ -621,7 +626,7 @@ function InlinePrice({
   const doneRef = useRef(false);
 
   const textStyle: React.CSSProperties = {
-    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+    fontFamily: MONO,
     fontSize: 13.5,
     fontWeight: 600,
     letterSpacing: "-0.02em",
