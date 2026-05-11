@@ -20,11 +20,43 @@ const MUTED = "#9b9c99";
 const SOON_BG = "#efece6";
 const DASH = "#d4d2cd";
 
+/** Small "app-icon" mark: a brand-coloured rounded square with a white
+ * letterform. A stylized badge in the platform's colour — not the
+ * companies' actual logo artwork. Matches the Resell Copilot header
+ * mark (a rounded square with a white glyph). */
+function IconMark({ bg, glyph }: { bg: string; glyph: React.ReactNode }) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 17,
+        height: 17,
+        borderRadius: 5,
+        background: bg,
+        flexShrink: 0,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "#fff",
+        fontWeight: 800,
+        fontSize: 11,
+        letterSpacing: "-0.02em",
+        lineHeight: 1,
+        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.22)`,
+      }}
+    >
+      {glyph}
+    </span>
+  );
+}
+
 type Platform = {
   key: string;
   live: boolean;
   /** brand-coloured wordmark, rendered inside the chip */
   word: React.ReactNode;
+  /** small app-icon mark, shown before the wordmark */
+  logo?: React.ReactNode;
   /** brand text colour + soft tint — only used when live */
   color?: string;
   soft?: string;
@@ -36,6 +68,7 @@ const PLATFORMS: Platform[] = [
     live: true,
     color: VINTED,
     soft: VINTED_SOFT,
+    logo: <IconMark bg="oklch(0.49 0.095 197)" glyph="v" />,
     word: (
       <span style={{ fontWeight: 700, letterSpacing: "-0.4px", fontSize: 14 }}>
         vinted
@@ -47,6 +80,7 @@ const PLATFORMS: Platform[] = [
     live: true,
     color: KA,
     soft: KA_SOFT,
+    logo: <IconMark bg="oklch(0.56 0.155 48)" glyph="k" />,
     word: (
       <span style={{ fontWeight: 600, letterSpacing: "-0.15px", fontSize: 13 }}>
         kleinanzeigen
@@ -85,8 +119,9 @@ function Chip({ p }: { p: Platform }) {
         style={{
           display: "inline-flex",
           alignItems: "center",
-          minHeight: 30,
-          padding: "0 11px",
+          gap: 7,
+          minHeight: 32,
+          padding: p.logo ? "0 11px 0 7px" : "0 11px",
           borderRadius: 9,
           color: p.color,
           background: p.soft,
@@ -94,6 +129,7 @@ function Chip({ p }: { p: Platform }) {
           boxShadow: `0 1px 7px color-mix(in oklch, ${p.color} 14%, transparent)`,
         }}
       >
+        {p.logo}
         {p.word}
       </span>
     );
@@ -104,14 +140,15 @@ function Chip({ p }: { p: Platform }) {
         display: "inline-flex",
         alignItems: "center",
         gap: 7,
-        minHeight: 30,
-        padding: "0 7px 0 11px",
+        minHeight: 32,
+        padding: p.logo ? "0 7px" : "0 7px 0 11px",
         borderRadius: 9,
         color: MUTED,
         background: "#fff",
         border: `1px dashed ${DASH}`,
       }}
     >
+      {p.logo}
       {p.word}
       <span
         style={{
