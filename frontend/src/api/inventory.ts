@@ -1,6 +1,7 @@
 import type {
   InventoryResponse,
   PatchFieldsRequest,
+  SyncResponse,
   UploadResponse,
 } from "@/types/api";
 
@@ -10,6 +11,13 @@ export async function fetchInventory(): Promise<InventoryResponse> {
   const res = await fetch(`${BASE}/inventory`);
   if (!res.ok) throw new Error("Failed to fetch inventory");
   return res.json();
+}
+
+export async function syncWardrobe(): Promise<SyncResponse> {
+  // 409 = vinted not onboarded · 401 = session expired · 429 = blocked · 502 = transport
+  const res = await fetch(`${BASE}/inventory/sync`, { method: "POST" });
+  if (!res.ok) throw new Error(`sync ${res.status}`);
+  return res.json() as Promise<SyncResponse>;
 }
 
 export async function markAsSold(id: string): Promise<void> {

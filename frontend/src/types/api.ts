@@ -209,3 +209,9 @@ export interface InventoryResponse {
   items: InventoryItem[];
   last_synced_at: number | null;
 }
+
+export interface SyncResponse {
+  platform: "vinted";
+  item_count: number;
+  fetched_at: number;
+}

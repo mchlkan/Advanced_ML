@@ -8,6 +8,7 @@ import {
   fetchInventory,
   markAsSold,
   patchListingFields,
+  syncWardrobe,
   type PatchFieldsResponse,
 } from "@/api/inventory";
 import SmallCaps from "./ui/SmallCaps";
@@ -91,8 +92,52 @@ function getPostedPlatforms(item: InventoryItem): ("vinted" | "kleinanzeigen")[]
   return out;
 }
 
+const STAT_COLOR = "#6b6c6a";
+
+function EyeIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+      <path d="M0.75 6S2.75 2 6 2s5.25 4 5.25 4-2 4-5.25 4S0.75 6 0.75 6Z"
+        stroke={STAT_COLOR} strokeWidth="1.1" strokeLinejoin="round" />
+      <circle cx="6" cy="6" r="1.6" stroke={STAT_COLOR} strokeWidth="1.1" />
+    </svg>
+  );
+}
+
+function HeartIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+      <path d="M6 10.25 1.9 6.15a2.4 2.4 0 0 1 3.4-3.4l.7.7.7-.7a2.4 2.4 0 0 1 3.4 3.4L6 10.25Z"
+        stroke={STAT_COLOR} strokeWidth="1.1" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+      <path d="M10.25 6a4.25 4.25 0 1 1-1.3-3.06" stroke={STAT_COLOR}
+        strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M10.5 1v2.2H8.3" stroke={STAT_COLOR} strokeWidth="1.2"
+        strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function formatSyncedAgo(ms: number | null): string {
+  if (!ms) return "never";
+  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  if (s < 45) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
 export default function InventoryScreen({ onBack, onOpenListing, onRelistListing }: Props) {
   const [listings, setListings] = useState<InventoryItem[]>([]);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -102,7 +147,10 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
 
   useEffect(() => {
     fetchInventory()
-      .then((res) => setListings(res.items))
+      .then((res) => {
+        setListings(res.items);
+        setLastSyncedAt(res.last_synced_at);
+      })
       .catch(() => setError("Could not load listings. Is the backend running?"))
       .finally(() => setLoading(false));
   }, []);
@@ -120,8 +168,31 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
     try {
       const res = await fetchInventory();
       setListings(res.items);
+      setLastSyncedAt(res.last_synced_at);
     } catch {
       // Soft-fail; keep current state.
+    }
+  }
+
+  async function handleSync() {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      await syncWardrobe();
+      await refetch();
+    } catch (e) {
+      const code = e instanceof Error ? e.message : "";
+      setSyncMsg(
+        code.includes("409")
+          ? "Connect Vinted to sync live stats."
+          : code.includes("401")
+          ? "Vinted session expired — reconnect."
+          : code.includes("429")
+          ? "Vinted is rate-limiting — try again shortly."
+          : "Couldn't sync live stats. Try again.",
+      );
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -192,41 +263,75 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
           position: "sticky",
           top: 0,
           backgroundColor: "#fafaf8",
-          padding: "20px 24px 16px",
+          padding: "20px 24px 14px",
           display: "flex",
-          alignItems: "center",
-          gap: 12,
+          flexDirection: "column",
+          alignItems: "stretch",
+          gap: 6,
           borderBottom: "1px solid #e7e5e0",
           zIndex: 10,
         }}
       >
-        <button
-          onClick={onBack}
-          style={{
-            width: 36, height: 36, borderRadius: 18,
-            border: "1px solid #e7e5e0", background: "#fff",
-            cursor: "pointer", display: "flex",
-            alignItems: "center", justifyContent: "center",
-            padding: 0, flexShrink: 0,
-          }}
-          aria-label="Back"
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M9 2L4 7l5 5" stroke="#0e0f0e" strokeWidth="1.6"
-              strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-        <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.3px" }}>
-          My Listings
-        </span>
-        {!loading && (
-          <span style={{
-            marginLeft: "auto",
-            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-            fontSize: 11, color: "#9b9c99",
-            textTransform: "uppercase", letterSpacing: "1px",
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            onClick={onBack}
+            style={{
+              width: 36, height: 36, borderRadius: 18,
+              border: "1px solid #e7e5e0", background: "#fff",
+              cursor: "pointer", display: "flex",
+              alignItems: "center", justifyContent: "center",
+              padding: 0, flexShrink: 0,
+            }}
+            aria-label="Back"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M9 2L4 7l5 5" stroke="#0e0f0e" strokeWidth="1.6"
+                strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.3px" }}>
+            My Listings
+          </span>
+          <div style={{
+            marginLeft: "auto", display: "flex", alignItems: "center", gap: 10,
           }}>
-            {listings.length} item{listings.length !== 1 ? "s" : ""}
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 5,
+                height: 28, padding: "0 11px", borderRadius: 14,
+                border: "1px solid #e7e5e0", background: "#fff",
+                cursor: syncing ? "default" : "pointer",
+                opacity: syncing ? 0.5 : 1,
+                fontSize: 12, fontWeight: 500, color: "#0e0f0e",
+                fontFamily: FONT,
+              }}
+            >
+              <RefreshIcon />
+              {syncing ? "Syncing…" : "Sync"}
+            </button>
+            {!loading && (
+              <span style={{
+                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                fontSize: 11, color: "#9b9c99",
+                textTransform: "uppercase", letterSpacing: "1px",
+              }}>
+                {listings.length} item{listings.length !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+        </div>
+        {(syncMsg || lastSyncedAt != null) && (
+          <span style={{
+            marginLeft: 48,
+            fontFamily: syncMsg ? FONT : '"JetBrains Mono", ui-monospace, monospace',
+            fontSize: 11,
+            color: syncMsg ? "#c0392b" : "#9b9c99",
+            textTransform: syncMsg ? "none" : "uppercase",
+            letterSpacing: syncMsg ? "normal" : "0.06em",
+          }}>
+            {syncMsg ?? `Synced ${formatSyncedAgo(lastSyncedAt)}`}
           </span>
         )}
       </header>
@@ -319,12 +424,28 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
                 <p style={{ margin: "0 0 6px", fontSize: 12, color: "#6b6c6a" }}>
                   {[brand, category].filter(Boolean).join(" · ") || "—"}
                 </p>
-                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                   {publishedPlatforms.map((p) => (
                     <PlatformBadge key={p} platform={p} />
                   ))}
                   {publishedPlatforms.length === 0 && (
                     <SmallCaps size={10}>not published</SmallCaps>
+                  )}
+                  {item.vinted?.live && (
+                    <span style={{
+                      display: "inline-flex", alignItems: "center", gap: 8,
+                      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                      fontSize: 11, color: STAT_COLOR,
+                    }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
+                        title="views">
+                        <EyeIcon /> {item.vinted.live.views ?? 0}
+                      </span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
+                        title="favourites">
+                        <HeartIcon /> {item.vinted.live.favourites ?? 0}
+                      </span>
+                    </span>
                   )}
                 </div>
               </div>
