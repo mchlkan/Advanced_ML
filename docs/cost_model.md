@@ -105,11 +105,21 @@ After the prefill fusion (§5.1) each invocation prefills **once**:
 | 1 photo | 2 × (~1,160 + ~50) ≈ **~2,420** | 2 × (~2,320 + ~50) ≈ ~4,740 |
 | 2 photos | 2 × (~2,165 + ~50) ≈ **~4,430** | 2 × (~4,330 + ~50) ≈ ~8,760 |
 
-> **Ground truth going forward:** the handler now logs `[infer] platform=… 
-> prompt_tokens=… new_tokens=…` per request and returns `prompt_tokens` /
-> `output_tokens` in its response (`runpod/handler.py`), so the real per-request
-> counts are visible in the RunPod worker logs once the new image is deployed —
-> use those to replace the estimates above if they drift.
+> **Measured (2026-05-11 deploy, three warm requests on one worker):**
+>
+> | platform | prompt_tokens | new_tokens |
+> |---|---|---|
+> | vinted | 653 | 70 |
+> | vinted | 778 | 72 |
+> | kleinanzeigen | 779 | 69 |
+>
+> Prompts run *below* the ~1,160 baseline because the test images were
+> already smaller than the 1024 px cap (back-solve: ~490–615 vision tokens
+> → source ~600–730 px on the long side — the §2 formula holds, the cap
+> just didn't bind). `new_tokens` runs **69–72**, not the ~50 estimated —
+> budget **~60–70 per call** for the fine-tuned 6-field JSON going forward.
+> (The handler logs `[infer] platform=… prompt_tokens=… new_tokens=…` per
+> request and returns these counts in the response — `runpod/handler.py`.)
 
 ---
 
@@ -123,20 +133,32 @@ RunPod Serverless **flex** (per-second, scale-to-zero) pricing, approximate —
 | RTX 4090 (24 GB) — current | ~$0.00031 | ~$1.12 |
 | RTX A4000 (16 GB) — fits the 4B model, ~half the price | ~$0.00016 | ~$0.58 |
 
-Measured warm latency before the 2026-05-11 changes: **~12.3 s per `/upload`**
-(`docs/demo_strategy.md`). The prefill-fusion + bf16 changes (§5.1–5.2) should
-take that to **~7–9 s** on the 4090 (needs re-measurement). A 2-photo upload
-adds ~40–70 % (more vision patches + ~80 % more prefill; fixed decode/overhead)
-→ ~+50 %.
+Pre-2026-05-11 baseline: **~12.3 s per `/upload`** (`docs/demo_strategy.md`).
+Measured post-§5.1–5.2 (2026-05-11 deploy, 4090, warm worker, three samples):
+**~6.0–6.2 s per invocation**, with one **~8.5 s first call after model-ready**
+(CUDA-graph / kernel autotune tax — see §4). The per-call ~2× projection from
+§5.1+5.2 looks like it materialised at the *invocation* level, **but `/upload`
+wallclock is still ~12 s** because RunPod is on a single worker and the two
+platform calls (Vinted + KA) serialise behind it — the backend already issues
+them in parallel via `asyncio.gather` (`backend/pipeline.py:162`), so the
+bottleneck is purely the worker count. Two fixes, neither free: `min_workers=2`
+(Infra knobs below; doubles idle cost) or fuse to one prompt (§5.5; same
+latency win for one retrain). A 2-photo upload adds ~40–70 % on top.
 
-| path | warm latency | GPU $ / scan | per 10,000 scans |
-|---|---|---|---|
-| **Ours — 4090, pre-2026-05-11** | ~12 s | ~$0.0037 | ~$37 |
-| **Ours — 4090, after prefill-fusion + bf16** | ~7–9 s (est.) | ~$0.0022–0.0028 | ~$22–28 |
-| **Ours — A4000, after the same changes** | ~10–14 s (est.) | ~$0.0016–0.0022 | ~$16–22 |
-| **Ours — 2-photo (4090, after changes)** | ~11–14 s (est.) | ~$0.0033–0.0042 | ~$33–42 |
+| path | warm latency, per invocation | `/upload` wallclock | GPU $ / scan | per 10,000 scans |
+|---|---|---|---|---|
+| **Ours — 4090, pre-2026-05-11** | ~6 s (inferred) | ~12 s | ~$0.0037 | ~$37 |
+| **Ours — 4090, post §5.1–5.2 (measured)** | **~6.0–6.2 s** | **~12 s (1 worker)** / ~6 s (2 warm workers) | ~$0.0038 | ~$38 |
+| **Ours — A4000, post §5.1–5.2** | ~9–12 s (est., scaled) | ~18–24 s (1 worker) | ~$0.0029–0.0039 | ~$29–39 |
+| **Ours — 2-photo (4090)** | ~9–11 s (est.) | ~18–22 s (1 worker) | ~$0.0056–0.0068 | ~$56–68 |
 
 …**plus** the cost structure in §4, which dominates at low volume.
+
+> **Open question:** the pre-changes per-invocation was inferred (not directly
+> measured), so whether §5.1+5.2 delivered the projected ~2× per-call speedup
+> or was already close to the prior steady state needs an explicit before/after
+> on the same image set. The handler's `prompt_tokens` / `output_tokens` in
+> the response makes that a 10-minute job.
 
 ---
 
@@ -147,9 +169,17 @@ volume is dominated by:
 
 - **Cold starts.** Idle timeout is 600 s; after that the worker shuts down. A
   cold start *with* FlashBoot is ~10–30 s of **paid** GPU before it serves
-  anything; a fresh boot (no snapshot) is minutes. If traffic is sparse
-  (< ~1 scan / 10 min) almost every scan eats a cold start → effective cost per
-  scan jumps to ~1–3 ¢+, well above the ~0.2 ¢ warm figure.
+  anything; a fresh boot (no snapshot) is minutes. Measured on the
+  2026-05-11 deploy: "Loading processor" → "Model ready" was **~14 s** (HF
+  fetch + bf16 load + LoRA attach), in line with the FlashBoot range. If
+  traffic is sparse (< ~1 scan / 10 min) almost every scan eats a cold start
+  → effective cost per scan jumps to ~1–3 ¢+, well above the ~0.2 ¢ warm
+  figure.
+- **First-call warmup tax (~+2 s).** Even *after* "Model ready", the very
+  first request on a fresh worker took 8.5 s vs 6.0–6.2 s for subsequent
+  ones — CUDA-graph capture / kernel autotune the first time a new shape
+  goes through. Negligible at steady traffic; visible on the demo's first
+  click after a cold start.
 - **`min_workers ≥ 1`** (recommended during demo windows for zero cold starts)
   = a 4090 billed **24/7 ≈ ~$27/day ≈ ~$800/mo**, regardless of volume. Purely
   on per-scan savings vs. the ~$0.003/scan API option, that only pays for
@@ -209,6 +239,10 @@ prefill, ~2× the output tokens → cuts a `/upload` from ~2 invocations to ~1
 so the LoRA adapter needs a retrain on the combined target (~few GPU-hours,
 ~$3), and the price/sell heads would get one pooled state instead of two
 (probably fine; possibly a head retrain). Stacks on top of §5.1–5.2.
+**Empirical confirmation (2026-05-11):** with §5.1–5.2 deployed, per-invocation
+latency is ~6 s but `/upload` wallclock is still ~12 s on a single worker — the
+fan-out *is* the bottleneck now (§3). §5.5 dissolves it at ~$3 of retrain; the
+two-worker workaround dissolves it at ~$800/mo of idle GPU.
 
 ### The big unlock — a research call, not a quick task
 
@@ -229,6 +263,15 @@ it if §5.1–5.5 aren't enough.
 - **Shorter idle timeout** if usage is bursty-then-quiet — ends the
   paid-but-idle window sooner, at the cost of more cold starts. Tune to the
   real session shape.
+- **`min_workers=2` for demo windows** — backend already issues both
+  platform calls in parallel (`backend/pipeline.py:162`), so a 2nd warm
+  worker actually halves `/upload` wallclock (~12 s → ~6 s). Cost: a 2nd
+  4090 idling 24/7 ≈ **~$1,600/mo total** (double the `min_workers=1` bill).
+  Defensible for demo day; flip back after. §5.5 is the structurally cheaper
+  path to the same outcome (~$3 of retrain vs ~$800/mo of extra idle).
+  Caveat: requires both workers warm — `min_workers=1, max_workers=2` won't
+  reliably parallelise because the 2nd worker cold-starts on the first
+  concurrent call.
 
 ---
 
