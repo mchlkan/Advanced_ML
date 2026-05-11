@@ -8,7 +8,21 @@ import type {
   UploadResponse,
 } from "@/types/api";
 import { verifyListing } from "@/api/verify";
+import { patchListingFields } from "@/api/inventory";
 import SmallCaps from "./ui/SmallCaps";
+
+type DetailKey = "brand" | "category" | "condition" | "color" | "size";
+const DETAIL_FIELDS: { key: DetailKey; label: string }[] = [
+  { key: "brand", label: "Brand" },
+  { key: "category", label: "Type" },
+  { key: "condition", label: "Condition" },
+  { key: "color", label: "Color" },
+  { key: "size", label: "Size" },
+];
+const CONDITION_OPTIONS = ["New with tags", "New", "Very good", "Good"];
+
+const SANS = '"Inter", -apple-system, system-ui, sans-serif';
+const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
 interface Props {
   imageUrl: string;
@@ -60,36 +74,6 @@ function fmt(n: number) {
 
 function shortId(id: string) {
   return id.slice(0, 6);
-}
-
-// Pill chip for identification fields
-function Chip({
-  children,
-  dim,
-}: {
-  children: React.ReactNode;
-  dim?: boolean;
-}) {
-  return (
-    <div
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "7px 12px",
-        borderRadius: 999,
-        background: "#fff",
-        border: "1px solid #e7e5e0",
-        fontSize: 13.5,
-        fontWeight: 500,
-        color: dim ? "#9b9c99" : "#0e0f0e",
-        fontStyle: dim ? "italic" : "normal",
-        lineHeight: 1,
-        whiteSpace: "nowrap" as const,
-      }}
-    >
-      {children}
-    </div>
-  );
 }
 
 function SectionLabel({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
@@ -331,52 +315,84 @@ export default function ResultsScreen({
   const kaReady = isPlatformReady(connectionStatus, "kleinanzeigen");
   const isReady = (p: Platform) => (p === "vinted" ? vintedReady : kaReady);
   const [data, setData] = useState(initialData);
-  const [editOpen, setEditOpen] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>("vinted");
-  const [hints, setHints] = useState<Partial<Identification>>({});
+  // Canonical "details" overrides (brand/category/condition/color/size).
+  const [fieldEdits, setFieldEdits] = useState<Partial<Identification>>({});
+  // Per-platform overrides for the listing copy + price.
+  const [titleEdits, setTitleEdits] = useState<Partial<Record<Platform, string>>>({});
+  const [descEdits, setDescEdits] = useState<Partial<Record<Platform, string>>>({});
+  const [priceEdits, setPriceEdits] = useState<Partial<Record<Platform, string>>>({});
 
   const vintedQ50 = data.vinted.price.q50;
   const kaQ50 = data.kleinanzeigen.price.q50;
   const recommendedPlatform: Platform = vintedQ50 >= kaQ50 ? "vinted" : "kleinanzeigen";
 
   const activeId =
-    selectedPlatform === "vinted"
-      ? data.vinted.identification
-      : data.kleinanzeigen.identification;
+    selectedPlatform === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
+  const activeBand = selectedPlatform === "vinted" ? data.vinted.price : data.kleinanzeigen.price;
 
-  const [titleEdits, setTitleEdits] = useState<Partial<Record<Platform, string>>>({});
-  const [descEdits, setDescEdits] = useState<Partial<Record<Platform, string>>>({});
+  const detailVal = (f: DetailKey): string =>
+    (fieldEdits[f] as string | undefined) ?? (data.vinted.identification[f] as string | null) ?? "";
 
   const listingTitle = titleEdits[selectedPlatform] ?? activeId.title ?? "";
   const listingDesc = descEdits[selectedPlatform] ?? activeId.description ?? "";
+  const defaultPrice = Math.round((activeId.price_eur as number | null) ?? activeBand.q50);
+  const listingPrice = priceEdits[selectedPlatform] ?? String(defaultPrice);
 
   const wearDetected = data.visual_wear_probability > 0.4;
-  const vintedReview = new Set(data.vinted.field_review?.needs_review ?? []);
-
-  const idBlock = data.vinted.identification;
+  const conditionVal = detailVal("condition");
   const wearConflict =
-    data.visual_wear_probability > 0.5 &&
-    !!idBlock.condition &&
-    OPTIMISTIC_CONDITIONS.has(idBlock.condition);
+    data.visual_wear_probability > 0.5 && !!conditionVal && OPTIMISTIC_CONDITIONS.has(conditionVal);
+  const reviewSet = new Set(data.vinted.field_review?.needs_review ?? []);
   const itemHeadline = [
-    idBlock.brand,
-    idBlock.color?.toLowerCase(),
-    idBlock.category?.toLowerCase(),
-    idBlock.condition ? `— ${idBlock.condition.toLowerCase()}` : null,
+    detailVal("brand"),
+    detailVal("color").toLowerCase(),
+    detailVal("category").toLowerCase(),
+    conditionVal ? `— ${conditionVal.toLowerCase()}` : null,
   ]
     .filter(Boolean)
     .join(" ");
 
-  async function handleVerify(e: React.FormEvent) {
-    e.preventDefault();
+  // Persist a correction on the listing (new predictions row, source='edit';
+  // also pushes to any posted platform — a fresh scan isn't posted, so no-op).
+  function persistFields(patch: Partial<Identification>) {
+    patchListingFields(data.listing_id, patch).catch(() => {});
+  }
+
+  function setDetail(f: DetailKey, value: string) {
+    setFieldEdits((e) => ({ ...e, [f]: value || null }));
+  }
+
+  function priceFor(platform: Platform): number {
+    const raw = priceEdits[platform];
+    const p = raw ? parseInt(raw, 10) : NaN;
+    if (Number.isFinite(p) && p > 0) return p;
+    const id = platform === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
+    const band = platform === "vinted" ? data.vinted.price : data.kleinanzeigen.price;
+    return Math.round((id.price_eur as number | null) ?? band.q50);
+  }
+
+  async function handleReanalyze() {
     setVerifying(true);
     try {
-      const updated = await verifyListing({ listing_id: data.listing_id, hints });
+      const updated = await verifyListing({
+        listing_id: data.listing_id,
+        hints: {
+          brand: detailVal("brand") || null,
+          category: detailVal("category") || null,
+          condition: detailVal("condition") || null,
+          color: detailVal("color") || null,
+          size: detailVal("size") || null,
+        },
+      });
       setData(updated);
+      setFieldEdits({});
+      setTitleEdits({});
+      setDescEdits({});
+      setPriceEdits({});
     } finally {
       setVerifying(false);
-      setEditOpen(false);
     }
   }
 
@@ -385,8 +401,10 @@ export default function ResultsScreen({
       platform === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
     onPublish(platform, {
       ...id,
-      title: listingTitle || id.title,
-      description: listingDesc || id.description,
+      ...fieldEdits,
+      title: titleEdits[platform] ?? id.title,
+      description: descEdits[platform] ?? id.description,
+      price_eur: priceFor(platform),
     });
   }
 
@@ -569,24 +587,6 @@ export default function ResultsScreen({
           </h2>
         </div>
 
-        {/* Identification chips */}
-        <div
-          style={{
-            padding: "0 20px",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 6,
-          }}
-        >
-          {idBlock.brand && <Chip>{idBlock.brand}</Chip>}
-          {idBlock.category && <Chip>{idBlock.category}</Chip>}
-          {idBlock.condition && <Chip>{idBlock.condition}</Chip>}
-          {idBlock.color && <Chip>{idBlock.color}</Chip>}
-          <Chip dim={vintedReview.has("size") || !idBlock.size}>
-            Size {idBlock.size ?? "—"}{(vintedReview.has("size") || !idBlock.size) ? " · Check" : ""}
-          </Chip>
-        </div>
-
         {/* Wear badge */}
         {wearDetected && (
           <div style={{ padding: "12px 20px 0" }}>
@@ -625,13 +625,13 @@ export default function ResultsScreen({
                 {wearConflict ? (
                   <>
                     <span style={{ fontWeight: 600, color: "#0e0f0e" }}>Condition mismatch.</span>{" "}
-                    Model #1 read this as &ldquo;{idBlock.condition}&rdquo; but our flaw detector
-                    sees possible wear — please re-check the condition.
+                    Read as &ldquo;{conditionVal}&rdquo;, but our flaw detector sees possible
+                    wear — re-check the condition below.
                   </>
                 ) : (
                   <>
                     <span style={{ fontWeight: 600, color: "#0e0f0e" }}>Visible wear detected.</span>{" "}
-                    Light wear detected. We adjusted condition accordingly.
+                    Light wear detected — condition set accordingly. Adjust below if needed.
                   </>
                 )}
               </div>
@@ -639,106 +639,67 @@ export default function ResultsScreen({
           </div>
         )}
 
-        {/* Edit details button */}
-        <div style={{ padding: "14px 20px 0" }}>
-          <button
-            onClick={() => setEditOpen((o) => !o)}
-            style={{
-              width: "100%",
-              padding: "14px 16px",
-              borderRadius: 12,
-              border: "1px solid #e7e5e0",
-              background: "#fff",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
-              fontSize: 14,
-              fontWeight: 500,
-              color: "#0e0f0e",
-            }}
-          >
-            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path
-                  d="M2 10l1.2-3.2L9 1l3 3-5.8 5.8L3 11l-1-1z"
-                  stroke="#3a3b3a"
-                  strokeWidth="1.4"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              {editOpen ? "Hide details" : "Edit details"}
-            </span>
-          </button>
-
-          {/* Edit form */}
-          {editOpen && (
-            <form
-              onSubmit={handleVerify}
-              style={{
-                marginTop: 12,
-                background: "#fff",
-                borderRadius: 12,
-                border: "1px solid #e7e5e0",
-                padding: "14px 16px",
-              }}
-            >
-              {(
-                [
-                  ["brand", "Brand"],
-                  ["category", "Type"],
-                  ["condition", "Condition"],
-                  ["color", "Color"],
-                  ["size", "Size"],
-                ] as [keyof Identification, string][]
-              ).map(([field, label]) => (
-                <div key={field} style={{ marginBottom: 12 }}>
-                  <SmallCaps style={{ display: "block", marginBottom: 4 }}>
-                    {label}
-                  </SmallCaps>
-                  <input
-                    type="text"
-                    defaultValue={(data.vinted.identification[field] as string) ?? ""}
-                    onChange={(e) =>
-                      setHints((h) => ({ ...h, [field]: e.target.value || null }))
-                    }
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      padding: "10px 12px",
-                      border: "1.5px solid #e7e5e0",
-                      borderRadius: 8,
-                      backgroundColor: "#fafaf8",
-                      color: "#0e0f0e",
-                      outline: "none",
-                      minHeight: 44,
-                      fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
-                    }}
-                  />
+        {/* Editable details */}
+        <div style={{ padding: "16px 20px 0" }}>
+          <SmallCaps size={10.5} style={{ display: "block", marginBottom: 8 }}>
+            Details
+          </SmallCaps>
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e7e5e0", overflow: "hidden" }}>
+            {DETAIL_FIELDS.map(({ key, label }, i) => {
+              const needsReview = reviewSet.has(key);
+              const value = detailVal(key);
+              return (
+                <div key={key}>
+                  {i > 0 && <div style={{ height: 1, background: "#efece6" }} />}
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px" }}>
+                    <span style={{
+                      width: 76, flexShrink: 0,
+                      fontSize: 10.5, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase",
+                      color: needsReview ? "oklch(0.5 0.1 75)" : "#9b9c99",
+                    }}>
+                      {label}{needsReview ? " · ?" : ""}
+                    </span>
+                    {key === "condition" ? (
+                      <select
+                        value={value}
+                        onChange={(e) => {
+                          setDetail("condition", e.target.value);
+                          persistFields({ condition: e.target.value || null });
+                        }}
+                        style={{
+                          flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent",
+                          fontSize: 14, fontWeight: 500, color: value ? "#0e0f0e" : "#9b9c99",
+                          fontFamily: SANS, cursor: "pointer",
+                        }}
+                      >
+                        {!value && <option value="">—</option>}
+                        {value && !CONDITION_OPTIONS.includes(value) && (
+                          <option value={value}>{value}</option>
+                        )}
+                        {CONDITION_OPTIONS.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={value}
+                        placeholder="—"
+                        onChange={(e) => setDetail(key, e.target.value)}
+                        onBlur={(e) =>
+                          persistFields({ [key]: e.target.value.trim() || null } as Partial<Identification>)
+                        }
+                        style={{
+                          flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent",
+                          fontSize: 14, fontWeight: 500, color: "#0e0f0e", fontFamily: SANS,
+                        }}
+                      />
+                    )}
+                  </div>
                 </div>
-              ))}
-              <button
-                type="submit"
-                disabled={verifying}
-                style={{
-                  width: "100%",
-                  padding: "14px 0",
-                  backgroundColor: verifying ? "#9b9c99" : "#0e0f0e",
-                  color: "#fff",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  border: "none",
-                  borderRadius: 10,
-                  cursor: verifying ? "not-allowed" : "pointer",
-                  minHeight: 48,
-                  fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
-                }}
-              >
-                {verifying ? "Recalculating…" : "Update listing"}
-              </button>
-            </form>
-          )}
+              );
+            })}
+          </div>
         </div>
 
         {/* Platform section */}
@@ -772,7 +733,12 @@ export default function ResultsScreen({
         <div style={{ padding: "28px 0 0" }}>
           <SectionLabel
             action={
-              <span style={{ color: ACCENT, cursor: "pointer" }}>Regenerate</span>
+              <span
+                onClick={verifying ? undefined : handleReanalyze}
+                style={{ color: ACCENT, cursor: verifying ? "default" : "pointer", opacity: verifying ? 0.5 : 1 }}
+              >
+                {verifying ? "Re-analyzing…" : "Re-analyze"}
+              </span>
             }
           >
             Your draft listing
@@ -797,6 +763,7 @@ export default function ResultsScreen({
                   onChange={(e) =>
                     setTitleEdits((t) => ({ ...t, [selectedPlatform]: e.target.value }))
                   }
+                  onBlur={(e) => persistFields({ title: e.target.value.trim() || null })}
                   placeholder="Title"
                   style={{
                     display: "block",
@@ -814,6 +781,44 @@ export default function ResultsScreen({
                 />
               </div>
               <div style={{ height: 1, background: "#efece6" }} />
+              {/* Price */}
+              <div style={{
+                padding: "12px 14px", display: "flex", alignItems: "flex-end",
+                justifyContent: "space-between", gap: 12,
+              }}>
+                <div>
+                  <SmallCaps size={10} style={{ display: "block", marginBottom: 6 }}>
+                    Price
+                  </SmallCaps>
+                  <span style={{
+                    display: "inline-flex", alignItems: "baseline", gap: 1,
+                    fontSize: 16, fontWeight: 600, color: "#0e0f0e", fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+                  }}>
+                    <span>€</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={listingPrice}
+                      onChange={(e) =>
+                        setPriceEdits((p) => ({ ...p, [selectedPlatform]: e.target.value.replace(/[^\d]/g, "") }))
+                      }
+                      onBlur={(e) => {
+                        const n = parseInt(e.target.value, 10);
+                        if (Number.isFinite(n) && n > 0) persistFields({ price_eur: n });
+                      }}
+                      style={{
+                        width: "4.5ch", border: "none", outline: "none", background: "transparent",
+                        fontSize: 16, fontWeight: 600, color: "#0e0f0e",
+                        fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
+                      }}
+                    />
+                  </span>
+                </div>
+                <span style={{ fontSize: 11.5, color: "#9b9c99", fontFamily: MONO, paddingBottom: 2 }}>
+                  rec. {fmt(activeBand.q50)}
+                </span>
+              </div>
+              <div style={{ height: 1, background: "#efece6" }} />
               {/* Description */}
               <div style={{ padding: "12px 14px 14px" }}>
                 <SmallCaps size={10} style={{ display: "block", marginBottom: 6 }}>
@@ -824,6 +829,7 @@ export default function ResultsScreen({
                   onChange={(e) =>
                     setDescEdits((d) => ({ ...d, [selectedPlatform]: e.target.value }))
                   }
+                  onBlur={(e) => persistFields({ description: e.target.value.trim() || null })}
                   rows={5}
                   style={{
                     display: "block",
@@ -903,9 +909,7 @@ export default function ResultsScreen({
                 opacity: 0.92,
               }}
             >
-              {fmt(
-                selectedPlatform === "vinted" ? data.vinted.price.q50 : data.kleinanzeigen.price.q50
-              )}
+              {fmt(priceFor(selectedPlatform))}
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path
                   d="M3 7h8m0 0L7 3m4 4l-4 4"
@@ -938,11 +942,7 @@ export default function ResultsScreen({
           }}
         >
           {isReady(otherPlatform)
-            ? `Or publish on ${PLATFORM_LABEL[otherPlatform]} · ${fmt(
-                otherPlatform === "vinted"
-                  ? data.vinted.price.q50
-                  : data.kleinanzeigen.price.q50,
-              )}`
+            ? `Or publish on ${PLATFORM_LABEL[otherPlatform]} · ${fmt(priceFor(otherPlatform))}`
             : `Or reconnect ${PLATFORM_LABEL[otherPlatform]}`}
         </button>
       </div>
