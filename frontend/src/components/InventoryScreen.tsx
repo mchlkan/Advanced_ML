@@ -172,6 +172,13 @@ function countActiveFilters(f: Filters): number {
   );
 }
 
+// Sold/removed/expired on Vinted and not actively posted on Kleinanzeigen
+// either — i.e. not live on any platform. Such listings drop out of the
+// inventory list (the record still exists; it just isn't shown).
+function isGoneFromAllPlatforms(it: InventoryItem): boolean {
+  return it.vinted?.live?.is_sold_or_removed === true && it.kleinanzeigen?.status !== "posted";
+}
+
 const STAT_COLOR = "#6b6c6a";
 
 function EyeIcon() {
@@ -305,11 +312,11 @@ function SummaryStrip({
   const parts: { text: string; danger?: boolean }[] = [];
   if (summary) {
     const c = summary.counts;
-    // Show every bucket with a count so they reconcile with the total.
+    // Buckets that have cards in the list — they sum to the item count.
+    // (sold/removed listings drop out of the list, so they're not shown here.)
     parts.push({ text: `${c.posted} posted` });
     if (c.pending > 0) parts.push({ text: `${c.pending} pending` });
     if (c.unpublished > 0) parts.push({ text: `${c.unpublished} not published` });
-    if (c.sold_or_removed > 0) parts.push({ text: `${c.sold_or_removed} sold/removed` });
     if (c.failed > 0) parts.push({ text: `${c.failed} need attention`, danger: true });
     if (summary.estimated_value_eur > 0) {
       parts.push({ text: `€${Math.round(summary.estimated_value_eur)} est.` });
@@ -665,17 +672,19 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
     onOpenListing(item.listing_id);
   }
 
+  // Listings no longer live on any platform drop out of the list entirely.
+  const listedItems = listings.filter((it) => !isGoneFromAllPlatforms(it));
   const availableBrands = Array.from(
-    new Set(listings.map(itemBrand).filter(Boolean) as string[]),
+    new Set(listedItems.map(itemBrand).filter(Boolean) as string[]),
   ).sort();
   const availableCategories = Array.from(
-    new Set(listings.map(itemCategory).filter(Boolean) as string[]),
+    new Set(listedItems.map(itemCategory).filter(Boolean) as string[]),
   ).sort();
   const activeFilterCount = countActiveFilters(filters);
-  const visibleListings = listings
+  const visibleListings = listedItems
     .filter((it) => matchesFilters(it, filters))
     .sort(SORTERS[sortBy]);
-  const showFilterBar = !loading && !error && listings.length > 0;
+  const showFilterBar = !loading && !error && listedItems.length > 0;
 
   return (
     <div
@@ -747,9 +756,9 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
                 fontSize: 11, color: "#9b9c99",
                 textTransform: "uppercase", letterSpacing: "1px",
               }}>
-                {visibleListings.length !== listings.length
-                  ? `${visibleListings.length} of ${listings.length} items`
-                  : `${listings.length} item${listings.length !== 1 ? "s" : ""}`}
+                {visibleListings.length !== listedItems.length
+                  ? `${visibleListings.length} of ${listedItems.length} items`
+                  : `${listedItems.length} item${listedItems.length !== 1 ? "s" : ""}`}
               </span>
             )}
           </div>
@@ -793,7 +802,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
           </p>
         )}
 
-        {!loading && !error && listings.length === 0 && (
+        {!loading && !error && listedItems.length === 0 && (
           <div style={{ marginTop: 80, textAlign: "center", color: "#9b9c99" }}>
             <div style={{
               width: 48, height: 48, borderRadius: 12,
@@ -814,7 +823,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
           </div>
         )}
 
-        {!loading && !error && listings.length > 0 && visibleListings.length === 0 && (
+        {!loading && !error && listedItems.length > 0 && visibleListings.length === 0 && (
           <div style={{ marginTop: 60, textAlign: "center" }}>
             <p style={{ fontSize: 14, margin: 0, color: "#6b6c6a" }}>
               No listings match these filters.
@@ -845,9 +854,6 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
             item.vinted && "vinted",
             item.kleinanzeigen && "kleinanzeigen",
           ].filter(Boolean) as string[];
-          const soldOrRemoved =
-            item.vinted?.live?.is_sold_or_removed === true ||
-            item.kleinanzeigen?.live?.is_sold_or_removed === true;
           const canRelist = getPostedPlatforms(item).length > 0;
           const isBusy = busy.has(item.listing_id);
           return (
@@ -923,20 +929,12 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
                   {[brand, category].filter(Boolean).join(" · ") || "—"}
                 </p>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  {soldOrRemoved ? (
-                    <span style={{
-                      fontSize: 10, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase",
-                      color: "#8a8b88", backgroundColor: "#efece6",
-                      padding: "3px 7px", borderRadius: 999, border: "1px solid #ddd9d2",
-                    }}>
-                      sold · removed
-                    </span>
-                  ) : publishedPlatforms.length > 0 ? (
+                  {publishedPlatforms.length > 0 ? (
                     publishedPlatforms.map((p) => <PlatformBadge key={p} platform={p} />)
                   ) : (
                     <SmallCaps size={10}>not published</SmallCaps>
                   )}
-                  {!soldOrRemoved && item.vinted?.live && (
+                  {item.vinted?.live && !item.vinted.live.is_sold_or_removed && (
                     <span style={{
                       display: "inline-flex", alignItems: "center", gap: 8,
                       fontFamily: MONO,
