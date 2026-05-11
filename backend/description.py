@@ -26,21 +26,31 @@ _TIMEOUT = 8.0
 _TITLE_MAX_LEN = 90
 
 _SYSTEM = (
-    "You write the title and description for second-hand clothing listings. "
-    "Use ONLY the facts you are given — never invent details not in the data; "
-    "if a field is marked unreliable, leave it out entirely. Write in English.\n"
-    "TITLE — ALWAYS exactly this order and nothing else:  {brand}  {garment type}  "
-    "{colour}  {size}.  The garment type is a clean noun phrase you work out from "
-    'the category and the rough title — e.g. "Polo Shirt", "Hoodie", "Bomber Jacket", '
-    '"Slim Jeans", "Crewneck Sweatshirt", "Trainers", "Midi Dress" (category "tshirts" '
-    '+ a rough title mentioning "polo" → "Polo Shirt"; "tshirts" otherwise → "T-Shirt"). '
-    "NEVER just copy the rough title — rewrite it into the {brand} {garment type} "
-    "{colour} {size} form (rough title \"Polo Ralph Lauren\" with brand \"Ralph Lauren\" "
-    "→ \"Ralph Lauren Polo Shirt …\", not \"Polo Ralph Lauren …\"). Drop any part you "
-    "don't have (no brand → start with the garment type; no size → end with the colour). "
-    "No marketing words, no quotes, no trailing punctuation, no commas.\n"
-    "DESCRIPTION: 2–4 sentences, personal and honest — the seller talking to the "
-    "buyer. Mention wear, fit, or why it stands out. No bullet points.\n"
+    "You write the title and description for second-hand clothing listings from "
+    "structured data extracted by a photo model. Write in English. Never invent "
+    "details that aren't in the data.\n"
+    "\n"
+    "TITLE — ALWAYS exactly this order, nothing else:  {brand} {garment type} {colour} {size}\n"
+    "• Brand: take it from the Brand field; if there is no Brand field, take it from "
+    'the rough title — that usually leads with the brand (rough title "Polo Ralph Lauren" '
+    '→ brand "Ralph Lauren"). Use the brand even when it is marked (uncertain): the title '
+    "is short and the seller eyeballs it. Only start the title with the garment type if "
+    "you truly cannot identify any brand anywhere.\n"
+    "• Garment type: a clean noun phrase you work out from the category + the rough "
+    'title — "Polo Shirt", "Hoodie", "Bomber Jacket", "Slim Jeans", "Crewneck Sweatshirt", '
+    '"Trainers", "Midi Dress". (Category "tshirts" + a rough title mentioning "polo" → '
+    '"Polo Shirt"; "tshirts" otherwise → "T-Shirt".) NEVER echo the rough title verbatim — '
+    'rewrite it into {brand} {garment type} … order ("Polo Ralph Lauren" → "Ralph Lauren '
+    'Polo Shirt …", not "Polo Ralph Lauren …").\n'
+    "• Include the size if you have one (even if (uncertain)). Drop a part only if it is "
+    "genuinely absent. No marketing words, no quotes, no trailing punctuation, no commas.\n"
+    "\n"
+    "DESCRIPTION — 2–4 sentences, personal and honest, the seller talking to the buyer. "
+    "Be specific: name the garment, the colour, the condition, the fit, anything that "
+    'stands out. Do NOT pad with generic filler like "no visible damage or fading" unless '
+    "that genuinely is all there is to say. Do not state a field marked (uncertain) as a "
+    "hard fact — hedge it or leave it out. No bullet points.\n"
+    "\n"
     "Output EXACTLY two lines:\n"
     "Title: <the title>\n"
     "Description: <the description>"
@@ -81,16 +91,16 @@ _EXAMPLES: dict[str, list[tuple[str, str, str]]] = {
     ],
     "tshirts": [
         (
-            "Brand: Ralph Lauren | Condition: Very good | Color: navy | Size: L | Wear: minimal | Rough title: Polo Ralph Lauren",
+            # No Brand field — brand comes from the rough title.
+            "Condition: Very good | Color: navy | Size: L | Wear: minimal | Rough title: Polo Ralph Lauren",
             "Ralph Lauren Polo Shirt Navy L",
             "Ralph Lauren polo in navy, size L. Worn a handful of times — collar's still crisp, no marks or fading. "
             "Classic fit, true to size.",
         ),
         (
-            "Brand: H&M | Condition: New with tags | Color: white | Size: S | Wear: minimal | Rough title: H&M basic cotton tee",
+            "Brand: H&M (uncertain) | Condition: New with tags | Color: white | Size: S | Wear: minimal | Rough title: H&M basic cotton tee",
             "H&M T-Shirt White S (new with tags)",
-            "Brand new with the original tag still attached. "
-            "Clean white, completely unworn. Size S runs true.",
+            "Brand new — original tag still on. Clean white, completely unworn. Size S runs true.",
         ),
         (
             "Brand: Carhartt | Condition: Good | Color: grey | Size: L | Wear: light | Rough title: Carhartt pocket t-shirt",
@@ -144,8 +154,9 @@ def _field_summary(fields: dict, visual_wear: float, unreliable: set[str]) -> st
     parts: list[str] = []
     for key in ("brand", "condition", "color", "size"):
         val = fields.get(key)
-        if val and key not in unreliable:
-            parts.append(f"{key.capitalize()}: {val}")
+        if val:
+            tag = " (uncertain)" if key in unreliable else ""
+            parts.append(f"{key.capitalize()}: {val}{tag}")
     parts.append(f"Wear: {_wear_label(visual_wear)}")
     rough = (fields.get("title") or "").strip()
     if rough:
@@ -163,11 +174,6 @@ def _build_prompt(fields: dict, platform: str, visual_wear: float, field_review:
         if platform == "vinted"
         else "Kleinanzeigen (clear, matter-of-fact tone)"
     )
-    unreliable_note = (
-        f"\nDo not mention these unreliable fields: {', '.join(sorted(unreliable))}."
-        if unreliable
-        else ""
-    )
     example_block = "\n\n".join(
         f"[Example {i + 1}]\n{ex_f}\nTitle: {ex_t}\nDescription: {ex_d}"
         for i, (ex_f, ex_t, ex_d) in enumerate(examples)
@@ -178,7 +184,6 @@ def _build_prompt(fields: dict, platform: str, visual_wear: float, field_review:
         f"Platform: {platform_note}\n"
         f"Category: {fields.get('category', 'clothing')}\n"
         f"{summary}"
-        f"{unreliable_note}"
     )
 
 
