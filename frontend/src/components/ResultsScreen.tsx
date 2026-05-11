@@ -219,11 +219,37 @@ function PlatformCard({
   const soft = PLATFORM_SOFT[platform];
   const kicker = PLATFORM_KICKER[platform];
 
-  const sliderLo = Math.max(1, Math.floor(Math.min(price.q10, currentPrice) * 0.5));
-  const sliderHi = Math.ceil(Math.max(price.q90, currentPrice) * 1.7);
-  const sliderSpan = Math.max(1, sliderHi - sliderLo);
-  const tickPos = (v: number) =>
-    `${Math.max(0, Math.min(100, ((v - sliderLo) / sliderSpan) * 100))}%`;
+  // Price slider on a piecewise scale: q10 → 10 %, q50 (the recommendation) →
+  // 50 %, q90 → 90 % of the track, regardless of how right-skewed the band is,
+  // with small tail zones below q10 / above q90 to undercut or go premium. Nice
+  // side effect: the thumb position-% ≈ the percentile, so the slider *is* a
+  // percentile picker. (A plain linear €-scale buried q50 on the far left.)
+  const q10 = Math.round(price.q10);
+  const q50 = Math.round(price.q50);
+  const q90 = Math.round(price.q90);
+  const sliderLo = Math.max(1, Math.min(Math.round(q10 * 0.6), Math.floor(currentPrice * 0.9)));
+  const sliderHi = Math.max(Math.round(q90 * 1.5), Math.ceil(currentPrice * 1.1));
+  const STEPS = 1000;
+  const lerp = (x: number, a: number, b: number) =>
+    b > a ? Math.min(1, Math.max(0, (x - a) / (b - a))) : 0;
+  const priceToPos = (eur: number): number => {
+    const e = Math.max(sliderLo, Math.min(sliderHi, eur));
+    let f: number;
+    if (e <= q10) f = 0.1 * lerp(e, sliderLo, q10);
+    else if (e <= q50) f = 0.1 + 0.4 * lerp(e, q10, q50);
+    else if (e <= q90) f = 0.5 + 0.4 * lerp(e, q50, q90);
+    else f = 0.9 + 0.1 * lerp(e, q90, sliderHi);
+    return Math.round(f * STEPS);
+  };
+  const posToPrice = (pos: number): number => {
+    const f = Math.max(0, Math.min(1, pos / STEPS));
+    let e: number;
+    if (f <= 0.1) e = sliderLo + (f / 0.1) * (q10 - sliderLo);
+    else if (f <= 0.5) e = q10 + ((f - 0.1) / 0.4) * (q50 - q10);
+    else if (f <= 0.9) e = q50 + ((f - 0.5) / 0.4) * (q90 - q50);
+    else e = q90 + ((f - 0.9) / 0.1) * (sliderHi - q90);
+    return Math.max(1, Math.round(e));
+  };
 
   return (
     <div
@@ -334,13 +360,13 @@ function PlatformCard({
           <div style={{ marginTop: 12 }}>
             <input
               type="range"
-              min={sliderLo}
-              max={sliderHi}
+              min={0}
+              max={STEPS}
               step={1}
-              value={currentPrice}
-              onChange={(e) => onPrice(Number(e.target.value))}
-              onPointerUp={(e) => onPriceCommit(Number((e.target as HTMLInputElement).value))}
-              onBlur={(e) => onPriceCommit(Number(e.target.value))}
+              value={priceToPos(currentPrice)}
+              onChange={(e) => onPrice(posToPrice(Number(e.target.value)))}
+              onPointerUp={(e) => onPriceCommit(posToPrice(Number((e.target as HTMLInputElement).value)))}
+              onBlur={(e) => onPriceCommit(posToPrice(Number(e.target.value)))}
               onClick={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
               style={{
@@ -352,15 +378,15 @@ function PlatformCard({
             />
             <div style={{ position: "relative", height: 16, marginTop: 3 }}>
               {([
-                ["q10", price.q10, false],
-                ["q50", price.q50, true],
-                ["q90", price.q90, false],
-              ] as const).map(([k, v, emph]) => (
+                [q10, "10%", false],
+                [q50, "50%", true],
+                [q90, "90%", false],
+              ] as const).map(([v, left, emph]) => (
                 <div
-                  key={k}
+                  key={left}
                   style={{
                     position: "absolute",
-                    left: tickPos(v),
+                    left,
                     transform: "translateX(-50%)",
                     fontSize: 9.5,
                     fontFamily: MONO,
