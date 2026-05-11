@@ -15,6 +15,21 @@ from fastapi.middleware.cors import CORSMiddleware
 # vlm_backend factory) sees the values regardless of import order.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+# iPhone photos default to HEIC, which plain Pillow can't decode. Registering
+# the HEIF/HEIC opener makes Image.open() handle .heic/.heif uploads
+# transparently in /upload (and /verify). Degrade rather than crash if the
+# wheel is missing — HEIC uploads just keep returning the 400 they did before.
+try:
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except ImportError:
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "pillow-heif not installed — HEIC/HEIF uploads will be rejected with 400"
+    )
+
 
 def _materialize_session(env_json_var: str, env_path_var: str, default_path: Path) -> None:
     """Containerized deploys can't easily mount secret files. If the JSON

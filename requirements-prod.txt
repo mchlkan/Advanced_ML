@@ -10,6 +10,7 @@ python-multipart>=0.0.9
 
 # Image processing
 pillow>=10.3.0
+pillow-heif>=0.18.0  # decode iPhone HEIC/HEIF uploads (registers a Pillow plugin)
 
 # Schemas
 pydantic>=2.7.0

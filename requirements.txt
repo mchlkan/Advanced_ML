@@ -17,6 +17,7 @@ datasets>=2.19.0
 pandas>=2.2.0
 pyarrow>=16.0.0
 pillow>=10.3.0
+pillow-heif>=0.18.0  # decode iPhone HEIC/HEIF uploads (registers a Pillow plugin)
 scikit-learn>=1.5.0
 
 # Evaluation
