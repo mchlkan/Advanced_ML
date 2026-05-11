@@ -149,7 +149,7 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
           Reading your piece…
         </h2>
         <p style={{ margin: "8px 0 0", fontSize: 14, color: "#6b6c6a", lineHeight: 1.45 }}>
-          Usually 3–10 seconds. Don&apos;t switch apps.
+          Usually 10–20 seconds. Don&apos;t switch apps.
         </p>
       </div>
 
