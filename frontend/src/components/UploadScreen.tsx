@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import SupportedPlatforms from "./SupportedPlatforms";
 
 interface Props {
   onSubmit: (
@@ -208,7 +209,7 @@ function PickPhase({
   return (
     <>
       {/* Hero */}
-      <div style={{ padding: "36px 24px 28px" }}>
+      <div style={{ padding: "32px 24px 20px" }}>
         <h1
           style={{
             margin: 0,
@@ -224,16 +225,20 @@ function PickPhase({
         </h1>
         <p
           style={{
-            margin: "14px 0 0",
+            margin: "13px 0 0",
             fontSize: 15,
             lineHeight: 1.45,
             color: "#3a3b3a",
             maxWidth: 320,
           }}
         >
-          Snap a piece you want to sell. We identify it, price it across Vinted and
-          Kleinanzeigen, and draft the listing.
+          Snap a piece you&rsquo;re selling — we identify it, price it, and draft the listing.
         </p>
+      </div>
+
+      {/* Supported marketplaces */}
+      <div style={{ padding: "0 24px 18px" }}>
+        <SupportedPlatforms />
       </div>
 
       {/* Viewfinder zone */}
