@@ -1,5 +1,6 @@
 import type {
   InventoryResponse,
+  InventorySummary,
   PatchFieldsRequest,
   SyncResponse,
   UploadResponse,
@@ -11,6 +12,12 @@ export async function fetchInventory(): Promise<InventoryResponse> {
   const res = await fetch(`${BASE}/inventory`);
   if (!res.ok) throw new Error("Failed to fetch inventory");
   return res.json();
+}
+
+export async function fetchInventorySummary(): Promise<InventorySummary> {
+  const res = await fetch(`${BASE}/inventory/summary`);
+  if (!res.ok) throw new Error(`Failed to fetch summary: ${res.status}`);
+  return res.json() as Promise<InventorySummary>;
 }
 
 export async function syncWardrobe(): Promise<SyncResponse> {

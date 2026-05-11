@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { InventoryItem } from "@/types/api";
+import type { InventoryItem, InventorySummary } from "@/types/api";
 import {
   BASE,
   deleteListing,
   fetchInventory,
+  fetchInventorySummary,
   markAsSold,
   patchListingFields,
   syncWardrobe,
@@ -293,6 +294,48 @@ function formatSyncedAgo(ms: number | null): string {
   return `${Math.round(s / 86400)}d ago`;
 }
 
+// Muted one-liner under the title: inventory totals + the last-sync state.
+function SummaryStrip({
+  summary, syncMsg, lastSyncedAt,
+}: {
+  summary: InventorySummary | null;
+  syncMsg: string | null;
+  lastSyncedAt: number | null;
+}) {
+  const parts: { text: string; danger?: boolean }[] = [];
+  if (summary) {
+    const c = summary.counts;
+    parts.push({ text: `${c.posted} posted` });
+    if (summary.estimated_value_eur > 0) {
+      parts.push({ text: `€${Math.round(summary.estimated_value_eur)} est.` });
+    }
+    if (summary.live_views + summary.live_favourites > 0) {
+      parts.push({ text: `${summary.live_views} views` });
+      parts.push({ text: `${summary.live_favourites} saved` });
+    }
+    if (c.sold_or_removed > 0) parts.push({ text: `${c.sold_or_removed} sold/removed` });
+    if (c.failed > 0) parts.push({ text: `${c.failed} need attention`, danger: true });
+  }
+  if (syncMsg) parts.push({ text: syncMsg, danger: true });
+  else if (lastSyncedAt != null) parts.push({ text: `synced ${formatSyncedAgo(lastSyncedAt)}` });
+
+  if (parts.length === 0) return null;
+  return (
+    <div style={{
+      marginLeft: 48,
+      display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "2px 6px",
+      fontFamily: MONO, fontSize: 11,
+    }}>
+      {parts.map((p, i) => (
+        <span key={i} style={{ color: p.danger ? "#c0392b" : "#9b9c99", whiteSpace: "nowrap" }}>
+          {i > 0 && <span style={{ color: "#cfcdc8" }}>· </span>}
+          {p.text}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // ---- filter / sort bar ----
 
 function ChevronDownIcon() {
@@ -503,9 +546,14 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [deleteConfirm, setDeleteConfirm] = useState<InventoryItem | null>(null);
+  const [summary, setSummary] = useState<InventorySummary | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>("newest");
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  function refetchSummary() {
+    fetchInventorySummary().then(setSummary).catch(() => {});
+  }
 
   useEffect(() => {
     fetchInventory()
@@ -515,6 +563,8 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
       })
       .catch(() => setError("Could not load listings. Is the backend running?"))
       .finally(() => setLoading(false));
+    refetchSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function setBusyState(id: string, isBusy: boolean) {
@@ -534,6 +584,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
     } catch {
       // Soft-fail; keep current state.
     }
+    refetchSummary();
   }
 
   async function handleSync() {
@@ -555,6 +606,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
     try {
       await markAsSold(item.listing_id);
       setListings((prev) => prev.filter((it) => it.listing_id !== item.listing_id));
+      refetchSummary();
     } catch {
       // Surface in card; for now keep silent.
     } finally {
@@ -568,6 +620,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
     try {
       await deleteListing(item.listing_id);
       setListings((prev) => prev.filter((it) => it.listing_id !== item.listing_id));
+      refetchSummary();
     } catch {
       // Stay; user can retry.
     } finally {
@@ -698,18 +751,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
             )}
           </div>
         </div>
-        {(syncMsg || lastSyncedAt != null) && (
-          <span style={{
-            marginLeft: 48,
-            fontFamily: syncMsg ? FONT : MONO,
-            fontSize: 11,
-            color: syncMsg ? "#c0392b" : "#9b9c99",
-            textTransform: syncMsg ? "none" : "uppercase",
-            letterSpacing: syncMsg ? "normal" : "0.06em",
-          }}>
-            {syncMsg ?? `Synced ${formatSyncedAgo(lastSyncedAt)}`}
-          </span>
-        )}
+        <SummaryStrip summary={summary} syncMsg={syncMsg} lastSyncedAt={lastSyncedAt} />
       </header>
 
       {showFilterBar && (

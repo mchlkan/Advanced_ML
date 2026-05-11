@@ -530,6 +530,10 @@ export default function ResultsScreen({
               <img
                 src={labelImageUrl}
                 alt="Brand or size tag"
+                onError={(e) => {
+                  // Listing opened from inventory with no tag photo → /label 404s; drop the thumbnail.
+                  e.currentTarget.style.display = "none";
+                }}
                 style={{
                   position: "absolute",
                   right: 12,

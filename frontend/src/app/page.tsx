@@ -143,6 +143,8 @@ export default function Page() {
         screen: "results",
         imageUrl: `${BASE}/listings/${listingId}/image`,
         data,
+        // The tag photo, if one was uploaded — the <img> 404s + self-hides otherwise.
+        labelImageUrl: `${BASE}/listings/${listingId}/label`,
       });
     } catch (err) {
       setUploadError(

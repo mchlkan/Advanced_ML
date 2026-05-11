@@ -215,3 +215,27 @@ export interface SyncResponse {
   item_count: number;
   fetched_at: number;
 }
+
+export type InventoryBucket =
+  | "posted"
+  | "sold_or_removed"
+  | "pending"
+  | "failed"
+  | "unpublished";
+
+export interface InventoryStatusCounts {
+  total: number;
+  unpublished: number;
+  pending: number;
+  posted: number;
+  sold_or_removed: number;
+  failed: number;
+}
+
+export interface InventorySummary {
+  counts: InventoryStatusCounts;
+  estimated_value_eur: number;
+  live_views: number;
+  live_favourites: number;
+  last_synced_at: number | null;
+}
