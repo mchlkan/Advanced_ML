@@ -284,6 +284,15 @@ def _lookup_size_id(category: str | None, size: str | None) -> int | None:
     return None
 
 
+# KA package-size presets offered on shippable ads. Our clothing/shoe
+# listings always declare `versand: ja` (see KA_ATTRS["fixed"]), and KA's
+# submit endpoint then rejects an empty <shipping:shipping-options> with
+# 400 `shippingOptions`. This small-package combo is the one most clothing
+# sellers offer (observed across live category-154 ads via the public
+# /api/ads search); the seller/buyer can adjust the size on KA afterwards.
+KA_DEFAULT_SHIPPING_OPTIONS: list[str] = ["HERMES_001", "HERMES_002", "DHL_001"]
+
+
 def to_kleinanzeigen(canon: dict[str, Any]) -> dict[str, Any]:
     """Build the variable bits of the KA listing payload from canonical
     English fields. The integration layers session-derived defaults
@@ -310,6 +319,9 @@ def to_kleinanzeigen(canon: dict[str, Any]) -> dict[str, Any]:
         attrs = _ka_attributes(canon, cat_id)
         if attrs:
             out["attributes"] = attrs
+        # Every KA_ATTRS category sets `versand: ja`, so a shipping option
+        # is mandatory — attach the default package combo.
+        out["shipping_options"] = list(KA_DEFAULT_SHIPPING_OPTIONS)
     return out
 
 

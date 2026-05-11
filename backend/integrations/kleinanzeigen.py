@@ -569,7 +569,11 @@ def build_ad_xml(payload: dict, picture_links: list[dict]) -> str:
     `payload` keys (all required unless noted):
       title, description, category_id, location_id, price_eur,
       poster_type ("PRIVATE"|"COMMERCIAL"), contact_name, email,
-      imprint (optional, COMMERCIAL only)
+      imprint (optional, COMMERCIAL only),
+      shipping_options (optional list of KA package-preset ids, e.g.
+        ["HERMES_001", "HERMES_002", "DHL_001"]) — when the ad declares
+        "Versand möglich" KA's submit endpoint rejects an empty
+        <shipping:shipping-options> with 400 `shippingOptions`.
 
     `picture_links` is the list of {href, rel} dicts returned from
     upload_photo() — they're injected verbatim as <pic:link> blocks.
@@ -605,6 +609,13 @@ def build_ad_xml(payload: dict, picture_links: list[dict]) -> str:
     imprint_block = f"<ad:imprint>{imprint}</ad:imprint>" if imprint else ""
     contact_block = f"<ad:contact-name>{contact_name}</ad:contact-name>" if contact_name else ""
 
+    ship_ids = payload.get("shipping_options") or []
+    if ship_ids:
+        opts = "".join(f'<shipping:shipping-option id="{_xml_escape(str(sid))}" />' for sid in ship_ids)
+        shipping_block = f"<shipping:shipping-options>{opts}</shipping:shipping-options>"
+    else:
+        shipping_block = "<shipping:shipping-options />"
+
     return (
         "<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>"
         f"<ad:ad {_XML_NS} locale=\"en_US\" id=\"0\">"
@@ -625,7 +636,7 @@ def build_ad_xml(payload: dict, picture_links: list[dict]) -> str:
         f"<medias:medias />"
         f"{pictures_xml}"
         f"{attributes_xml}"
-        f"<shipping:shipping-options />"
+        f"{shipping_block}"
         f'<payment:buy-now selected="false" />'
         f"</ad:ad>"
     )
