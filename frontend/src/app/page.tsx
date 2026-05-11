@@ -21,6 +21,7 @@ import PlatformConnectionBanner from "@/components/PlatformConnectionBanner";
 import PlatformLoginModal from "@/components/PlatformLoginModal";
 
 type PublishItem = { platform: Platform; finalFields: Identification };
+type PublishProgress = Record<Platform, "pending" | "posted" | "failed">;
 
 type AppState =
   | { screen: "upload" }
@@ -43,6 +44,7 @@ type AppState =
       imageUrl: string;
       data: UploadResponse;
       platforms: Platform[];
+      progress: PublishProgress;
       labelImageUrl?: string;
     }
   | {
@@ -104,47 +106,64 @@ export default function Page() {
   ): Promise<void> {
     if (items.length === 0) return;
     setUploadError(null);
+    const initialProgress = Object.fromEntries(
+      items.map((i) => [i.platform, "pending"]),
+    ) as PublishProgress;
     setState({
       screen: "publishing",
       imageUrl,
       data,
       platforms: items.map((i) => i.platform),
+      progress: initialProgress,
       labelImageUrl,
     });
-    // Backend's PublishRunner does the actual platform call asynchronously;
-    // poll each job until terminal status (posted | failed). Run all the
-    // platforms in parallel via Promise.allSettled — one platform failing
-    // shouldn't take down the others.
-    const settled = await Promise.allSettled(
-      items.map(async (item) => {
-        const job = await publishListing({
-          listing_id: listingId,
-          platform: item.platform,
-          final_fields: item.finalFields,
+    // Each platform: publish + poll until terminal (posted | failed). Push
+    // per-platform completion into the publishing screen's `progress` so the
+    // user sees each row tick over independently. One platform failing doesn't
+    // take down the other.
+    const outcomes: PublishOutcome[] = await Promise.all(
+      items.map(async (item): Promise<PublishOutcome> => {
+        let outcome: PublishOutcome;
+        try {
+          const job = await publishListing({
+            listing_id: listingId,
+            platform: item.platform,
+            final_fields: item.finalFields,
+          });
+          const result = await pollPublishStatus(job.job_id);
+          if (result.status === "posted" && result.platform_listing_url) {
+            outcome = {
+              platform: item.platform,
+              listingUrl: result.platform_listing_url,
+              error: null,
+            };
+          } else {
+            outcome = {
+              platform: item.platform,
+              listingUrl: null,
+              error: result.error ?? "Publish did not complete.",
+            };
+          }
+        } catch (err) {
+          outcome = {
+            platform: item.platform,
+            listingUrl: null,
+            error: err instanceof Error ? err.message : String(err ?? "unknown"),
+          };
+        }
+        setState((prev) => {
+          if (prev.screen !== "publishing") return prev;
+          return {
+            ...prev,
+            progress: {
+              ...prev.progress,
+              [item.platform]: outcome.listingUrl ? "posted" : "failed",
+            },
+          };
         });
-        const result = await pollPublishStatus(job.job_id);
-        return { item, result };
+        return outcome;
       }),
     );
-    const outcomes: PublishOutcome[] = settled.map((s, i) => {
-      const platform = items[i].platform;
-      if (s.status === "rejected") {
-        return {
-          platform,
-          listingUrl: null,
-          error: s.reason instanceof Error ? s.reason.message : String(s.reason ?? "unknown"),
-        };
-      }
-      const { result } = s.value;
-      if (result.status === "posted" && result.platform_listing_url) {
-        return { platform, listingUrl: result.platform_listing_url, error: null };
-      }
-      return {
-        platform,
-        listingUrl: null,
-        error: result.error ?? "Publish did not complete.",
-      };
-    });
     if (outcomes.every((o) => !o.listingUrl)) {
       // All failed — bounce back to results with the combined error so the user
       // can adjust and retry, instead of staring at an empty Published screen.
@@ -257,7 +276,7 @@ export default function Page() {
       );
     }
     if (state.screen === "publishing") {
-      return <PublishingScreen platforms={state.platforms} />;
+      return <PublishingScreen platforms={state.platforms} progress={state.progress} />;
     }
     if (state.screen === "published") {
       return (

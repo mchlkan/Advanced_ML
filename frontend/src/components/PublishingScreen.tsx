@@ -2,8 +2,11 @@
 
 import type { Platform } from "@/types/api";
 
+type ProgressState = "pending" | "posted" | "failed";
+
 interface Props {
   platforms: Platform[];
+  progress: Record<Platform, ProgressState>;
 }
 
 const PLATFORM_LABEL: Record<Platform, string> = {
@@ -11,22 +14,21 @@ const PLATFORM_LABEL: Record<Platform, string> = {
   kleinanzeigen: "Kleinanzeigen",
 };
 
-const ACCENT = "oklch(0.62 0.15 145)";
+const PLATFORM_ACCENT: Record<Platform, string> = {
+  vinted: "oklch(0.55 0.08 195)",
+  kleinanzeigen: "oklch(0.62 0.13 55)",
+};
 
-function joinList(items: string[]): string {
-  if (items.length === 0) return "";
-  if (items.length === 1) return items[0];
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
-}
+const SUCCESS = "oklch(0.62 0.15 145)";
+const ERROR_RED = "#c0392b";
 
-export default function PublishingScreen({ platforms }: Props) {
-  const labels = platforms.map((p) => PLATFORM_LABEL[p]);
-  const headline = `Publishing on ${joinList(labels)}…`;
-  const subtitle =
-    platforms.length > 1
-      ? "Uploading your photos and posting both listings in parallel. Usually 10–20 seconds; cold starts can be longer."
-      : "Uploading your photo and posting the listing. Usually 5–10 seconds; cold starts can be longer.";
+export default function PublishingScreen({ platforms, progress }: Props) {
+  const allDone = platforms.every((p) => progress[p] !== "pending");
+  const subtitle = allDone
+    ? "Wrapping up…"
+    : platforms.length > 1
+      ? "Posting both listings in parallel. Usually 10–20 seconds; cold starts can be longer."
+      : "Posting the listing. Usually 5–10 seconds; cold starts can be longer.";
 
   return (
     <div
@@ -40,7 +42,7 @@ export default function PublishingScreen({ platforms }: Props) {
         color: "#0e0f0e",
         fontFamily: '"Inter", -apple-system, system-ui, sans-serif',
         padding: "0 24px",
-        gap: 24,
+        gap: 28,
       }}
     >
       {/* Logo */}
@@ -49,7 +51,7 @@ export default function PublishingScreen({ platforms }: Props) {
           width: 22,
           height: 22,
           borderRadius: 6,
-          backgroundColor: ACCENT,
+          backgroundColor: SUCCESS,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -58,44 +60,139 @@ export default function PublishingScreen({ platforms }: Props) {
         <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: "#fff" }} />
       </div>
 
-      {/* Spinner */}
+      {/* Per-platform rows */}
       <div
         style={{
-          width: 36,
-          height: 36,
-          border: "3px solid #e7e5e0",
-          borderTopColor: ACCENT,
-          borderRadius: "50%",
-          animation: "rcSpin 0.8s linear infinite",
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+          width: "100%",
+          maxWidth: 340,
         }}
-      />
-
-      <div style={{ textAlign: "center" }}>
-        <p
-          style={{
-            fontSize: 17,
-            fontWeight: 600,
-            letterSpacing: "-0.3px",
-            margin: "0 0 8px",
-          }}
-        >
-          {headline}
-        </p>
-        <p
-          style={{
-            fontSize: 13,
-            color: "#6b6c6a",
-            margin: 0,
-            textAlign: "center",
-            lineHeight: 1.5,
-            maxWidth: 320,
-          }}
-        >
-          {subtitle}
-        </p>
+      >
+        {platforms.map((p) => (
+          <PlatformRow key={p} platform={p} state={progress[p] ?? "pending"} />
+        ))}
       </div>
 
+      <p
+        style={{
+          fontSize: 12,
+          color: "#9b9c99",
+          textAlign: "center",
+          maxWidth: 320,
+          margin: 0,
+          lineHeight: 1.5,
+        }}
+      >
+        {subtitle}
+      </p>
+
       <style>{`@keyframes rcSpin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+function PlatformRow({ platform, state }: { platform: Platform; state: ProgressState }) {
+  const accent = PLATFORM_ACCENT[platform];
+  const label = PLATFORM_LABEL[platform];
+  const status =
+    state === "pending" ? "Posting…" : state === "posted" ? "Posted" : "Failed";
+  const statusColor = state === "failed" ? ERROR_RED : "#6b6c6a";
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        padding: "14px 16px",
+        borderRadius: 14,
+        background: "#fff",
+        border: `1px solid ${state === "failed" ? "#f5c6c0" : "#e7e5e0"}`,
+      }}
+    >
+      <StatusIcon state={state} accent={accent} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: 14,
+            fontWeight: 600,
+            color: "#0e0f0e",
+            letterSpacing: "-0.1px",
+          }}
+        >
+          {label}
+        </p>
+        <p style={{ margin: "2px 0 0", fontSize: 12, color: statusColor }}>{status}</p>
+      </div>
+    </div>
+  );
+}
+
+function StatusIcon({ state, accent }: { state: ProgressState; accent: string }) {
+  if (state === "pending") {
+    return (
+      <div
+        style={{
+          width: 24,
+          height: 24,
+          border: "2.5px solid #e7e5e0",
+          borderTopColor: accent,
+          borderRadius: "50%",
+          animation: "rcSpin 0.8s linear infinite",
+          flexShrink: 0,
+        }}
+      />
+    );
+  }
+  if (state === "posted") {
+    return (
+      <div
+        style={{
+          width: 24,
+          height: 24,
+          borderRadius: "50%",
+          background: SUCCESS,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+          <path
+            d="M3 7l2.5 2.5L10 4"
+            stroke="#fff"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </div>
+    );
+  }
+  return (
+    <div
+      style={{
+        width: 24,
+        height: 24,
+        borderRadius: "50%",
+        background: ERROR_RED,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+        <path
+          d="M2 2l7 7M9 2l-7 7"
+          stroke="#fff"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      </svg>
     </div>
   );
 }
