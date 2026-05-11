@@ -124,6 +124,86 @@ function RefreshIcon() {
   );
 }
 
+// ---- per-card action icons (inline toolbar; replaces the kebab sheet) ----
+
+const ICON_PROPS = {
+  width: 15, height: 15, viewBox: "0 0 16 16", fill: "none",
+  "aria-hidden": true,
+} as const;
+const STROKE = { stroke: "currentColor", strokeLinecap: "round", strokeLinejoin: "round" } as const;
+
+function OpenIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M9.5 3H13v3.5" strokeWidth="1.5" {...STROKE} />
+      <path d="M13 3l-5 5" strokeWidth="1.5" {...STROKE} />
+      <path d="M11.5 9v2.5a1.5 1.5 0 0 1-1.5 1.5H4.5A1.5 1.5 0 0 1 3 11.5V6A1.5 1.5 0 0 1 4.5 4.5H7" strokeWidth="1.5" {...STROKE} />
+    </svg>
+  );
+}
+function PriceTagIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M8.4 2.6H3.5a.9.9 0 0 0-.9.9v4.9c0 .24.1.47.26.64l5.7 5.7a.9.9 0 0 0 1.28 0l4.9-4.9a.9.9 0 0 0 0-1.28l-5.7-5.7a.9.9 0 0 0-.64-.26Z" strokeWidth="1.4" {...STROKE} />
+      <circle cx="5.6" cy="5.6" r="1.05" strokeWidth="1.3" stroke="currentColor" />
+    </svg>
+  );
+}
+function RelistIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M13 8a5 5 0 1 1-1.46-3.54" strokeWidth="1.5" {...STROKE} />
+      <path d="M13 2.5V5.5H10" strokeWidth="1.5" {...STROKE} />
+    </svg>
+  );
+}
+function SoldIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M2.8 8.6l3.3 3.3L13.2 4.5" strokeWidth="1.7" {...STROKE} />
+    </svg>
+  );
+}
+function TrashIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M2.75 4.25h10.5" strokeWidth="1.5" {...STROKE} />
+      <path d="M6 4.25V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.25" strokeWidth="1.5" {...STROKE} />
+      <path d="M4.25 4.25l.6 8.1a1.2 1.2 0 0 0 1.2 1.1h3.9a1.2 1.2 0 0 0 1.2-1.1l.6-8.1" strokeWidth="1.5" {...STROKE} />
+      <path d="M6.6 7v3.6M9.4 7v3.6" strokeWidth="1.35" {...STROKE} />
+    </svg>
+  );
+}
+
+function IconBtn({
+  label, onClick, destructive, children,
+}: {
+  label: string;
+  onClick: () => void;
+  destructive?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      style={{
+        width: 32, height: 32, borderRadius: 9,
+        border: `1px solid ${destructive ? "#ecc9c4" : "#e7e5e0"}`,
+        background: destructive ? "#fdf6f5" : "#fff",
+        color: destructive ? "#c0392b" : "#3a3b3a",
+        cursor: "pointer", flexShrink: 0,
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        padding: 0, fontFamily: FONT,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 function formatSyncedAgo(ms: number | null): string {
   if (!ms) return "never";
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
@@ -141,7 +221,6 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
-  const [actionSheet, setActionSheet] = useState<InventoryItem | null>(null);
   const [priceEdit, setPriceEdit] = useState<InventoryItem | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<InventoryItem | null>(null);
 
@@ -197,7 +276,6 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
   }
 
   async function handleMarkSold(item: InventoryItem) {
-    setActionSheet(null);
     setBusyState(item.listing_id, true);
     try {
       await markAsSold(item.listing_id);
@@ -236,14 +314,12 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
   }
 
   function handleRelist(item: InventoryItem) {
-    setActionSheet(null);
     const platforms = getPostedPlatforms(item);
     if (platforms.length === 0) return;
     onRelistListing(item.listing_id, platforms);
   }
 
   function handleOpen(item: InventoryItem) {
-    setActionSheet(null);
     onOpenListing(item.listing_id);
   }
 
@@ -377,126 +453,133 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
           const title = (fields.title as string) ?? null;
           const brand = (fields.brand as string) ?? null;
           const category = (fields.category as string) ?? null;
+          const priceVal =
+            (fields.price_eur as number | undefined) ??
+            item.prediction?.vinted?.q50 ??
+            null;
           const publishedPlatforms = [
             item.vinted && "vinted",
             item.kleinanzeigen && "kleinanzeigen",
           ].filter(Boolean) as string[];
+          const canRelist = getPostedPlatforms(item).length > 0;
           const isBusy = busy.has(item.listing_id);
           return (
             <div
               key={item.listing_id}
               style={{
-                display: "flex", gap: 14, padding: "16px 0",
-                borderBottom: "1px solid #e7e5e0", alignItems: "center",
+                display: "flex", flexDirection: "column",
+                padding: "16px 0",
+                borderBottom: "1px solid #e7e5e0",
               }}
             >
-              <button
-                onClick={() => handleOpen(item)}
-                style={{
-                  background: "none", border: "none", padding: 0, cursor: "pointer",
-                }}
-                aria-label="Open listing"
-              >
-                <img
-                  src={`${BASE}${item.thumbnail_url}`}
-                  alt={title ?? "listing"}
+              <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+                <button
+                  onClick={() => handleOpen(item)}
                   style={{
-                    width: 64, height: 64, objectFit: "cover", flexShrink: 0,
-                    backgroundColor: "#efece6",
-                    imageOrientation: "from-image",
-                    borderRadius: 10, border: "1px solid #e7e5e0",
-                    display: "block",
+                    background: "none", border: "none", padding: 0,
+                    cursor: "pointer", flexShrink: 0,
                   }}
-                />
-              </button>
+                  aria-label="Open listing"
+                >
+                  <img
+                    src={`${BASE}${item.thumbnail_url}`}
+                    alt={title ?? "listing"}
+                    style={{
+                      width: 64, height: 64, objectFit: "cover",
+                      backgroundColor: "#efece6",
+                      imageOrientation: "from-image",
+                      borderRadius: 10, border: "1px solid #e7e5e0",
+                      display: "block",
+                    }}
+                  />
+                </button>
 
-              <div
-                style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
-                onClick={() => handleOpen(item)}
-              >
-                <p style={{
-                  margin: "0 0 3px", fontSize: 14, fontWeight: 600,
-                  letterSpacing: "-0.2px", whiteSpace: "nowrap",
-                  overflow: "hidden", textOverflow: "ellipsis",
-                }}>
-                  {title ?? "Untitled"}
-                </p>
-                <p style={{ margin: "0 0 6px", fontSize: 12, color: "#6b6c6a" }}>
-                  {[brand, category].filter(Boolean).join(" · ") || "—"}
-                </p>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  {publishedPlatforms.map((p) => (
-                    <PlatformBadge key={p} platform={p} />
-                  ))}
-                  {publishedPlatforms.length === 0 && (
-                    <SmallCaps size={10}>not published</SmallCaps>
-                  )}
-                  {item.vinted?.live && (
-                    <span style={{
-                      display: "inline-flex", alignItems: "center", gap: 8,
-                      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                      fontSize: 11, color: STAT_COLOR,
+                <div
+                  style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+                  onClick={() => handleOpen(item)}
+                >
+                  <div style={{
+                    display: "flex", alignItems: "baseline", gap: 8, marginBottom: 3,
+                  }}>
+                    <p style={{
+                      margin: 0, flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600,
+                      letterSpacing: "-0.2px", whiteSpace: "nowrap",
+                      overflow: "hidden", textOverflow: "ellipsis",
                     }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
-                        title="views">
-                        <EyeIcon /> {item.vinted.live.views ?? 0}
+                      {title ?? "Untitled"}
+                    </p>
+                    {priceVal != null && (
+                      <span style={{
+                        flexShrink: 0,
+                        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                        fontSize: 13.5, fontWeight: 600, color: "#0e0f0e",
+                        letterSpacing: "-0.02em",
+                      }}>
+                        €{Math.round(priceVal)}
                       </span>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
-                        title="favourites">
-                        <HeartIcon /> {item.vinted.live.favourites ?? 0}
+                    )}
+                  </div>
+                  <p style={{ margin: "0 0 6px", fontSize: 12, color: "#6b6c6a" }}>
+                    {[brand, category].filter(Boolean).join(" · ") || "—"}
+                  </p>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    {publishedPlatforms.map((p) => (
+                      <PlatformBadge key={p} platform={p} />
+                    ))}
+                    {publishedPlatforms.length === 0 && (
+                      <SmallCaps size={10}>not published</SmallCaps>
+                    )}
+                    {item.vinted?.live && (
+                      <span style={{
+                        display: "inline-flex", alignItems: "center", gap: 8,
+                        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                        fontSize: 11, color: STAT_COLOR,
+                      }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
+                          title="views">
+                          <EyeIcon /> {item.vinted.live.views ?? 0}
+                        </span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
+                          title="favourites">
+                          <HeartIcon /> {item.vinted.live.favourites ?? 0}
+                        </span>
                       </span>
-                    </span>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div style={{ flexShrink: 0, marginLeft: 8 }}>
-                <button
-                  onClick={() => setActionSheet(item)}
-                  disabled={isBusy}
-                  aria-label="More actions"
-                  style={{
-                    width: 36, height: 36, borderRadius: 18,
-                    border: "1px solid #e7e5e0", background: "#fff",
-                    cursor: isBusy ? "default" : "pointer",
-                    opacity: isBusy ? 0.5 : 1,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    padding: 0,
-                  }}
-                >
-                  {isBusy ? (
-                    <span style={{ fontSize: 14, color: "#6b6c6a" }}>…</span>
-                  ) : (
-                    <svg width="4" height="14" viewBox="0 0 4 14" fill="none">
-                      <circle cx="2" cy="2" r="1.6" fill="#0e0f0e" />
-                      <circle cx="2" cy="7" r="1.6" fill="#0e0f0e" />
-                      <circle cx="2" cy="12" r="1.6" fill="#0e0f0e" />
-                    </svg>
-                  )}
-                </button>
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  display: "flex", justifyContent: "flex-end", gap: 7,
+                  marginTop: 11,
+                  opacity: isBusy ? 0.4 : 1,
+                  pointerEvents: isBusy ? "none" : "auto",
+                }}
+              >
+                <IconBtn label="Open" onClick={() => handleOpen(item)}>
+                  <OpenIcon />
+                </IconBtn>
+                <IconBtn label="Change price" onClick={() => setPriceEdit(item)}>
+                  <PriceTagIcon />
+                </IconBtn>
+                {canRelist && (
+                  <IconBtn label="Relist" onClick={() => handleRelist(item)}>
+                    <RelistIcon />
+                  </IconBtn>
+                )}
+                <IconBtn label="Mark sold" onClick={() => handleMarkSold(item)}>
+                  <SoldIcon />
+                </IconBtn>
+                <IconBtn label="Delete" destructive onClick={() => setDeleteConfirm(item)}>
+                  <TrashIcon />
+                </IconBtn>
               </div>
             </div>
           );
         })}
       </main>
-
-      {actionSheet && (
-        <ActionSheet
-          item={actionSheet}
-          onClose={() => setActionSheet(null)}
-          onOpen={() => handleOpen(actionSheet)}
-          onChangePrice={() => {
-            setActionSheet(null);
-            setPriceEdit(actionSheet);
-          }}
-          onRelist={() => handleRelist(actionSheet)}
-          onMarkSold={() => handleMarkSold(actionSheet)}
-          onDelete={() => {
-            setActionSheet(null);
-            setDeleteConfirm(actionSheet);
-          }}
-        />
-      )}
 
       {priceEdit && (
         <PriceEditModal
@@ -537,83 +620,6 @@ function Backdrop({ onClick }: { onClick: () => void }) {
       }}
     />
   );
-}
-
-function ActionSheet({
-  item,
-  onClose,
-  onOpen,
-  onChangePrice,
-  onRelist,
-  onMarkSold,
-  onDelete,
-}: {
-  item: InventoryItem;
-  onClose: () => void;
-  onOpen: () => void;
-  onChangePrice: () => void;
-  onRelist: () => void;
-  onMarkSold: () => void;
-  onDelete: () => void;
-}) {
-  const postedPlatforms = getPostedPlatforms(item);
-  const canRelist = postedPlatforms.length > 0;
-  return (
-    <>
-      <Backdrop onClick={onClose} />
-      <div
-        style={{
-          position: "fixed", left: 0, right: 0, bottom: 0,
-          background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18,
-          padding: "8px 0 calc(20px + env(safe-area-inset-bottom))",
-          boxShadow: "0 -8px 24px rgba(14,15,14,0.18)",
-          zIndex: 51,
-          fontFamily: FONT,
-        }}
-      >
-        <div style={{
-          width: 36, height: 4, borderRadius: 2,
-          background: "#e7e5e0", margin: "8px auto 14px",
-        }} />
-        <SheetButton onClick={onOpen}>Open</SheetButton>
-        <SheetButton onClick={onChangePrice}>Change price</SheetButton>
-        {canRelist && <SheetButton onClick={onRelist}>Relist</SheetButton>}
-        <Divider />
-        <SheetButton onClick={onMarkSold}>Mark sold</SheetButton>
-        <SheetButton onClick={onDelete} destructive>Delete</SheetButton>
-      </div>
-    </>
-  );
-}
-
-function SheetButton({
-  onClick,
-  destructive,
-  children,
-}: {
-  onClick: () => void;
-  destructive?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: "block", width: "100%",
-        padding: "16px 24px", textAlign: "left",
-        background: "none", border: "none", cursor: "pointer",
-        fontSize: 16, fontWeight: 500,
-        color: destructive ? "#c0392b" : "#0e0f0e",
-        fontFamily: FONT,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Divider() {
-  return <div style={{ height: 1, background: "#efece6", margin: "4px 0" }} />;
 }
 
 const PLATFORM_LABELS_FULL: Record<string, string> = {
