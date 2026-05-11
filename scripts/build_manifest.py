@@ -6,15 +6,17 @@ produce a single Parquet with ``garment_path``, optional ``label_path``,
 ``target_text``, and the train/val/test split inherited from
 ``data/splits/*_ids.json``.
 
-Vinted-only: the multi-image scraper (`vinted-lister`) only scrapes Vinted.
-Kleinanzeigen listings stay out of this manifest and out of this training
-round.
+Discovers both Vinted scrapes (``clothing_*`` prefix) and Kleinanzeigen
+scrapes (``ka_clothing_*`` prefix) under ``--raw-root`` and merges them into
+a single manifest. Each scrape is tagged with its platform so the merge
+against the right parquet uses (platform, listing_id) rather than id alone.
 
 Run on the pod once the raw scrape zip is unzipped::
 
     python scripts/build_manifest.py \\
         --raw-root /workspace/data/raw \\
         --vinted-parquet data/vinted_clothing_combined.parquet \\
+        --ka-parquet data/kleinanzeigen_clothing_combined.parquet \\
         --splits-dir data/splits \\
         --out /workspace/data/manifest.parquet
 
@@ -111,6 +113,19 @@ def _normalize_tag(tag) -> Optional[str]:
     return t  # pass through unknown tags so we can see what's there
 
 
+def _platform_from_scrape_name(name: str) -> str:
+    """Infer platform from scrape directory prefix.
+
+    ``ka_clothing_*`` → ``kleinanzeigen``; ``clothing_*`` → ``vinted``.
+    The prefixes are set by Leon's scraper and need to stay in sync here.
+    """
+    if name.startswith("ka_clothing_") or name.startswith("ka_"):
+        return "kleinanzeigen"
+    if name.startswith("clothing_"):
+        return "vinted"
+    raise ValueError(f"cannot infer platform from scrape name: {name!r}")
+
+
 def load_scrape_photos(scrape_dir: Path) -> pd.DataFrame:
     """Read items.jsonl[.reclassified] for one scrape into a flat photo table."""
     reclassified = scrape_dir / "items.jsonl.reclassified"
@@ -133,15 +148,22 @@ def load_scrape_photos(scrape_dir: Path) -> pd.DataFrame:
         return df
     df["scrape"] = scrape_dir.name
     df["source_file"] = src.name
+    df["platform"] = _platform_from_scrape_name(scrape_dir.name)
     return df
 
 
 def collapse_to_listings(photos: pd.DataFrame) -> pd.DataFrame:
-    """One row per listing, picking the first garment + first label photo."""
+    """One row per (platform, listing_id), picking first garment + first label.
+
+    Group by (platform, listing_id) rather than listing_id alone so a Vinted
+    and a KA listing that happen to share a numeric id stay separate (they
+    don't currently — KA IDs are 10-digit, Vinted IDs are too — but
+    grouping by the composite key is the safe contract).
+    """
     if photos.empty:
         return photos
     out = []
-    for listing_id, grp in photos.groupby("listing_id", sort=False):
+    for (platform, listing_id), grp in photos.groupby(["platform", "listing_id"], sort=False):
         garment_row = grp[grp["clip_type"] == "garment"].head(1)
         label_row = grp[grp["clip_type"] == "label"].head(1)
         if garment_row.empty:
@@ -151,6 +173,7 @@ def collapse_to_listings(photos: pd.DataFrame) -> pd.DataFrame:
             # only fires if there are no tags at all.
             garment_row = grp.head(1)
         out.append({
+            "platform": platform,
             "listing_id": int(listing_id),
             "garment_path": garment_row.iloc[0]["abs_path"],
             "label_path": (
@@ -180,6 +203,12 @@ def _build_target_json(row) -> str:
     Mirrors models.train_vlm._build_target_json — duplicated here to keep
     the manifest builder self-contained (importing from models triggers
     the heavyweight torch/transformers import chain).
+
+    v2 schema (2026-05-10): no ``description`` (its multi-sentence output
+    overflowed the JSON-completion budget on KA listings, dropping clean
+    parse rate to 40.9%). ``price_eur`` is auxiliary-only — present in the
+    target so the pooled hidden state encodes price-relevant signal for the
+    downstream price head, but the inference prompt does not ask for it.
     """
     brand = row.get("brand_canon")
     if brand in (None, "UNK") or (isinstance(brand, float) and pd.isna(brand)):
@@ -194,7 +223,6 @@ def _build_target_json(row) -> str:
         "color": row["color_en"],
         "size": size,
         "title": row["title_en"],
-        "description": row["description_en"],
         "price_eur": float(row["price"]),
     }
     return json.dumps(obj, ensure_ascii=False, indent=2)
@@ -229,12 +257,38 @@ def _load_split_lookup(splits_dir: Path) -> dict[tuple[str, int], str]:
 # ---------------------------------------------------------------------------
 
 def discover_scrapes(raw_root: Path) -> list[Path]:
-    return sorted(p for p in raw_root.iterdir() if p.is_dir() and p.name.startswith("clothing_"))
+    """Find both Vinted (``clothing_*``) and KA (``ka_clothing_*``) scrape dirs.
+
+    Excludes test/smoke/bench scrapes (e.g. ``ka_smoke_*``, ``ka_bench_*``,
+    ``ka_filter_test_*``) — only real production scrape prefixes are picked
+    up.
+    """
+    out = []
+    for p in raw_root.iterdir():
+        if not p.is_dir():
+            continue
+        n = p.name
+        if n.startswith("clothing_") or n.startswith("ka_clothing_"):
+            out.append(p)
+    return sorted(out)
+
+
+def _load_canonical_parquet(path: Path, label: str) -> pd.DataFrame:
+    df = pd.read_parquet(path)
+    df = df[[
+        "id", "platform", "title_en", "description_en", "category_en",
+        "condition_en", "color_en", "brand", "size", "price",
+    ]].copy()
+    df["id"] = df["id"].astype(int)
+    df = _enrich_with_targets(df)
+    print(f"  {label} rows: {len(df)}")
+    return df
 
 
 def build_manifest(
     raw_root: Path,
     vinted_parquet: Path,
+    ka_parquet: Optional[Path],
     splits_dir: Path,
     out_path: Path,
     min_target_chars: int = 10,
@@ -244,7 +298,7 @@ def build_manifest(
     scrapes = discover_scrapes(raw_root)
     print(f"  found {len(scrapes)} scrape dir(s):")
     for s in scrapes:
-        print(f"    - {s.name}")
+        print(f"    - {s.name}  ({_platform_from_scrape_name(s.name)})")
 
     photo_frames = []
     for s in scrapes:
@@ -263,27 +317,34 @@ def build_manifest(
 
     listings = collapse_to_listings(photos)
     print(f"\ncollapsed to {len(listings)} unique listings")
+    print(f"  by platform: {listings['platform'].value_counts().to_dict()}")
     print(f"  with label photo: {(listings['label_path'].notna()).sum()}")
     print(f"  garment-only:    {(listings['label_path'].isna()).sum()}")
 
     print(f"\nloading canonical text from {vinted_parquet}")
-    vinted = pd.read_parquet(vinted_parquet)
-    vinted = vinted[[
-        "id", "platform", "title_en", "description_en", "category_en",
-        "condition_en", "color_en", "brand", "size", "price",
-    ]].copy()
-    vinted["id"] = vinted["id"].astype(int)
-    vinted = _enrich_with_targets(vinted)
-    print(f"  vinted rows: {len(vinted)}")
+    vinted = _load_canonical_parquet(vinted_parquet, "vinted")
+    canonical_frames = [vinted]
+    if ka_parquet is not None:
+        print(f"\nloading canonical text from {ka_parquet}")
+        ka = _load_canonical_parquet(ka_parquet, "kleinanzeigen")
+        canonical_frames.append(ka)
+    canonical = pd.concat(canonical_frames, ignore_index=True)
+    print(f"  combined canonical rows: {len(canonical)} "
+          f"(by platform: {canonical['platform'].value_counts().to_dict()})")
 
     merged = listings.merge(
-        vinted, left_on="listing_id", right_on="id", how="inner",
+        canonical,
+        left_on=["platform", "listing_id"],
+        right_on=["platform", "id"],
+        how="inner",
+        suffixes=("", "_canon"),
     )
-    print(f"\njoined vinted×scrape: {len(merged)} rows")
-    if len(merged) < 0.5 * min(len(listings), len(vinted)):
+    print(f"\njoined canonical×scrape: {len(merged)} rows "
+          f"(by platform: {merged['platform'].value_counts().to_dict()})")
+    if len(merged) < 0.5 * min(len(listings), len(canonical)):
         print(f"  WARNING: low join rate. Listings only in scrape: "
               f"{len(listings) - len(merged)}, only in parquet: "
-              f"{len(vinted) - len(merged)}")
+              f"{len(canonical) - len(merged)}")
 
     split_lookup = _load_split_lookup(splits_dir)
     merged["split"] = merged.apply(
@@ -328,6 +389,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--vinted-parquet", type=Path,
                    default=REPO_ROOT / "data" / "vinted_clothing_combined.parquet",
                    help="Canonical vinted parquet (provides target_text source).")
+    p.add_argument("--ka-parquet", type=Path,
+                   default=REPO_ROOT / "data" / "kleinanzeigen_clothing_combined.parquet",
+                   help="Canonical KA parquet. Pass --no-ka to skip KA listings entirely.")
+    p.add_argument("--no-ka", action="store_true",
+                   help="Skip KA listings (Vinted-only manifest, v2 behaviour).")
     p.add_argument("--splits-dir", type=Path,
                    default=REPO_ROOT / "data" / "splits",
                    help="Directory with {train,val,test}_ids.json.")
@@ -343,6 +409,7 @@ def main():
     build_manifest(
         raw_root=args.raw_root,
         vinted_parquet=args.vinted_parquet,
+        ka_parquet=None if args.no_ka else args.ka_parquet,
         splits_dir=args.splits_dir,
         out_path=args.out,
         min_target_chars=args.min_target_chars,

@@ -51,10 +51,11 @@ from prompts import get_prompt  # noqa: E402
 
 
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
-# Multi-image v2 (2026-05-10). Same multi-image setup as v1, plus the parse-fix
-# retrain: prompt and target both drop `description` (KA parse rate 40.9% → 100%).
-# `price_eur` kept in the training target as an auxiliary task. See §4.3.
-DEFAULT_ADAPTER = "mchlkan/qwen3vl4b-resell-adapter-multi-v2"
+# Multi-image v3 (2026-05-11). Adds KA listings to the training manifest (was
+# Vinted-only through v2): CLIP-tagged care-label photos for KA via
+# scripts/reclassify_clip.py, then build_manifest.py merged. Same hyperparams
+# and target schema as v2 (no description, includes price_eur auxiliary). See §4.4.
+DEFAULT_ADAPTER = "mchlkan/qwen3vl4b-resell-adapter-multi-v3"
 DEFAULT_OUTPUT = REPO_ROOT / "data" / "embeddings" / "vlm_pooled_combined.npy"
 DEFAULT_INDEX = REPO_ROOT / "data" / "embeddings" / "vlm_pooled_combined_index.parquet"
 DEFAULT_VINTED = REPO_ROOT / "data" / "vinted_clothing_combined.parquet"
