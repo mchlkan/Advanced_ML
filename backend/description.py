@@ -29,10 +29,16 @@ _SYSTEM = (
     "You write the title and description for second-hand clothing listings. "
     "Use ONLY the facts you are given — never invent details not in the data; "
     "if a field is marked unreliable, leave it out entirely. Write in English.\n"
-    'TITLE: a compact, search-friendly line — brand, garment type, colour, size '
-    '(e.g. "Ralph Lauren Polo Shirt Navy L", "Levi\'s 501 Jeans Blue 32"). '
-    "No marketing words, no quotes, no trailing punctuation. If the photo model's "
-    "rough title names a specific garment (polo, hoodie, parka, …), use that wording.\n"
+    "TITLE — ALWAYS exactly this order and nothing else:  {brand}  {garment type}  "
+    "{colour}  {size}.  The garment type is a clean noun phrase you work out from "
+    'the category and the rough title — e.g. "Polo Shirt", "Hoodie", "Bomber Jacket", '
+    '"Slim Jeans", "Crewneck Sweatshirt", "Trainers", "Midi Dress" (category "tshirts" '
+    '+ a rough title mentioning "polo" → "Polo Shirt"; "tshirts" otherwise → "T-Shirt"). '
+    "NEVER just copy the rough title — rewrite it into the {brand} {garment type} "
+    "{colour} {size} form (rough title \"Polo Ralph Lauren\" with brand \"Ralph Lauren\" "
+    "→ \"Ralph Lauren Polo Shirt …\", not \"Polo Ralph Lauren …\"). Drop any part you "
+    "don't have (no brand → start with the garment type; no size → end with the colour). "
+    "No marketing words, no quotes, no trailing punctuation, no commas.\n"
     "DESCRIPTION: 2–4 sentences, personal and honest — the seller talking to the "
     "buyer. Mention wear, fit, or why it stands out. No bullet points.\n"
     "Output EXACTLY two lines:\n"
@@ -41,31 +47,33 @@ _SYSTEM = (
 )
 
 # Category-matched few-shot examples: (field_summary, title, description) tuples.
+# Each field_summary ends with the VLM's "Rough title:" so the model learns to
+# *rewrite* it into the {brand} {garment type} {colour} {size} form, not echo it.
 # Descriptions are taken from sold Vinted listings.
 _EXAMPLES: dict[str, list[tuple[str, str, str]]] = {
     "jackets": [
         (
-            "Brand: Zara | Condition: Very good | Color: black | Size: M | Wear: minimal",
+            "Brand: Zara | Condition: Very good | Color: black | Size: M | Wear: minimal | Rough title: Zara wool blend blazer",
             "Zara Blazer Black M",
             "Zara blazer in very good condition — no pilling, marks, or structural wear. "
             "Slim cut, true to size. A solid work-to-weekend layer at a fair price.",
         ),
         (
-            "Brand: Columbia | Condition: Good | Color: olive | Size: L | Wear: light",
-            "Columbia Fleece-Lined Windbreaker Olive L",
+            "Brand: Columbia | Condition: Good | Color: olive | Size: L | Wear: light | Rough title: Columbia windbreaker jacket",
+            "Columbia Windbreaker Jacket Olive L",
             "Columbia fleece-lined windbreaker, olive green. Picked this up for hiking but barely used it — "
             "some light crease marks from storage, nothing structural. Roomy L, great for layering.",
         ),
     ],
     "jeans": [
         (
-            "Brand: Levi's | Condition: Good | Color: blue | Size: 32 | Wear: light",
+            "Brand: Levi's | Condition: Good | Color: blue | Size: 32 | Wear: light | Rough title: Levi's 501 denim",
             "Levi's 501 Jeans Blue 32",
             "Levi's 501 in classic mid-blue. Light fading and minor softening from regular "
             "wear — still plenty of life left. Straight fit, comfortable all day.",
         ),
         (
-            "Brand: Mango | Condition: Very good | Color: black | Size: 36 | Wear: minimal",
+            "Brand: Mango | Condition: Very good | Color: black | Size: 36 | Wear: minimal | Rough title: Mango straight leg jeans",
             "Mango Straight-Leg Jeans Black 36",
             "Mango straight-leg jeans in black. Worn maybe five times — still crisp, no fading. "
             "Size 36, fits true. One of those pieces I kept reaching for but never quite felt like mine.",
@@ -73,13 +81,19 @@ _EXAMPLES: dict[str, list[tuple[str, str, str]]] = {
     ],
     "tshirts": [
         (
-            "Brand: H&M | Condition: New with tags | Color: white | Size: S | Wear: minimal",
+            "Brand: Ralph Lauren | Condition: Very good | Color: navy | Size: L | Wear: minimal | Rough title: Polo Ralph Lauren",
+            "Ralph Lauren Polo Shirt Navy L",
+            "Ralph Lauren polo in navy, size L. Worn a handful of times — collar's still crisp, no marks or fading. "
+            "Classic fit, true to size.",
+        ),
+        (
+            "Brand: H&M | Condition: New with tags | Color: white | Size: S | Wear: minimal | Rough title: H&M basic cotton tee",
             "H&M T-Shirt White S (new with tags)",
             "Brand new with the original tag still attached. "
             "Clean white, completely unworn. Size S runs true.",
         ),
         (
-            "Brand: Carhartt | Condition: Good | Color: grey | Size: L | Wear: light",
+            "Brand: Carhartt | Condition: Good | Color: grey | Size: L | Wear: light | Rough title: Carhartt pocket t-shirt",
             "Carhartt Pocket Tee Washed Grey L",
             "Carhartt pocket tee in washed grey. Regular fit, size L. "
             "Shows the kind of soft wear you'd expect from a well-loved tee — no holes, no stains. Honest listing.",
@@ -87,14 +101,14 @@ _EXAMPLES: dict[str, list[tuple[str, str, str]]] = {
     ],
     "sneakers": [
         (
-            "Brand: Nike | Condition: Very good | Color: white | Size: 42 | Wear: minimal",
-            "Nike Running Shoes White 42",
+            "Brand: Nike | Condition: Very good | Color: white | Size: 42 | Wear: minimal | Rough title: Nike Air Max 90 sneakers",
+            "Nike Air Max 90 White 42",
             "Nike runners in very good condition — uppers clean, minimal sole wear. "
             "Small scuff on the right toe cap, barely visible. "
             "Solid pair with a lot of miles left.",
         ),
         (
-            "Brand: New Balance | Condition: Good | Color: grey | Size: 44 | Wear: light",
+            "Brand: New Balance | Condition: Good | Color: grey | Size: 44 | Wear: light | Rough title: New Balance 574 trainers",
             "New Balance 574 Grey 44",
             "New Balance 574 in grey. Worn regularly for about a year — soles have visible wear "
             "but uppers are clean and the cushioning is still solid. Priced to move.",
@@ -104,14 +118,14 @@ _EXAMPLES: dict[str, list[tuple[str, str, str]]] = {
 
 _DEFAULT_EXAMPLES: list[tuple[str, str, str]] = [
     (
-        "Brand: Adidas | Condition: Very good | Color: navy | Size: M | Wear: minimal",
+        "Brand: Adidas | Condition: Very good | Color: navy | Size: M | Wear: minimal | Rough title: Adidas Trefoil crewneck",
         "Adidas Crewneck Sweatshirt Navy M",
         "Barely worn and in very good condition overall. "
         "No visible damage or fading. Straightforward listing — what you see is what you get.",
     ),
     (
-        "Brand: Uniqlo | Condition: Good | Color: beige | Size: S | Wear: light",
-        "Uniqlo Crewneck Tee Beige S",
+        "Brand: Uniqlo | Condition: Good | Color: beige | Size: S | Wear: light | Rough title: Uniqlo U crew neck t-shirt",
+        "Uniqlo Crewneck T-Shirt Beige S",
         "Uniqlo piece in beige, size S. Worn a handful of times, washed cold every time — "
         "keeps its shape well. Light use, no damage worth hiding.",
     ),
@@ -133,6 +147,9 @@ def _field_summary(fields: dict, visual_wear: float, unreliable: set[str]) -> st
         if val and key not in unreliable:
             parts.append(f"{key.capitalize()}: {val}")
     parts.append(f"Wear: {_wear_label(visual_wear)}")
+    rough = (fields.get("title") or "").strip()
+    if rough:
+        parts.append(f"Rough title: {rough}")
     return " | ".join(parts)
 
 
@@ -151,12 +168,6 @@ def _build_prompt(fields: dict, platform: str, visual_wear: float, field_review:
         if unreliable
         else ""
     )
-    vlm_title = (fields.get("title") or "").strip()
-    vlm_title_note = (
-        f"\nPhoto model's rough title (use it for the garment type): {vlm_title}"
-        if vlm_title
-        else ""
-    )
     example_block = "\n\n".join(
         f"[Example {i + 1}]\n{ex_f}\nTitle: {ex_t}\nDescription: {ex_d}"
         for i, (ex_f, ex_t, ex_d) in enumerate(examples)
@@ -167,7 +178,6 @@ def _build_prompt(fields: dict, platform: str, visual_wear: float, field_review:
         f"Platform: {platform_note}\n"
         f"Category: {fields.get('category', 'clothing')}\n"
         f"{summary}"
-        f"{vlm_title_note}"
         f"{unreliable_note}"
     )
 
