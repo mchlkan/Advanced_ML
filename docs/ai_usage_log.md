@@ -3186,6 +3186,138 @@ session.
 
 ---
 
+### Day 6 — 2026-05-11 (continued): RunPod v3 cutover verified, wardrobe-sync UI, KA ad-stats probe
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commits:**
+- `41fb81c` Log Day 6 — multi-v3 adapter + v3 price head integration…
+- `7d28928` Surface Vinted wardrobe stats in Inventory (views/favourites + Sync)
+- `1ae676d` Add `scripts/probe_ka_ad_stats.py` — investigate KA per-ad view/watch counts
+
+#### Prompt 1 (continuation of the v3 work)
+> "okay I let it run how can we check if which the newest model was used?"
+
+**Decision:** the handler's response is just `{hidden_state, raw_text}`
+— no adapter id echoed — so verify three layers instead. (a) **Config:**
+queried the RunPod GraphQL API with the key from `.env.prod` →
+endpoint `2v2yd08exsf5ud` ("ghcr-rengo") template env now has
+`ADAPTER_ID = mchlkan/qwen3vl4b-resell-adapter-multi-v3`. (b) **Runtime:**
+fired a synthetic `/run` (tiny grey JPEG, `platform=vinted`) → COMPLETED,
+`delayTime≈238s` (= a *fresh* worker — booted after the env change),
+`hidden_state` dim 2560, no error. (c) **Boot log** (user pasted
+`logs-2.txt`): `[boot] ADAPTER_ID: mchlkan/qwen3vl4b-resell-adapter-multi-v3`
+→ `[boot] Loading LoRA adapter …-multi-v3 …` → `[boot] Model ready on
+cuda:0`, and the `requestId` in the log matched my smoke job. **Verdict:
+v3 is live end-to-end** — RunPod adapter ↔ EC2 v3 price head paired
+as §4.4 intends. Also flagged: ~238s cold-start when no warm worker —
+pre-warm before a demo.
+
+#### Prompt 2
+> "Can we integrate this one? Wardrobe sync fetches real-time views and favourites from Vinted to surface which items are attracting attention."
+
+**Discovery:** the **entire backend already exists** —
+`POST /inventory/sync`, `GET /inventory` folding `item.vinted.live`
+(`VintedLiveSnapshot`: views/favourites/is_sold_or_removed/
+pricing_status/delta_vs_q50_pct) + `last_synced_at` + lazy auto-sync
+when stale, `vinted.fetch_wardrobe()/get_wardrobe()/
+normalize_wardrobe_item()`, `wardrobe_snapshots`+`wardrobe_syncs`
+tables, tests. The gap was purely frontend: `InventoryScreen.tsx`
+never read any of it and `inventory.ts` had no `syncWardrobe()`.
+Reported that and let the user pick scope.
+
+> "/plan this change first please"
+
+Planned (`AskUserQuestion`): user picked **"Core only"** scope (per-card
+views/favourites + a Sync button + "Synced Xm ago"). Two corrections
+on the first plan: **(1)** "Are we also doing this for kleinanzeigen?"
+— no, backend wardrobe sync is Vinted-only (`SyncResponse.platform`
+is `Literal["vinted"]`); a KA equivalent needs API reverse-engineering
+(a separate task). **(2)** "dont use dump emojis to display it please"
+— replaced the `👁/♥/⟳` glyphs with small inline SVG icons matching
+the file's existing icon style. Saved (2) as a memory: *no emoji in
+the product UI*.
+
+**Implemented** (3 files, frontend only):
+- `types/api.ts` — `SyncResponse` interface.
+- `api/inventory.ts` — `syncWardrobe()` → `POST /inventory/sync`,
+  throws `Error("sync <status>")`.
+- `InventoryScreen.tsx` — `lastSyncedAt` state (set from
+  `res.last_synced_at` in the initial fetch + `refetch`); header text
+  "Sync" button (`RefreshIcon`) + `handleSync` mapping 409→"Connect
+  Vinted to sync live stats." / 401→expired / 429→rate-limited; a
+  `Synced Xm ago` / error line (`formatSyncedAgo` helper); per-card
+  `<EyeIcon> {views} <HeartIcon> {favourites}` chip when
+  `item.vinted.live` exists (inline 12px SVGs, no emoji).
+
+Verified: `npm run build` clean; `pytest test_inventory.py` 22/22;
+`vercel deploy --prod` (prod alias up, gate working). Live-backend
+sanity: `POST /inventory/sync` → `409 vinted not onboarded` (so the
+Sync button shows the connect hint — the error path I built) and
+`GET /inventory` returns `last_synced_at` + 2 posted-Vinted items
+with `live` snapshots. Couldn't do the visual UI smoke — the site is
+password-gated and I don't have the password (said so explicitly).
+
+> "commit and push after that inspect to get views and likes on kleinanzeigen"
+
+Committed `7d28928`, pushed (`41fb81c`+`7d28928` → origin).
+
+#### Prompt 3 — KA ad-stats probe
+(same prompt's "after that inspect…")
+
+**Decision:** read-only probe of `api.kleinanzeigen.de` for the
+per-ad view / watch-count data the KA app shows. Ran inside the EC2
+container via `cat probe.py | ssh … 'docker exec -i resell-backend
+python3 -'` (the KA session is materialised at `/app/data/ka_session.json`
+from `KA_SESSION_JSON`; a `docker exec` subprocess doesn't have
+`KA_SESSION_PATH` set, so the probe sets it). Session refreshed clean
+(user `45852425`, COMMERCIAL `SneakerSupplierDE`).
+
+**Findings — blocked on data availability, not a dead end:**
+- `GET /api/users/{uid}/ads.json` — list-my-ads, JAXB-JSON; **0 online
+  ads** right now (`profile.json` → `counters.onlineAds = 0`,
+  `historicalAds = 468`, `followers = 139`). Status / field-selector /
+  `statistics=true` query params all ignored.
+- `GET /api/users/{uid}/ads/statistics.json` and `…/ads/counters.json`
+  → **HTTP 500** (JAXB error XML), *not 404* → these routes exist;
+  they error on an empty account (or want an `adId`/`ids` param).
+  Strongest leads.
+- Genuine 404s: `/ads/{id}/statistics.json`, `…/{stats,visits,views,
+  insights}.json`, `/api/ads/{id}/…`, `/api/users/{uid}/{statistics,
+  insights,dashboard,ad-counters}.json`.
+- `/api/users/{uid}/watchlist.json` exists but it's the *buyer-side*
+  watchlist, not "who favourited my ad".
+- Committed the probe as `scripts/probe_ka_ad_stats.py` (`1ae676d`)
+  with the findings written inline — re-runnable with a `<ad_id>` arg
+  once a live KA listing exists.
+
+**Next:** post a real KA listing → re-probe `GET .../ads/{ad_id}.json`
+(likely carries a `view-count` / `watch-list-size` field) and re-hit
+the two 500-ing endpoints with the ad in scope; then KA wardrobe sync
+is a straightforward backend addition (KAClient method → normalize →
+persist into `wardrobe_snapshots` with `platform='kleinanzeigen'` →
+generalise `SyncResponse.platform`) and the frontend gets it for free.
+
+#### What I learned
+1. **"Is the new model live?" decomposes into three layers** — git
+   default in `runpod/handler.py`, the deployed worker image's baked-in
+   default, and the endpoint's `ADAPTER_ID` env override — and a "yes"
+   to one isn't a "yes" to the others. The env-var override is the
+   fast, image-rebuild-free cutover; the worker boot log
+   (`[boot] ADAPTER_ID:`) is the gold-standard confirmation.
+2. **Check whether a feature's backend already exists before scoping
+   frontend work.** "Wardrobe sync" looked like a from-scratch feature;
+   it was 90% built (DB, routes, integration, schema, tests). The plan
+   collapsed to ~60 min of frontend wiring once I'd grepped for
+   `wardrobe`/`VintedLiveSnapshot`/`fetch_wardrobe`.
+3. **Reverse-engineering needs live data.** The KA stats probe is
+   structurally complete (found the candidate routes, ruled out the
+   404 ones) but can't finish without an active ad — 500≠404 is the
+   tell that a route exists, but you still need a real object in scope
+   to see the response shape.
+
+---
+
 ### Day 7 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)
