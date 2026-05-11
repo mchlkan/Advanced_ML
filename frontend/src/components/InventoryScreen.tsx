@@ -305,7 +305,12 @@ function SummaryStrip({
   const parts: { text: string; danger?: boolean }[] = [];
   if (summary) {
     const c = summary.counts;
+    // Show every bucket with a count so they reconcile with the total.
     parts.push({ text: `${c.posted} posted` });
+    if (c.pending > 0) parts.push({ text: `${c.pending} pending` });
+    if (c.unpublished > 0) parts.push({ text: `${c.unpublished} not published` });
+    if (c.sold_or_removed > 0) parts.push({ text: `${c.sold_or_removed} sold/removed` });
+    if (c.failed > 0) parts.push({ text: `${c.failed} need attention`, danger: true });
     if (summary.estimated_value_eur > 0) {
       parts.push({ text: `€${Math.round(summary.estimated_value_eur)} est.` });
     }
@@ -313,8 +318,6 @@ function SummaryStrip({
       parts.push({ text: `${summary.live_views} views` });
       parts.push({ text: `${summary.live_favourites} saved` });
     }
-    if (c.sold_or_removed > 0) parts.push({ text: `${c.sold_or_removed} sold/removed` });
-    if (c.failed > 0) parts.push({ text: `${c.failed} need attention`, danger: true });
   }
   if (syncMsg) parts.push({ text: syncMsg, danger: true });
   else if (lastSyncedAt != null) parts.push({ text: `synced ${formatSyncedAgo(lastSyncedAt)}` });
@@ -842,6 +845,9 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
             item.vinted && "vinted",
             item.kleinanzeigen && "kleinanzeigen",
           ].filter(Boolean) as string[];
+          const soldOrRemoved =
+            item.vinted?.live?.is_sold_or_removed === true ||
+            item.kleinanzeigen?.live?.is_sold_or_removed === true;
           const canRelist = getPostedPlatforms(item).length > 0;
           const isBusy = busy.has(item.listing_id);
           return (
@@ -917,13 +923,20 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
                   {[brand, category].filter(Boolean).join(" · ") || "—"}
                 </p>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  {publishedPlatforms.map((p) => (
-                    <PlatformBadge key={p} platform={p} />
-                  ))}
-                  {publishedPlatforms.length === 0 && (
+                  {soldOrRemoved ? (
+                    <span style={{
+                      fontSize: 10, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase",
+                      color: "#8a8b88", backgroundColor: "#efece6",
+                      padding: "3px 7px", borderRadius: 999, border: "1px solid #ddd9d2",
+                    }}>
+                      sold · removed
+                    </span>
+                  ) : publishedPlatforms.length > 0 ? (
+                    publishedPlatforms.map((p) => <PlatformBadge key={p} platform={p} />)
+                  ) : (
                     <SmallCaps size={10}>not published</SmallCaps>
                   )}
-                  {item.vinted?.live && (
+                  {!soldOrRemoved && item.vinted?.live && (
                     <span style={{
                       display: "inline-flex", alignItems: "center", gap: 8,
                       fontFamily: MONO,
