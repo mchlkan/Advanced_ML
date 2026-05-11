@@ -3318,6 +3318,164 @@ generalise `SyncResponse.platform`) and the frontend gets it for free.
 
 ---
 
+### Day 6 — 2026-05-11 (continued): KA publish path — switch account, fix shipping-options, get a live ad; KA stats still need a traffic capture
+
+**AI tool:** Claude Code Opus 4.7 (1M context)
+**Branch:** `feature/deploy-prep`
+**Commits:**
+- `aefff21` Fix KA publish: attach shipping-options (clothing ads require it)
+- (this log entry)
+
+This session chased "get a live KA ad so we can probe the views/likes
+endpoint" — and surfaced a chain of unrelated KA-publish issues along
+the way.
+
+#### Prompt 1 — "list an item with the current path … then try to see how you see the views"
+
+**KA listing #1 (commercial account):** the `/upload` path 500'd —
+RunPod was GPU-throttled, the worker cold-start (~238s) blew past the
+backend's `RUNPOD_TIMEOUT_S=120`, so `runpod_http._poll_until_done`
+raised `TimeoutError`. Fell back to publishing an **existing** listing
+(which already has a stored prediction) via `POST /publish` →
+`KAClient.submit_listing` — no VLM call. That worked: ad `3405542521`.
+But `GET /api/users/{uid}/ads/{id}.json` showed `ad-status: STALLED`,
+`profile.json` `onlineAds: 0`, public page redirects to homepage →
+the ad never went live. **Root cause:** COMMERCIAL accounts get
+charged per listing in paid categories ("Damenbekleidung" is one);
+the ad parks STALLED pending a payment/activation step that happens on
+KA's side (payment provider), not via the mobile publish API.
+
+**Re-probed the live-ish ad for view stats anyway** — confirmed the
+ad-detail object has no view/watch field, `…/ads/{id}/statistics.json`
+404s, `/api/users/{uid}/ads/statistics.json` & `/counters.json` 500.
+
+#### Prompt 2 — "cant you list something without letting it go through the gpu? because its always throttled"
+
+Clarified the misconception: the listing (`3405542521`) **was** done
+GPU-free — only `/upload` (photo → AI fields) calls RunPod; `/publish`
+reuses the stored prediction. The GPU throttle wasn't the blocker —
+the STALLED status (paid commercial category) was.
+
+#### Prompt 3 — "switch to my private account: schmidt.leon2001@gmail.com / <password>"
+
+**Declined to use the password** — I don't do password-based account
+logins on a user's behalf (security policy), and KA login needs an SMS
+code only the user can enter. Flagged that the password was now in the
+chat transcript. The app has no "switch account" button (the connect/
+reconnect button only shows when *dis*connected). So **Option A** (the
+user picked it): I moved `/opt/resell/data/ka_session.json` aside
+(`→ .commercial.bak`; recoverable — the commercial session is also in
+`.env.prod`'s `KA_SESSION_JSON`), which flipped KA to `not_configured`
+→ the "Connect Kleinanzeigen" button reappeared → the user re-onboarded
+the private account through the modal (email+password+SMS in the
+browser), poster type PRIVATE. Result: KA `ready` as `152619387`.
+
+#### Prompt 4 — "now you can try to relist"
+
+The private session was missing `home_location_id` / `contact_name`
+(the modal doesn't collect them). Patched them into the session file
+from `GET /api/users/152619387/profile.json` (location `3075` =
+38448 Wolfsburg, contactName "Leon Werner Schmidt" — the user's own
+KA-set values).
+
+**KA listing #2 (private):** `POST /publish` (Blue Tomato jacket) →
+`400 shippingOptions`: *"Wähle mindestens eine abgesicherte
+Versandoption oder individuellen Versand aus."* **Root cause:**
+`shared/listing_mappings.py` `KA_ATTRS["fixed"]` always sets
+`{prefix}.versand: "ja"` ("shipping possible"), but `build_ad_xml`
+emitted an *empty* `<shipping:shipping-options />` — KA rejects that
+combo. (The commercial account got past it via STALLED; the private
+account hard-rejects.)
+
+#### Prompt 5 — "No they shouldnt be pic up only. investigate how to enable shipping"
+
+**Reverse-engineered the shipping-options schema** from live
+category-154 ads via the public search API
+(`GET /api/ads.json?categoryId=154&size=…` → ad ids →
+`GET /api/ads/{id}.json` → look at the `shipping-options` block):
+- `"shipping-options": {"shipping-option": [{"id":"HERMES_001"}, …]}`
+  → XML `<shipping:shipping-option id="HERMES_001" />` (JAXB `"id":"X"`
+  ⇒ attribute, same as `<cat:category id="…">`).
+- Presets in use: `HERMES_001/002/003`, `DHL_001/002`. Common clothing
+  combo: `[HERMES_001, HERMES_002, DHL_001]`.
+- **Not** coupled to `buy-now` — plenty of live ads have shipping-options
+  with `buy-now: false`. So no payment-flow change needed.
+
+**Fix (`aefff21`, deployed via `ec2_redeploy.sh`):** new optional
+`shipping_options` payload key (list of preset ids), threaded
+`to_kleinanzeigen` (defaults to `KA_DEFAULT_SHIPPING_OPTIONS =
+["HERMES_001","HERMES_002","DHL_001"]` whenever a KA category is set)
+→ `_layer_session_defaults` → `build_ad_xml` (emits the
+`<shipping:shipping-option>` list, else falls back to the empty
+element). 29/29 KA+publish tests still green.
+
+**KA listing #3 (private, retry):** the `shippingOptions` error was
+gone — new error: `400 attributeMap[kleidung_damen.brand]: "Kein
+gültiger Wert"`. `_ka_attributes` slugifies the brand into
+`{prefix}.brand` (`"Blue Tomato"` → `blue_tomato`), but KA's brand
+attribute is an *enum* — only major brands ("adidas" works, most
+don't). **Second bug, not fixed yet** — easiest fix is to fall back to
+`"sonstige"` (the catch-all that live ads use) for unrecognised brands,
+or always send `"sonstige"` since the brand is also in the free-text
+description. Flagged for follow-up.
+
+**KA listing #4 (private, adidas item):** worked end to end → ad
+**`3405575938`**, `https://www.kleinanzeigen.de/s-anzeige/3405575938`
+— `ad-status: ACTIVE`, publicly visible, `ads.json numFound: 1`. So
+PRIVATE account + the shipping fix = ads actually go live.
+
+#### Prompt 6 — user shows a screenshot: the app's "Meine Anzeigen" card *does* show `👁 0 ♥ 0`
+
+So the view/watch data is fetched when that screen loads. Aggressive
+re-probe against the live ACTIVE ad:
+- Confirmed (again) it's **not** in `ads.json` or the ad-detail object
+  (no `_ver`/`includeCounters`/`includeStatistics`/`counters` flag
+  changes the payload; `_ver=2.0/1.20/1.30` → 500, only `1.16` works).
+- There's a **family of endpoints that exist (500, not 404) and the
+  app almost certainly uses one**: `GET /api/users/{uid}/ads/
+  counters.json` (GET-only — POST → 405), `…/ads/statistics.json`,
+  `…/ads/visit-counters.json?ids=…`, `…/ads/watchlist-counters.json?ids=…`,
+  `…/ads/visit-statistics.json` — **every request shape I tried 500s**
+  with an *empty* `<api-errors/>` (= unhandled server crash, not 400/401).
+  Per-ad variants (`…/ads/{id}/statistics.json` etc.) genuinely 404.
+- Conclusion: the endpoint is real but needs a request I can't
+  reconstruct by guessing — most likely a header the KA Android app
+  sends (newer app-version header, A/B header, `accept`, …). **The
+  definitive path is mitmproxy on the KA Android app while it loads
+  "Meine Anzeigen"** → see the exact endpoint+headers+params that
+  return `{views, watchers}`. User: *"I will later give you the
+  android phone again"* → deferred to a future session. KA wardrobe
+  sync is blocked on that capture; Vinted's side is done & shipped.
+
+#### Open items / cleanup
+- Two test ads on the user's KA accounts: `3405542521` (commercial,
+  STALLED — can't delete via API now that the commercial session is
+  removed; delete from the KA app/web) and `3405575938` (private,
+  ACTIVE — `DELETE /publish/kleinanzeigen/3405575938` once done).
+- Brand-slug bug in `_ka_attributes` — fall back to `"sonstige"` for
+  non-enum brands.
+- The `/upload` cold-start timeout: `RUNPOD_TIMEOUT_S=120` < the ~238s
+  RunPod cold start when no warm worker → first upload after idle 500s.
+  Either bump the timeout or pre-warm before a demo.
+
+#### What I learned
+1. **A "yes, it published" from `POST /publish` ≠ "the ad is live."**
+   The KA flow treats "got an ad id back" as `posted`, but a
+   commercial-category ad lands `STALLED` pending payment. Always
+   check `ad-status` (and `profile.json` `onlineAds`, and whether the
+   public page actually loads) before claiming a listing is live.
+2. **Reverse-engineer write-payloads from read-payloads.** Couldn't
+   guess the `<shipping:shipping-options>` shape — but the public
+   `/api/ads` search → ad-detail GET handed it over directly (a live
+   ad *is* the response shape you need to produce). Same trick will
+   work for the stats endpoint once we have the request from mitmproxy.
+3. **500-with-empty-errors = "you're calling it wrong," not "it
+   doesn't exist."** A whole family of KA endpoints does this; blind
+   param/path guessing exhausts fast. Past a point, stop guessing and
+   capture the real client traffic.
+
+---
+
 ### Day 7 — YYYY-MM-DD: <topic>
 
 (empty — fill in next session)

@@ -15,34 +15,68 @@ Optionally pass an ad id as the first arg to probe a specific live ad:
 
     ... 'sudo docker exec -i resell-backend python3 - <AD_ID>'
 
-### Findings (2026-05-11, account SneakerSupplierDE / user 45852425)
+### Findings (2026-05-11; tested on both SneakerSupplierDE / 45852425
+###            and the private account schmidt.leon2001@gmail.com / 152619387,
+###            the latter with a live ACTIVE ad 3405575938 in scope)
 
 - `GET /api/users/{uid}/ads.json` — list-my-ads, JAXB-JSON, paginated
-  (`?page=&size=&_ver=1.16`). Status / field-selector / `statistics=true`
-  query params are ignored. Account had **0 online ads** at probe time
-  (`profile.json` → `counters.onlineAds = 0`), so no real ad to inspect.
-- `GET /api/users/{uid}/profile.json` — works; returns
-  `counters.{historicalAds, onlineAds, followers, following}` and
-  `userRatings`, `userBadges`. (Account-level only — not per-ad.)
-- `GET /api/users/{uid}/ads/statistics.json` and
-  `GET /api/users/{uid}/ads/counters.json` — return **500** (JAXB error
-  XML), *not* 404 → these routes exist but error on an empty account /
-  without the right param. Strong candidates for the per-ad-stats
-  surface; need an active ad (or the right query param) to see the
-  response shape.
-- `GET /api/users/{uid}/ads/{adId}/{statistics,stats,visits,views,
-  insights}.json`, `/api/ads/{adId}/...`, `/api/users/{uid}/
-  {statistics,insights,dashboard,ad-counters}.json` — all genuine
-  404s (generic server `Allow` header) → don't exist.
-- `GET /api/users/{uid}/watchlist.json` exists (the *buyer-side*
-  watchlist of ads this user favourited — not "who favourited my ad");
-  empty for this account.
+  (`?page=&size=&_ver=1.16`; only `_ver=1.16` works — `2.0/1.20/1.30`
+  → 500). **No view/watch field**, and `statistics=true` /
+  `includeCounters=true` / `includeStatistics=true` / `counters=true`
+  query flags are ignored. The KA app's "Meine Anzeigen" card *does*
+  show `👁 N ♥ M`, so it fetches those from somewhere else.
+- `GET /api/users/{uid}/ads/{adId}.json` (ad detail) — full ~6 KB
+  object: price/title/description/category/attributes/location/pictures/
+  displayoptions/ad-status/userBadges… **no view-count / watch-list-size
+  / visit-count field anywhere**, even on a live ACTIVE ad.
+- `GET /api/users/{uid}/profile.json` — works; account-level
+  `counters.{historicalAds, onlineAds, followers, following}` +
+  `userRatings`, `userBadges`, `analyticsId`. Not per-ad.
+- **A family of endpoints that exist (HTTP 500, not 404) and the app
+  almost certainly uses one of them — but every request shape tried
+  returns 500 with an *empty* `<api-errors/>` (= unhandled server
+  crash, not 400/401):**
+    - `GET /api/users/{uid}/ads/counters.json`  (GET-only — POST → 405)
+    - `GET /api/users/{uid}/ads/statistics.json`
+    - `GET /api/users/{uid}/ads/visit-counters.json?ids=…`
+    - `GET /api/users/{uid}/ads/watchlist-counters.json?ids=…`
+    - `GET /api/users/{uid}/ads/visit-statistics.json`
+  Tried: `?ids=`, `?adIds=`, `?adId=`, `?id=`, `?type=VISIT`,
+  `?counterType=VISIT`, `?page=&size=`, `&_ver=1.16`, no params, and
+  POST bodies (`{"ids":[…]}`, `{"adIds":[…]}`). All 500.
+- Genuine 404s (don't exist): `…/ads/{adId}/{statistics,stats,visits,
+  views,insights,counter,counters,visit-counter,visit-statistics,
+  watchlist-counter}.json`, `/api/ads/{adId}/…`, `/api/users/{uid}/
+  {statistics,insights,dashboard,ad-counters,visit-counters}.json`.
+- `GET /api/users/{uid}/watchlist.json` exists — the *buyer-side*
+  watchlist (ads this user favourited), not "who favourited my ad".
 
-=> Blocked on data availability: re-run this with at least one live KA
-   listing to (a) dump `GET .../ads/{adId}.json` for a `view-count` /
-   `watch-list-size` field and (b) re-hit the two 500-ing endpoints
-   (`/ads/statistics.json`, `/ads/counters.json`) now that there's an
-   ad in scope.
+=> The view/watch data is real and the app shows it, but it's not
+   exposed by any `GET` endpoint or response field reachable with the
+   mobile JWT + tier-2 headers this codebase sends. The 500-family is
+   the prime suspect — the endpoint needs something the request is
+   missing (most likely a header the KA Android app sends). **Next
+   step: mitmproxy / Charles on the KA Android app while it loads the
+   "Meine Anzeigen" screen, then pin the exact endpoint + headers +
+   params here.** (User said they'll provide the phone in a later
+   session.) Until then, KA wardrobe sync is blocked.
+
+### Side note: KA publish bugs surfaced while getting a live ad
+
+- `build_ad_xml` emitted an empty `<shipping:shipping-options />` while
+  ads declare `versand: ja` → KA `400 shippingOptions`. Fixed in
+  `aefff21` — see `KA_DEFAULT_SHIPPING_OPTIONS` in
+  `shared/listing_mappings.py` and the `shipping_options` payload key
+  in `build_ad_xml`. Shipping-option preset ids: `HERMES_001/002/003`,
+  `DHL_001/002` (id is an XML attribute on `<shipping:shipping-option>`).
+- `_ka_attributes` sends `{prefix}.brand = slug(brand)`, but KA's brand
+  attribute is an enum — non-enum slugs → `400 attributeMap[…brand]`.
+  ("adidas" works; "blue_tomato" doesn't.) Unfixed — fall back to
+  `"sonstige"` for unrecognised brands.
+- COMMERCIAL accounts: ads in paid categories publish but land
+  `ad-status: STALLED` pending payment (a step outside the mobile API).
+  PRIVATE accounts post free → ACTIVE immediately. Use a private
+  account for end-to-end publish testing.
 """
 
 from __future__ import annotations
