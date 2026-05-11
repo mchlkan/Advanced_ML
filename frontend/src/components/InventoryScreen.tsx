@@ -100,6 +100,77 @@ function getPostedPlatforms(item: InventoryItem): ("vinted" | "kleinanzeigen")[]
   return out;
 }
 
+// ---- filtering & sorting ----
+
+type SortKey = "newest" | "price-desc" | "price-asc" | "views-desc" | "title-asc";
+type StatusKey = "all" | "vinted" | "kleinanzeigen" | "unpublished" | "failed";
+type Filters = {
+  status: StatusKey;
+  brands: string[];
+  categories: string[];
+  priceMin: string;
+  priceMax: string;
+};
+const DEFAULT_FILTERS: Filters = { status: "all", brands: [], categories: [], priceMin: "", priceMax: "" };
+
+const itemPrice = (it: InventoryItem): number | null =>
+  (it.prediction?.english_fields?.price_eur as number | undefined) ?? it.prediction?.vinted?.q50 ?? null;
+const itemBrand = (it: InventoryItem): string | null =>
+  (it.prediction?.english_fields?.brand as string | undefined) ?? null;
+const itemCategory = (it: InventoryItem): string | null =>
+  (it.prediction?.english_fields?.category as string | undefined) ?? null;
+const itemTitle = (it: InventoryItem): string =>
+  (it.prediction?.english_fields?.title as string | undefined) ?? "";
+const itemViews = (it: InventoryItem): number => it.vinted?.live?.views ?? 0;
+
+function matchesStatus(it: InventoryItem, s: StatusKey): boolean {
+  if (s === "all") return true;
+  if (s === "vinted") return it.vinted?.status === "posted";
+  if (s === "kleinanzeigen") return it.kleinanzeigen?.status === "posted";
+  if (s === "failed") return it.vinted?.status === "failed" || it.kleinanzeigen?.status === "failed";
+  return !it.vinted && !it.kleinanzeigen; // "unpublished" — no publish attempt
+}
+
+function matchesFilters(it: InventoryItem, f: Filters): boolean {
+  if (!matchesStatus(it, f.status)) return false;
+  if (f.brands.length && !f.brands.includes(itemBrand(it) ?? "")) return false;
+  if (f.categories.length && !f.categories.includes(itemCategory(it) ?? "")) return false;
+  const p = itemPrice(it);
+  const lo = parseFloat(f.priceMin.replace(",", "."));
+  const hi = parseFloat(f.priceMax.replace(",", "."));
+  if (Number.isFinite(lo) && (p == null || p < lo)) return false;
+  if (Number.isFinite(hi) && (p == null || p > hi)) return false;
+  return true;
+}
+
+const SORTERS: Record<SortKey, (a: InventoryItem, b: InventoryItem) => number> = {
+  newest: (a, b) => b.created_at - a.created_at,
+  "price-desc": (a, b) => (itemPrice(b) ?? -Infinity) - (itemPrice(a) ?? -Infinity),
+  "price-asc": (a, b) => (itemPrice(a) ?? Infinity) - (itemPrice(b) ?? Infinity),
+  "views-desc": (a, b) => itemViews(b) - itemViews(a),
+  "title-asc": (a, b) => itemTitle(a).localeCompare(itemTitle(b)),
+};
+const SORT_LABELS: Record<SortKey, string> = {
+  newest: "Newest",
+  "price-desc": "Price ↓",
+  "price-asc": "Price ↑",
+  "views-desc": "Most views",
+  "title-asc": "A → Z",
+};
+
+function toggleInArray(arr: string[], v: string): string[] {
+  return arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
+}
+
+function countActiveFilters(f: Filters): number {
+  return (
+    (f.status !== "all" ? 1 : 0) +
+    (f.brands.length ? 1 : 0) +
+    (f.categories.length ? 1 : 0) +
+    (f.priceMin || f.priceMax ? 1 : 0)
+  );
+}
+
 const STAT_COLOR = "#6b6c6a";
 
 function EyeIcon() {
@@ -222,6 +293,207 @@ function formatSyncedAgo(ms: number | null): string {
   return `${Math.round(s / 86400)}d ago`;
 }
 
+// ---- filter / sort bar ----
+
+function ChevronDownIcon() {
+  return (
+    <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden>
+      <path d="M2 3.5L5 6.5l3-3" stroke="currentColor" strokeWidth="1.5"
+        strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function Pill({
+  label, selected, onClick, accent = "#3a3b3a",
+}: {
+  label: React.ReactNode;
+  selected: boolean;
+  onClick: () => void;
+  accent?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        borderRadius: 999,
+        padding: "5px 11px",
+        fontSize: 12,
+        fontWeight: 500,
+        cursor: "pointer",
+        fontFamily: FONT,
+        whiteSpace: "nowrap",
+        border: `1px solid ${selected ? `color-mix(in oklch, ${accent} 38%, transparent)` : "#e7e5e0"}`,
+        background: selected ? `color-mix(in oklch, ${accent} 11%, transparent)` : "#fff",
+        color: selected ? accent : "#6b6c6a",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+      <SmallCaps size={10}>{label}</SmallCaps>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>{children}</div>
+    </div>
+  );
+}
+
+function PriceInput({
+  value, placeholder, onChange,
+}: {
+  value: string;
+  placeholder: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={value}
+      placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value.replace(/[^\d.,]/g, ""))}
+      style={{
+        width: 56, height: 28, borderRadius: 8, padding: "0 8px",
+        border: "1px solid #e7e5e0", background: "#fff",
+        fontSize: 12, fontFamily: MONO, color: "#0e0f0e", outline: "none",
+      }}
+    />
+  );
+}
+
+function FilterSortBar({
+  sortBy, onSortChange, activeFilterCount, filtersOpen, onToggleFilters, onClear,
+}: {
+  sortBy: SortKey;
+  onSortChange: (s: SortKey) => void;
+  activeFilterCount: number;
+  filtersOpen: boolean;
+  onToggleFilters: () => void;
+  onClear: () => void;
+}) {
+  const filtersActive = activeFilterCount > 0;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10,
+      padding: "10px 24px",
+      borderBottom: filtersOpen ? "none" : "1px solid #e7e5e0",
+      backgroundColor: "#fafaf8",
+      flexShrink: 0,
+    }}>
+      <div style={{ position: "relative", flexShrink: 0 }}>
+        <select
+          value={sortBy}
+          onChange={(e) => onSortChange(e.target.value as SortKey)}
+          aria-label="Sort listings"
+          style={{
+            appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
+            height: 30, borderRadius: 15, padding: "0 28px 0 11px",
+            border: "1px solid #e7e5e0", background: "#fff",
+            fontSize: 12, fontWeight: 500, color: "#0e0f0e", fontFamily: FONT,
+            cursor: "pointer",
+          }}
+        >
+          {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+            <option key={k} value={k}>{`Sort: ${SORT_LABELS[k]}`}</option>
+          ))}
+        </select>
+        <span style={{
+          position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+          pointerEvents: "none", color: "#9b9c99", display: "inline-flex",
+        }}>
+          <ChevronDownIcon />
+        </span>
+      </div>
+
+      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+        {filtersActive && (
+          <button type="button" onClick={onClear} style={{
+            background: "none", border: "none", cursor: "pointer",
+            fontSize: 12, color: "#9b9c99", fontFamily: FONT, padding: "4px 2px",
+          }}>
+            Clear
+          </button>
+        )}
+        <button type="button" onClick={onToggleFilters} aria-expanded={filtersOpen} style={{
+          height: 30, borderRadius: 15, padding: "0 11px",
+          display: "inline-flex", alignItems: "center", gap: 6,
+          border: `1px solid ${filtersActive ? "oklch(0.62 0.15 145 / 0.4)" : "#e7e5e0"}`,
+          background: filtersActive ? "oklch(0.96 0.04 145)" : "#fff",
+          color: filtersActive ? "oklch(0.42 0.11 145)" : "#0e0f0e",
+          fontSize: 12, fontWeight: 500, fontFamily: FONT, cursor: "pointer",
+        }}>
+          Filters{filtersActive ? ` · ${activeFilterCount}` : ""}
+          <span style={{ display: "inline-flex", transform: filtersOpen ? "rotate(180deg)" : "none" }}>
+            <ChevronDownIcon />
+          </span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const STATUS_OPTIONS: { key: StatusKey; label: string; accent?: string }[] = [
+  { key: "all", label: "All" },
+  { key: "vinted", label: "Vinted", accent: PLATFORM_ACCENT.vinted },
+  { key: "kleinanzeigen", label: "Kleinanzeigen", accent: PLATFORM_ACCENT.kleinanzeigen },
+  { key: "unpublished", label: "Not published" },
+  { key: "failed", label: "Failed" },
+];
+
+function FilterPanel({
+  filters, onChange, availableBrands, availableCategories,
+}: {
+  filters: Filters;
+  onChange: (next: Filters) => void;
+  availableBrands: string[];
+  availableCategories: string[];
+}) {
+  const setStatus = (s: StatusKey) =>
+    onChange({ ...filters, status: filters.status === s && s !== "all" ? "all" : s });
+  return (
+    <div style={{
+      padding: "12px 24px 14px", borderBottom: "1px solid #e7e5e0",
+      backgroundColor: "#fafaf8", display: "flex", flexDirection: "column", gap: 12,
+      flexShrink: 0,
+    }}>
+      <FilterGroup label="Listing place">
+        {STATUS_OPTIONS.map((o) => (
+          <Pill key={o.key} label={o.label} accent={o.accent}
+            selected={filters.status === o.key} onClick={() => setStatus(o.key)} />
+        ))}
+      </FilterGroup>
+      {availableBrands.length >= 2 && (
+        <FilterGroup label="Brand">
+          {availableBrands.map((b) => (
+            <Pill key={b} label={b} selected={filters.brands.includes(b)}
+              onClick={() => onChange({ ...filters, brands: toggleInArray(filters.brands, b) })} />
+          ))}
+        </FilterGroup>
+      )}
+      {availableCategories.length >= 2 && (
+        <FilterGroup label="Category">
+          {availableCategories.map((c) => (
+            <Pill key={c} label={c} selected={filters.categories.includes(c)}
+              onClick={() => onChange({ ...filters, categories: toggleInArray(filters.categories, c) })} />
+          ))}
+        </FilterGroup>
+      )}
+      <FilterGroup label="Price (€)">
+        <PriceInput value={filters.priceMin} placeholder="min"
+          onChange={(v) => onChange({ ...filters, priceMin: v })} />
+        <span style={{ color: "#9b9c99", fontSize: 13 }}>–</span>
+        <PriceInput value={filters.priceMax} placeholder="max"
+          onChange={(v) => onChange({ ...filters, priceMax: v })} />
+      </FilterGroup>
+    </div>
+  );
+}
+
 export default function InventoryScreen({ onBack, onOpenListing, onRelistListing }: Props) {
   const [listings, setListings] = useState<InventoryItem[]>([]);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
@@ -231,6 +503,9 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [deleteConfirm, setDeleteConfirm] = useState<InventoryItem | null>(null);
+  const [sortBy, setSortBy] = useState<SortKey>("newest");
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
     fetchInventory()
@@ -334,6 +609,18 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
     onOpenListing(item.listing_id);
   }
 
+  const availableBrands = Array.from(
+    new Set(listings.map(itemBrand).filter(Boolean) as string[]),
+  ).sort();
+  const availableCategories = Array.from(
+    new Set(listings.map(itemCategory).filter(Boolean) as string[]),
+  ).sort();
+  const activeFilterCount = countActiveFilters(filters);
+  const visibleListings = listings
+    .filter((it) => matchesFilters(it, filters))
+    .sort(SORTERS[sortBy]);
+  const showFilterBar = !loading && !error && listings.length > 0;
+
   return (
     <div
       style={{
@@ -404,7 +691,9 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
                 fontSize: 11, color: "#9b9c99",
                 textTransform: "uppercase", letterSpacing: "1px",
               }}>
-                {listings.length} item{listings.length !== 1 ? "s" : ""}
+                {visibleListings.length !== listings.length
+                  ? `${visibleListings.length} of ${listings.length} items`
+                  : `${listings.length} item${listings.length !== 1 ? "s" : ""}`}
               </span>
             )}
           </div>
@@ -422,6 +711,27 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
           </span>
         )}
       </header>
+
+      {showFilterBar && (
+        <>
+          <FilterSortBar
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            activeFilterCount={activeFilterCount}
+            filtersOpen={filtersOpen}
+            onToggleFilters={() => setFiltersOpen((o) => !o)}
+            onClear={() => setFilters(DEFAULT_FILTERS)}
+          />
+          {filtersOpen && (
+            <FilterPanel
+              filters={filters}
+              onChange={setFilters}
+              availableBrands={availableBrands}
+              availableCategories={availableCategories}
+            />
+          )}
+        </>
+      )}
 
       <main style={{ flex: 1, padding: "0 24px", overflowY: "auto" }}>
         {loading && (
@@ -459,7 +769,25 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
           </div>
         )}
 
-        {listings.map((item) => {
+        {!loading && !error && listings.length > 0 && visibleListings.length === 0 && (
+          <div style={{ marginTop: 60, textAlign: "center" }}>
+            <p style={{ fontSize: 14, margin: 0, color: "#6b6c6a" }}>
+              No listings match these filters.
+            </p>
+            <button
+              type="button"
+              onClick={() => setFilters(DEFAULT_FILTERS)}
+              style={{
+                marginTop: 8, background: "none", border: "none", cursor: "pointer",
+                fontSize: 13, color: "oklch(0.5 0.13 145)", fontFamily: FONT,
+              }}
+            >
+              Clear filters
+            </button>
+          </div>
+        )}
+
+        {visibleListings.map((item) => {
           const fields = item.prediction?.english_fields ?? {};
           const title = (fields.title as string) ?? null;
           const brand = (fields.brand as string) ?? null;
