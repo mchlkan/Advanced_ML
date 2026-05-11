@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 import httpx
 
@@ -30,26 +31,27 @@ _SYSTEM = (
     "structured data extracted by a photo model. Write in English. Never invent "
     "details that aren't in the data.\n"
     "\n"
-    "TITLE — ALWAYS exactly this order, nothing else:  {brand} {garment type} {colour} {size}\n"
-    "• Brand: take it from the Brand field; if there is no Brand field, take it from "
-    'the rough title — that usually leads with the brand (rough title "Polo Ralph Lauren" '
-    '→ brand "Ralph Lauren"). Use the brand even when it is marked (uncertain): the title '
-    "is short and the seller eyeballs it. Only start the title with the garment type if "
-    "you truly cannot identify any brand anywhere.\n"
-    "• Garment type: a clean noun phrase you work out from the category + the rough "
-    'title — "Polo Shirt", "Hoodie", "Bomber Jacket", "Slim Jeans", "Crewneck Sweatshirt", '
-    '"Trainers", "Midi Dress". (Category "tshirts" + a rough title mentioning "polo" → '
-    '"Polo Shirt"; "tshirts" otherwise → "T-Shirt".) NEVER echo the rough title verbatim — '
-    'rewrite it into {brand} {garment type} … order ("Polo Ralph Lauren" → "Ralph Lauren '
-    'Polo Shirt …", not "Polo Ralph Lauren …").\n'
-    "• Include the size if you have one (even if (uncertain)). Drop a part only if it is "
-    "genuinely absent. No marketing words, no quotes, no trailing punctuation, no commas.\n"
+    "TITLE — EXACTLY four space-separated parts, in this order, and NOTHING else:\n"
+    "  {brand} {garment type} {colour} {size}\n"
+    "No condition, no notes, no parentheses, no quotes, no commas, no trailing "
+    "punctuation, no marketing words. Drop a part only if it is genuinely missing "
+    "(no brand → start with the garment type; no size → end with the colour).\n"
+    "• Brand: from the Brand field; if there is none, from the rough title — it "
+    'usually leads with the brand ("Polo Ralph Lauren" → "Ralph Lauren"). Include it '
+    "even if it is a low-confidence read; the seller will eyeball the title.\n"
+    "• Garment type: a clean noun phrase worked out from the rough title and the "
+    'category — "Polo Shirt", "Hoodie", "Bomber Jacket", "Slim Jeans", "Crewneck '
+    'Sweatshirt", "Trainers", "Midi Dress", "Air Max 90". If the rough title (or the '
+    'photo) says "polo", the garment type is "Polo Shirt" — NOT "T-Shirt" — even '
+    'though the category slug is "tshirts". NEVER echo the rough title verbatim: '
+    'rewrite it ("Polo Ralph Lauren" → "Ralph Lauren Polo Shirt …", not "Polo Ralph '
+    'Lauren …").\n'
     "\n"
-    "DESCRIPTION — 2–4 sentences, personal and honest, the seller talking to the buyer. "
-    "Be specific: name the garment, the colour, the condition, the fit, anything that "
-    'stands out. Do NOT pad with generic filler like "no visible damage or fading" unless '
-    "that genuinely is all there is to say. Do not state a field marked (uncertain) as a "
-    "hard fact — hedge it or leave it out. No bullet points.\n"
+    "DESCRIPTION — 2–4 sentences, personal and honest, the seller talking to the "
+    "buyer. Be specific: the garment, the colour, the condition, the fit, anything "
+    'that stands out. Do NOT pad with generic filler ("no visible damage or fading") '
+    "unless that genuinely is all there is to say. Do not state a low-confidence read "
+    "as a hard fact — hedge it or leave it out. No bullet points.\n"
     "\n"
     "Output EXACTLY two lines:\n"
     "Title: <the title>\n"
@@ -150,13 +152,12 @@ def _wear_label(visual_wear: float) -> str:
     return "visible"
 
 
-def _field_summary(fields: dict, visual_wear: float, unreliable: set[str]) -> str:
+def _field_summary(fields: dict, visual_wear: float) -> str:
     parts: list[str] = []
     for key in ("brand", "condition", "color", "size"):
         val = fields.get(key)
         if val:
-            tag = " (uncertain)" if key in unreliable else ""
-            parts.append(f"{key.capitalize()}: {val}{tag}")
+            parts.append(f"{key.capitalize()}: {val}")
     parts.append(f"Wear: {_wear_label(visual_wear)}")
     rough = (fields.get("title") or "").strip()
     if rough:
@@ -165,14 +166,20 @@ def _field_summary(fields: dict, visual_wear: float, unreliable: set[str]) -> st
 
 
 def _build_prompt(fields: dict, platform: str, visual_wear: float, field_review: dict) -> str:
-    unreliable = set(field_review.get("needs_review", []))
+    unreliable = sorted(set(field_review.get("needs_review", [])) & {"brand", "color", "size", "condition"})
     category = (fields.get("category") or "").lower()
     examples = _EXAMPLES.get(category, _DEFAULT_EXAMPLES)
-    summary = _field_summary(fields, visual_wear, unreliable)
+    summary = _field_summary(fields, visual_wear)
     platform_note = (
         "Vinted (casual, personal tone — write as the seller talking to the buyer)"
         if platform == "vinted"
         else "Kleinanzeigen (clear, matter-of-fact tone)"
+    )
+    low_conf_note = (
+        f"\nLow-confidence reads ({', '.join(unreliable)}): keep them in the title (it is "
+        "short and editable), but hedge them or leave them out of the description."
+        if unreliable
+        else ""
     )
     example_block = "\n\n".join(
         f"[Example {i + 1}]\n{ex_f}\nTitle: {ex_t}\nDescription: {ex_d}"
@@ -184,7 +191,34 @@ def _build_prompt(fields: dict, platform: str, visual_wear: float, field_review:
         f"Platform: {platform_note}\n"
         f"Category: {fields.get('category', 'clothing')}\n"
         f"{summary}"
+        f"{low_conf_note}"
     )
+
+
+# Words the model sometimes tacks onto the title — never wanted there.
+_CONDITION_WORDS = (
+    "new with tags", "new with tag", "brand new", "like new", "very good condition",
+    "good condition", "fair condition", "very good", "good", "fair", "used", "pre-owned",
+    "preowned", "worn",
+)
+
+
+def _clean_title(t: str, fields: dict) -> str:
+    """Belt-and-suspenders on the model's title: strip parenthetical notes and a
+    trailing condition phrase, and fix the common 'tshirts-category polo read as
+    a T-Shirt' miss when the rough title clearly says 'polo'."""
+    t = re.sub(r"\s*\([^)]*\)", "", t)  # drop "(…)" notes
+    rough = (fields.get("title") or "").lower()
+    if re.search(r"\bpolo\b", rough) and not re.search(r"\bpolo\b", t.lower()):
+        t = re.sub(r"\bt[\- ]?shirts?\b", "Polo Shirt", t, flags=re.I)
+        t = re.sub(r"\btees?\b", "Polo Shirt", t, flags=re.I)
+    low = t.lower().rstrip(" .-—,")
+    for cw in _CONDITION_WORDS:
+        if low.endswith(cw):
+            t = t.rstrip(" .-—,")[: -len(cw)]
+            break
+    t = re.sub(r"\s+", " ", t).strip(" .-—,\"'")
+    return t[:_TITLE_MAX_LEN].strip()
 
 
 def _size_short(size) -> str | None:
@@ -260,7 +294,9 @@ def _parse_copy(content: str, fields: dict, visual_wear: float, field_review: di
     description = " ".join(p for p in desc_lines if p).strip()
     out = _fallback_copy(fields, visual_wear, field_review)
     if title:
-        out["title"] = title[:_TITLE_MAX_LEN].strip()
+        cleaned = _clean_title(title, fields)
+        if cleaned:
+            out["title"] = cleaned
     if description:
         out["description"] = description
     return out
