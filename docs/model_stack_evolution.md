@@ -755,7 +755,7 @@ thesis that the gap was a pipeline gap rather than a fundamental data-quality ga
 Vinted holds approximately steady (deltas within noise on 368 rows).
 
 **Files shipped:**
-- HF Hub adapter: `mchlkan/qwen3vl4b-resell-adapter-multi-v3` (private)
+- HF Hub adapter: `mchlkan/qwen3vl4b-resell-adapter-multi-v3` (public)
 - `models/checkpoints/price_head.pt` — v3 head (md5 a779fbf6, 5.95 MB; replaces v2)
 - `eval/results/price_head_v3.json` — full price-head metrics, val + test, by platform
 - `eval/results/multi_image_v3.csv` — VLM field-eval overall roll-up
@@ -794,7 +794,7 @@ input for the project report. Reflects the v3 ship (§4.4); v2 details remain in
 | ML libraries | PyTorch 2.4 (CUDA 12.4), `transformers>=4.56,<5`, `peft>=0.12`, `bitsandbytes>=0.43`, `accelerate>=0.34`, `datasets>=2.20` | training + extraction |
 | Vision | DINOv2 (`facebook/dinov2-base`), CLIP (`openai/clip-vit-base-patch32`), Qwen3-VL-4B-Instruct + custom LoRA | three independent visual encoders for three independent jobs |
 | Training infra | RunPod community RTX 4090 (network volume `/workspace`) | ~$0.34/h; v2 retrain ~$1.45, v3 retrain ~$2 |
-| Model hosting | HuggingFace Hub (`mchlkan/qwen3vl4b-resell-adapter-multi-v3`, private) | adapter is private; colleagues need an HF token with read access + Qwen3-VL gated-repo acceptance |
+| Model hosting | HuggingFace Hub (`mchlkan/qwen3vl4b-resell-adapter-multi-v3`, public) | public adapter so colleagues only need their own HF token + Qwen3-VL gated-repo acceptance |
 | Source of truth | `resell_copilot_tech_brief_v2.md` | architecture + scope decisions |
 
 ### 5.2 Final model stack (6 models)
