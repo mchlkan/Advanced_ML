@@ -20,7 +20,7 @@ from PIL import Image
 from build_price_dataset import canon_brand
 
 from .bootstrap import LoadedModels, dinov2_embed
-from .description import generate_description
+from .description import generate_listing_copy
 from .vlm_backend import VLMBackend, VLMOutput
 
 
@@ -176,14 +176,15 @@ async def run_pipeline(
     vinted_review = _field_review(vinted_vlm, field_overrides)
     ka_review = _field_review(ka_vlm, field_overrides)
 
-    # Model #6: generate descriptions in parallel, one per platform.
-    # Replaces Model #1's raw description with grounded LLM copy.
-    vinted_desc, ka_desc = await asyncio.gather(
-        generate_description(
+    # Model #6: generate the listing copy (title + description) in parallel, one
+    # per platform — a Groq call grounded on Model #1's structured fields,
+    # replacing the VLM's terse raw title/description.
+    vinted_copy, ka_copy = await asyncio.gather(
+        generate_listing_copy(
             vinted_vlm.fields, "vinted",
             local["visual_wear_probability"], vinted_review,
         ),
-        generate_description(
+        generate_listing_copy(
             ka_vlm.fields, "kleinanzeigen",
             local["visual_wear_probability"], ka_review,
         ),
@@ -194,12 +195,20 @@ async def run_pipeline(
         "vinted": {
             "price": {"q10": v_q10, "q50": v_q50, "q90": v_q90},
             "sell_probability": local["sell_prob"],
-            "identification": {**vinted_vlm.fields, "description": vinted_desc},
+            "identification": {
+                **vinted_vlm.fields,
+                "title": vinted_copy["title"],
+                "description": vinted_copy["description"],
+            },
             "field_review": vinted_review,
         },
         "kleinanzeigen": {
             "price": {"q10": k_q10, "q50": k_q50, "q90": k_q90},
-            "identification": {**ka_vlm.fields, "description": ka_desc},
+            "identification": {
+                **ka_vlm.fields,
+                "title": ka_copy["title"],
+                "description": ka_copy["description"],
+            },
             "field_review": ka_review,
         },
         "latency_ms": int((time.perf_counter() - started) * 1000),
