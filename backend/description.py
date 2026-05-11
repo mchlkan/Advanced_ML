@@ -1,14 +1,18 @@
-"""Model #6 — Grounded listing-copy generator (title + description).
+"""Model #6 — Grounded listing-copy generator: English title + German description.
 
-Calls Groq (Llama 3.1 8B) with a category-matched few-shot prompt built from
-Model #1's structured fields (brand / type / colour / size, plus the VLM's own
-rough title) and Model #2's visual_wear_probability. Produces a compact
-"Brand Type Colour Size" title and a 2–4 sentence description in one call.
-Falls back to deterministic templates on any failure so the main pipeline is
-never blocked.
+One Groq (Llama 3.1 8B) call per platform, grounded on Model #1's structured
+fields and Model #2's visual_wear_probability. It produces:
+  - a compact English title in the form "{brand} {garment} {colour} {size}"
+    (that wording reads fine on Vinted.de / Kleinanzeigen.de), and
+  - a German listing description in the platform's house style — Vinted: short
+    and casual (catchy opener → the item → condition & flaws → fit/material if
+    known → friendly sign-off); Kleinanzeigen: longer and matter-of-fact (what's
+    for sale → details → condition & flaws → shipping/pickup → the standard
+    private-sale disclaimer, which is appended deterministically).
 
-Skips the API call and returns the templates when VLM_BACKEND=stub (test
-environments) so tests remain deterministic and free of network calls.
+Falls back to deterministic templates (English title, German description) on any
+failure, so the main pipeline is never blocked. Skips the API call (templates
+only) when VLM_BACKEND=stub so tests stay deterministic and network-free.
 """
 
 from __future__ import annotations
@@ -23,195 +27,174 @@ logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.1-8b-instant"
-_TIMEOUT = 8.0
+_TIMEOUT = 10.0
 _TITLE_MAX_LEN = 90
 
-_SYSTEM = (
-    "You write the title and description for second-hand clothing listings from "
-    "structured data extracted by a photo model. Write in English. Never invent "
-    "details that aren't in the data.\n"
-    "\n"
-    "TITLE — EXACTLY four space-separated parts, in this order, and NOTHING else:\n"
-    "  {brand} {garment type} {colour} {size}\n"
-    "No condition, no notes, no parentheses, no quotes, no commas, no trailing "
-    "punctuation, no marketing words. Drop a part only if it is genuinely missing "
-    "(no brand → start with the garment type; no size → end with the colour).\n"
-    "• Brand: from the Brand field; if there is none, from the rough title — it "
-    'usually leads with the brand ("Polo Ralph Lauren" → "Ralph Lauren"). Include it '
-    "even if it is a low-confidence read; the seller will eyeball the title.\n"
-    "• Garment type: a clean noun phrase worked out from the rough title and the "
-    'category — "Polo Shirt", "Hoodie", "Bomber Jacket", "Slim Jeans", "Crewneck '
-    'Sweatshirt", "Trainers", "Midi Dress", "Air Max 90". If the rough title (or the '
-    'photo) says "polo", the garment type is "Polo Shirt" — NOT "T-Shirt" — even '
-    'though the category slug is "tshirts". NEVER echo the rough title verbatim: '
-    'rewrite it ("Polo Ralph Lauren" → "Ralph Lauren Polo Shirt …", not "Polo Ralph '
-    'Lauren …").\n'
-    "\n"
-    "DESCRIPTION — 2–4 sentences, personal and honest, the seller talking to the "
-    "buyer. Be specific: the garment, the colour, the condition, the fit, anything "
-    'that stands out. Do NOT pad with generic filler ("no visible damage or fading") '
-    "unless that genuinely is all there is to say. Do not state a low-confidence read "
-    "as a hard fact — hedge it or leave it out. No bullet points.\n"
-    "\n"
-    "Output EXACTLY two lines:\n"
-    "Title: <the title>\n"
-    "Description: <the description>"
+# Legally important — appended to every Kleinanzeigen description.
+_KA_DISCLAIMER = (
+    "Da es sich um einen Privatverkauf handelt, keine Garantie, "
+    "Gewährleistung oder Rücknahme."
 )
 
-# Category-matched few-shot examples: (field_summary, title, description) tuples.
-# Each field_summary ends with the VLM's "Rough title:" so the model learns to
-# *rewrite* it into the {brand} {garment type} {colour} {size} form, not echo it.
-# Descriptions are taken from sold Vinted listings.
-_EXAMPLES: dict[str, list[tuple[str, str, str]]] = {
-    "jackets": [
-        (
-            "Brand: Zara | Condition: Very good | Color: black | Size: M | Wear: minimal | Rough title: Zara wool blend blazer",
-            "Zara Blazer Black M",
-            "Zara blazer in very good condition — no pilling, marks, or structural wear. "
-            "Slim cut, true to size. A solid work-to-weekend layer at a fair price.",
-        ),
-        (
-            "Brand: Columbia | Condition: Good | Color: olive | Size: L | Wear: light | Rough title: Columbia windbreaker jacket",
-            "Columbia Windbreaker Jacket Olive L",
-            "Columbia fleece-lined windbreaker, olive green. Picked this up for hiking but barely used it — "
-            "some light crease marks from storage, nothing structural. Roomy L, great for layering.",
-        ),
-    ],
-    "jeans": [
-        (
-            "Brand: Levi's | Condition: Good | Color: blue | Size: 32 | Wear: light | Rough title: Levi's 501 denim",
-            "Levi's 501 Jeans Blue 32",
-            "Levi's 501 in classic mid-blue. Light fading and minor softening from regular "
-            "wear — still plenty of life left. Straight fit, comfortable all day.",
-        ),
-        (
-            "Brand: Mango | Condition: Very good | Color: black | Size: 36 | Wear: minimal | Rough title: Mango straight leg jeans",
-            "Mango Straight-Leg Jeans Black 36",
-            "Mango straight-leg jeans in black. Worn maybe five times — still crisp, no fading. "
-            "Size 36, fits true. One of those pieces I kept reaching for but never quite felt like mine.",
-        ),
-    ],
-    "tshirts": [
-        (
-            # No Brand field — brand comes from the rough title.
-            "Condition: Very good | Color: navy | Size: L | Wear: minimal | Rough title: Polo Ralph Lauren",
-            "Ralph Lauren Polo Shirt Navy L",
-            "Ralph Lauren polo in navy, size L. Worn a handful of times — collar's still crisp, no marks or fading. "
-            "Classic fit, true to size.",
-        ),
-        (
-            "Brand: H&M (uncertain) | Condition: New with tags | Color: white | Size: S | Wear: minimal | Rough title: H&M basic cotton tee",
-            "H&M T-Shirt White S (new with tags)",
-            "Brand new — original tag still on. Clean white, completely unworn. Size S runs true.",
-        ),
-        (
-            "Brand: Carhartt | Condition: Good | Color: grey | Size: L | Wear: light | Rough title: Carhartt pocket t-shirt",
-            "Carhartt Pocket Tee Washed Grey L",
-            "Carhartt pocket tee in washed grey. Regular fit, size L. "
-            "Shows the kind of soft wear you'd expect from a well-loved tee — no holes, no stains. Honest listing.",
-        ),
-    ],
-    "sneakers": [
-        (
-            "Brand: Nike | Condition: Very good | Color: white | Size: 42 | Wear: minimal | Rough title: Nike Air Max 90 sneakers",
-            "Nike Air Max 90 White 42",
-            "Nike runners in very good condition — uppers clean, minimal sole wear. "
-            "Small scuff on the right toe cap, barely visible. "
-            "Solid pair with a lot of miles left.",
-        ),
-        (
-            "Brand: New Balance | Condition: Good | Color: grey | Size: 44 | Wear: light | Rough title: New Balance 574 trainers",
-            "New Balance 574 Grey 44",
-            "New Balance 574 in grey. Worn regularly for about a year — soles have visible wear "
-            "but uppers are clean and the cushioning is still solid. Priced to move.",
-        ),
-    ],
+_CONDITION_DE = {
+    "New with tags": "neu mit Etikett",
+    "New": "neu, ungetragen",
+    "Very good": "sehr guter Zustand",
+    "Good": "guter Zustand",
 }
 
-_DEFAULT_EXAMPLES: list[tuple[str, str, str]] = [
-    (
-        "Brand: Adidas | Condition: Very good | Color: navy | Size: M | Wear: minimal | Rough title: Adidas Trefoil crewneck",
-        "Adidas Crewneck Sweatshirt Navy M",
-        "Barely worn and in very good condition overall. "
-        "No visible damage or fading. Straightforward listing — what you see is what you get.",
-    ),
-    (
-        "Brand: Uniqlo | Condition: Good | Color: beige | Size: S | Wear: light | Rough title: Uniqlo U crew neck t-shirt",
-        "Uniqlo Crewneck T-Shirt Beige S",
-        "Uniqlo piece in beige, size S. Worn a handful of times, washed cold every time — "
-        "keeps its shape well. Light use, no damage worth hiding.",
-    ),
-]
+
+def _condition_de(condition: str | None) -> str:
+    if not condition:
+        return "gebraucht"
+    return _CONDITION_DE.get(condition, condition.lower())
 
 
-def _wear_label(visual_wear: float) -> str:
+def _defects_de(visual_wear: float) -> str:
     if visual_wear < 0.25:
-        return "minimal"
+        return "keine nennenswerten Gebrauchsspuren"
     if visual_wear < 0.55:
-        return "light"
-    return "visible"
+        return "leichte Gebrauchsspuren, nichts Gravierendes"
+    return "sichtbare Gebrauchsspuren – bitte die Fotos genau ansehen"
 
 
-def _field_summary(fields: dict, visual_wear: float) -> str:
-    parts: list[str] = []
-    for key in ("brand", "condition", "color", "size"):
-        val = fields.get(key)
-        if val:
-            parts.append(f"{key.capitalize()}: {val}")
-    parts.append(f"Wear: {_wear_label(visual_wear)}")
-    rough = (fields.get("title") or "").strip()
-    if rough:
-        parts.append(f"Rough title: {rough}")
-    return " | ".join(parts)
+# --- prompt pieces -----------------------------------------------------------
+
+_TITLE_RULES = (
+    "TITLE — English, EXACTLY four space-separated parts in this order and "
+    "NOTHING else: {brand} {garment type} {colour} {size}. No condition, notes, "
+    "parentheses, quotes, commas, or trailing punctuation. Drop a part only if it "
+    "is genuinely missing (no brand → start with the garment type; no size → end "
+    "with the colour). Brand: from the Brand field, else from the rough title (it "
+    'usually leads with the brand: "Polo Ralph Lauren" → "Ralph Lauren") — '
+    "include it even if low-confidence. Garment type: a clean noun phrase from the "
+    'rough title + category — "Polo Shirt", "Hoodie", "Bomber Jacket", "Slim '
+    'Jeans", "Air Max 90"; "polo" anywhere → "Polo Shirt" (not "T-Shirt") even if '
+    'the category slug is "tshirts". Never echo the rough title verbatim — rewrite it.'
+)
+
+_VINTED_DESC_RULES = (
+    "DESCRIPTION — Vinted style, in GERMAN: short, casual, friendly, easy to "
+    "skim — about 3–5 short sentences in this order:\n"
+    "1. one catchy opening line about the item;\n"
+    "2. what it is (brand, type, colour, size);\n"
+    "3. the condition, with any flaws stated honestly;\n"
+    "4. fit / material / a nice detail — ONLY if you actually know it from the data;\n"
+    '5. a friendly closer such as "Bei Fragen gerne melden :)".'
+)
+
+_KA_DESC_RULES = (
+    "DESCRIPTION — Kleinanzeigen style, in GERMAN: a bit longer, factual and "
+    "trustworthy — about 4–7 sentences in this order:\n"
+    "1. a short line on what is being sold;\n"
+    "2. the product details (brand, type, colour, size, plus a model name if the "
+    "rough title gives one);\n"
+    "3. condition and flaws, stated transparently;\n"
+    '4. one line on shipping/pickup — write exactly "Versand oder Abholung möglich.";\n'
+    "5. do NOT write the legal private-sale disclaimer yourself — it is appended automatically."
+)
+
+_GENERAL_DESC_RULES = (
+    "DESCRIPTION rules for both platforms: fluent, natural GERMAN; do not sound "
+    "like AI; no hype or superlatives; honest about condition and flaws; never "
+    "mention a price; never promise things you weren't told (material, fit, "
+    "model) — if you don't know, leave it out; at most a single minimal emoji in "
+    'a sign-off (":)"), nothing else.'
+)
+
+_BASE_SYSTEM = (
+    "You turn structured data (extracted from a photo) into one product listing. "
+    "Use ONLY the given facts — never invent details, prices, brands, or "
+    "materials that aren't there. Start your reply with a `Title:` line, then "
+    "`Description:` followed by the German listing text.\n\n"
+)
+
+_VINTED_EXAMPLE = (
+    "[Example]\n"
+    "Brand: Levi's | Colour: blue | Size: 32 | Category: jeans | "
+    "Condition (DE): guter Zustand | Flaws (DE): leichte Gebrauchsspuren, nichts Gravierendes | "
+    "Rough title: Levi's 511 slim denim\n"
+    "Title: Levi's 511 Jeans Blue 32\n"
+    "Description: Schöne Levi's 511 in klassischem Mittelblau, Größe 32. Slim Fit, fällt true to size aus. "
+    "Guter Zustand – leichte Trage- und Waschspuren, aber keine Löcher oder Flecken. "
+    "Trage ich kaum noch, deshalb gebe ich sie weiter. Bei Fragen gerne melden :)"
+)
+
+_KA_EXAMPLE = (
+    "[Example]\n"
+    "Brand: Nike | Colour: white | Size: 42 | Category: sneakers | "
+    "Condition (DE): sehr guter Zustand | Flaws (DE): leichte Gebrauchsspuren, nichts Gravierendes | "
+    "Rough title: Nike Air Max 90 sneakers\n"
+    "Title: Nike Air Max 90 White 42\n"
+    "Description: Verkaufe ein Paar Nike Air Max 90 in Weiß, Größe 42. Klassisches Modell, vielseitig kombinierbar. "
+    "Der Zustand ist sehr gut – die Schuhe wurden nur wenig getragen, kleine Gebrauchsspuren an der Sohle, "
+    "das Obermaterial ist sauber. Versand oder Abholung möglich. Bei Fragen einfach melden."
+)
+
+
+def _system_for(platform: str) -> str:
+    desc_rules = _VINTED_DESC_RULES if platform == "vinted" else _KA_DESC_RULES
+    return f"{_BASE_SYSTEM}{_TITLE_RULES}\n\n{desc_rules}\n\n{_GENERAL_DESC_RULES}"
 
 
 def _build_prompt(fields: dict, platform: str, visual_wear: float, field_review: dict) -> str:
     unreliable = sorted(set(field_review.get("needs_review", [])) & {"brand", "color", "size", "condition"})
-    category = (fields.get("category") or "").lower()
-    examples = _EXAMPLES.get(category, _DEFAULT_EXAMPLES)
-    summary = _field_summary(fields, visual_wear)
-    platform_note = (
-        "Vinted (casual, personal tone — write as the seller talking to the buyer)"
-        if platform == "vinted"
-        else "Kleinanzeigen (clear, matter-of-fact tone)"
-    )
-    low_conf_note = (
-        f"\nLow-confidence reads ({', '.join(unreliable)}): keep them in the title (it is "
-        "short and editable), but hedge them or leave them out of the description."
+    parts: list[str] = []
+    for key in ("brand", "color", "size"):
+        v = fields.get(key)
+        if v:
+            parts.append(f"{key.capitalize()}: {v}")
+    parts.append(f"Category: {fields.get('category', 'clothing')}")
+    parts.append(f"Condition (DE): {_condition_de(fields.get('condition'))}")
+    parts.append(f"Flaws (DE): {_defects_de(visual_wear)}")
+    rough = (fields.get("title") or "").strip()
+    if rough:
+        parts.append(f"Rough title: {rough}")
+    summary = " | ".join(parts)
+    low_conf = (
+        f"\nLow-confidence reads ({', '.join(unreliable)}): keep them in the title; "
+        "hedge them or leave them out of the German description."
         if unreliable
         else ""
     )
-    example_block = "\n\n".join(
-        f"[Example {i + 1}]\n{ex_f}\nTitle: {ex_t}\nDescription: {ex_d}"
-        for i, (ex_f, ex_t, ex_d) in enumerate(examples)
-    )
-    return (
-        f"{example_block}\n\n"
-        f"[Write the title and description for]\n"
-        f"Platform: {platform_note}\n"
-        f"Category: {fields.get('category', 'clothing')}\n"
-        f"{summary}"
-        f"{low_conf_note}"
-    )
+    example = _VINTED_EXAMPLE if platform == "vinted" else _KA_EXAMPLE
+    return f"{example}\n\n[Now write for]\n{summary}{low_conf}"
 
 
-# Words the model sometimes tacks onto the title — never wanted there.
+# --- title cleanup -----------------------------------------------------------
+
 _CONDITION_WORDS = (
     "new with tags", "new with tag", "brand new", "like new", "very good condition",
-    "good condition", "fair condition", "very good", "good", "fair", "used", "pre-owned",
-    "preowned", "worn",
+    "good condition", "fair condition", "very good", "good", "fair", "used",
+    "pre-owned", "preowned", "worn",
+    "neu mit etikett", "sehr guter zustand", "guter zustand", "neuwertig", "gebraucht",
 )
+
+# Letter sizes the model occasionally expands ("L" → "Large"); enforce the short
+# form so the title matches the size value the user actually picked.
+_SIZE_EXPANSIONS = {
+    "S": ("small",),
+    "M": ("medium",),
+    "L": ("large",),
+    "XL": ("x-large", "extra large", "xlarge"),
+    "XXL": ("xx-large", "xxlarge"),
+}
 
 
 def _clean_title(t: str, fields: dict) -> str:
-    """Belt-and-suspenders on the model's title: strip parenthetical notes and a
-    trailing condition phrase, and fix the common 'tshirts-category polo read as
-    a T-Shirt' miss when the rough title clearly says 'polo'."""
-    t = re.sub(r"\s*\([^)]*\)", "", t)  # drop "(…)" notes
+    """Belt-and-suspenders on the title: drop parenthetical notes / a trailing
+    condition phrase, normalise letter sizes back to their short form, and fix
+    the common 'tshirts-category polo read as a T-Shirt' miss when the rough
+    title clearly says 'polo'."""
+    t = re.sub(r"\s*\([^)]*\)", "", t)
     rough = (fields.get("title") or "").lower()
     if re.search(r"\bpolo\b", rough) and not re.search(r"\bpolo\b", t.lower()):
         t = re.sub(r"\bt[\- ]?shirts?\b", "Polo Shirt", t, flags=re.I)
         t = re.sub(r"\btees?\b", "Polo Shirt", t, flags=re.I)
+    size_short = _size_short(fields.get("size") or "")
+    if size_short and size_short.upper() in _SIZE_EXPANSIONS:
+        for expansion in _SIZE_EXPANSIONS[size_short.upper()]:
+            t = re.sub(rf"\b{re.escape(expansion)}\b", size_short, t, flags=re.I)
     low = t.lower().rstrip(" .-—,")
     for cw in _CONDITION_WORDS:
         if low.endswith(cw):
@@ -224,81 +207,86 @@ def _clean_title(t: str, fields: dict) -> str:
 def _size_short(size) -> str | None:
     if not size:
         return None
-    first = str(size).replace("/", " ").split()
-    return first[0] if first else None
+    toks = str(size).replace("/", " ").split()
+    return toks[0] if toks else None
 
 
-def _title_fallback(fields: dict, field_review: dict) -> str:
-    """Deterministic title used when Groq is unavailable. Worst case it matches
-    the VLM's own title (i.e. no regression vs. today); usually it's a touch
-    better because the colour/size get appended if they aren't already in it."""
-    unreliable = set(field_review.get("needs_review", []))
-    color = fields.get("color") if "color" not in unreliable else None
-    size = _size_short(fields.get("size")) if "size" not in unreliable else None
-    vlm = (fields.get("title") or "").strip()
-    if vlm:
-        title = vlm
-        for extra in (str(color) if color else None, size):
-            if extra and f" {extra.lower()} " not in f" {title.lower()} ":
-                title = f"{title} {extra}"
-        return title[:_TITLE_MAX_LEN].strip()
-    brand = fields.get("brand") if "brand" not in unreliable else None
-    category = fields.get("category") or "Clothing"
-    title = " ".join(str(x) for x in (brand, category, color, size) if x).strip()
-    return (title or "Second-hand clothing item")[:_TITLE_MAX_LEN].strip()
+# --- deterministic fallbacks -------------------------------------------------
 
-
-def _description_fallback(fields: dict, visual_wear: float, field_review: dict) -> str:
-    unreliable = set(field_review.get("needs_review", []))
-    brand = fields.get("brand") if "brand" not in unreliable else None
-    category = fields.get("category", "item")
-    condition = (fields.get("condition") or "").lower()
+def _title_fallback(fields: dict) -> str:
+    rough = (fields.get("title") or "").strip()
     color = fields.get("color")
-    size = fields.get("size") if "size" not in unreliable else None
+    size = _size_short(fields.get("size"))
+    if rough:
+        t = rough
+        for extra in (str(color) if color else None, size):
+            if extra and f" {extra.lower()} " not in f" {t.lower()} ":
+                t = f"{t} {extra}"
+        return _clean_title(t, fields) or "Second-hand clothing item"
+    brand = fields.get("brand")
+    cat = fields.get("category") or "Clothing"
+    return _clean_title(" ".join(str(x) for x in (brand, cat, color, size) if x), fields) or "Second-hand clothing item"
 
-    head = " ".join(filter(None, [brand, color, category])).capitalize()
-    cond_str = f"in {condition} condition" if condition else ""
-    size_str = f"Size {size}." if size else ""
-    wear = _wear_label(visual_wear)
-    wear_str = f"Shows {wear} signs of wear." if wear != "minimal" else ""
-    return " ".join(filter(None, [head, cond_str + ".", size_str, wear_str])).strip()
+
+def _description_fallback(fields: dict, platform: str, visual_wear: float) -> str:
+    brand = fields.get("brand")
+    cat = fields.get("category") or "Artikel"
+    color = fields.get("color")
+    size = fields.get("size")
+    cond = _condition_de(fields.get("condition"))
+    flaws = _defects_de(visual_wear)
+    what = " ".join(str(x) for x in ([brand] if brand else []) + [cat] + ([color.lower()] if color else []))
+    size_de = f" in Größe {size}" if size else ""
+    cond_line = f"Zustand: {cond} – {flaws}."
+    if platform == "vinted":
+        return f"{what.capitalize()}{size_de}. {cond_line} Bei Fragen gerne melden :)"
+    return _finalize_ka(f"Verkaufe {what}{size_de}. {cond_line} Versand oder Abholung möglich.")
 
 
-def _fallback_copy(fields: dict, visual_wear: float, field_review: dict) -> dict[str, str]:
+def _finalize_ka(desc: str) -> str:
+    d = (desc or "").strip()
+    if "privatverkauf" not in d.lower():
+        d = f"{d}\n\n{_KA_DISCLAIMER}"
+    return d
+
+
+def _fallback_copy(fields: dict, platform: str, visual_wear: float) -> dict[str, str]:
     return {
-        "title": _title_fallback(fields, field_review),
-        "description": _description_fallback(fields, visual_wear, field_review),
+        "title": _title_fallback(fields),
+        "description": _description_fallback(fields, platform, visual_wear),
     }
 
 
-def _parse_copy(content: str, fields: dict, visual_wear: float, field_review: dict) -> dict[str, str]:
-    """Parse Groq's two-line 'Title: …' / 'Description: …' output, tolerant of a
-    bit of markdown decoration and a multi-line description. Any field that
-    can't be recovered falls back to the template."""
+# --- response parsing --------------------------------------------------------
+
+def _parse_copy(content: str, fields: dict, platform: str, visual_wear: float) -> dict[str, str]:
     title: str | None = None
     desc_lines: list[str] = []
-    capturing_desc = False
+    capturing = False
     for raw in content.splitlines():
         s = raw.strip().lstrip("*#-• ").strip()
         low = s.lower()
-        if title is None and low.startswith("title:"):
+        if title is None and (low.startswith("title:") or low.startswith("titel:")):
             title = s[s.index(":") + 1:].strip().strip("\"'*. ").strip()
-            capturing_desc = False
+            capturing = False
             continue
-        if low.startswith("description:"):
+        if low.startswith("description:") or low.startswith("beschreibung:"):
             desc_lines = [s[s.index(":") + 1:].strip()]
-            capturing_desc = True
+            capturing = True
             continue
-        if capturing_desc and s:
-            desc_lines.append(s)
-    description = " ".join(p for p in desc_lines if p).strip()
-    out = _fallback_copy(fields, visual_wear, field_review)
+        if capturing:
+            desc_lines.append(raw.rstrip())
+    description = re.sub(r"\n{3,}", "\n\n", "\n".join(desc_lines).strip()).strip()
+
+    out = _fallback_copy(fields, platform, visual_wear)
     if title:
-        cleaned = _clean_title(title, fields)
-        if cleaned:
-            out["title"] = cleaned
+        ct = _clean_title(title, fields)
+        if ct:
+            out["title"] = ct
     if description:
         out["description"] = description
+    if platform == "kleinanzeigen":
+        out["description"] = _finalize_ka(out["description"])
     return out
 
 
@@ -308,29 +296,26 @@ async def generate_listing_copy(
     visual_wear: float,
     field_review: dict | None = None,
 ) -> dict[str, str]:
-    """Generate ``{"title": ..., "description": ...}`` for a listing via Groq.
+    """Generate ``{"title": <English>, "description": <German>}`` for a listing.
 
     Returns deterministic template copy if GROQ_API_KEY is missing, the VLM
     backend is set to stub (test mode), or the API call fails. Never raises.
     """
     field_review = field_review or {}
 
-    if os.environ.get("VLM_BACKEND") == "stub":
-        return _fallback_copy(fields, visual_wear, field_review)
-
-    api_key = os.environ.get("GROQ_API_KEY", "")
-    if not api_key:
-        logger.warning("GROQ_API_KEY not set — using template fallback for listing copy")
-        return _fallback_copy(fields, visual_wear, field_review)
+    if os.environ.get("VLM_BACKEND") == "stub" or not os.environ.get("GROQ_API_KEY"):
+        if not os.environ.get("GROQ_API_KEY") and os.environ.get("VLM_BACKEND") != "stub":
+            logger.warning("GROQ_API_KEY not set — using template fallback for listing copy")
+        return _fallback_copy(fields, platform, visual_wear)
 
     payload = {
         "model": GROQ_MODEL,
         "messages": [
-            {"role": "system", "content": _SYSTEM},
+            {"role": "system", "content": _system_for(platform)},
             {"role": "user", "content": _build_prompt(fields, platform, visual_wear, field_review)},
         ],
-        "max_tokens": 250,
-        "temperature": 0.4,
+        "max_tokens": 450,
+        "temperature": 0.5,
     }
 
     try:
@@ -338,14 +323,14 @@ async def generate_listing_copy(
             resp = await client.post(
                 GROQ_API_URL,
                 json=payload,
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
             )
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"].strip()
             if content:
-                return _parse_copy(content, fields, visual_wear, field_review)
+                return _parse_copy(content, fields, platform, visual_wear)
             logger.warning("Groq returned empty content — using template fallback")
     except Exception as exc:
         logger.warning("Groq listing-copy call failed (%s) — using template fallback", exc)
 
-    return _fallback_copy(fields, visual_wear, field_review)
+    return _fallback_copy(fields, platform, visual_wear)
