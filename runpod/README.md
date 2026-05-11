@@ -45,7 +45,7 @@ and `docker login docker.io` instead — no other change needed.
 2. **Container image:** `ghcr.io/rengo33/resell-vlm:latest` (mark as private if your GHCR package is private — provide the GHCR PAT as a registry credential).
 3. **Container disk:** 25 GB. The 8 GB Qwen base + adapter + cache fit comfortably with headroom.
 4. **Workers:**
-   - **GPU type:** RTX 4090 (24 GB VRAM, plenty for 4-bit Qwen) or A4000 (cheaper).
+   - **GPU type:** RTX 4090 (24 GB VRAM — plenty for the 4B model in bf16, ~8 GB weights + a few GB of activations) or A4000 16 GB (cheaper; also fits).
    - **Min workers:** `0` for dev, `1` during the demo window for zero cold starts.
    - **Max workers:** `1` recommended. The backend issues two parallel `/run`
      calls per `/upload` (one per platform prompt). With `max_workers > 1`,
@@ -109,8 +109,9 @@ idle worker.
   the token doesn't have access to the private adapter repo. Regenerate at
   https://huggingface.co/settings/tokens with "Read" role and the adapter
   repo explicitly granted.
-- **Worker `FAILED` mid-run with OOM**: GPU isn't 4090; switch GPU type or
-  re-check the 4-bit quant config in `handler.py`.
+- **Worker `FAILED` mid-run with OOM**: GPU smaller than ~16 GB, or something
+  else is sharing the VRAM — switch to a ≥16 GB GPU. The bf16 4B model is
+  ~8 GB of weights plus a few GB of activations on a ~2K-token prefill.
 - **Backend `RuntimeError: worker error: ...`**: handler returned an error
   payload (bad input or shape mismatch). The error string in the message
   is verbatim from the worker.

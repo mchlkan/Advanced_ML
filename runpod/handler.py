@@ -1,10 +1,10 @@
-"""RunPod Serverless handler — Qwen3-VL-4B + LoRA in 4-bit.
+"""RunPod Serverless handler — Qwen3-VL-4B + LoRA, bf16.
 
 Loads the model + adapter once at module import (cached across warm calls).
-Per request: forward pass for the prefill last-token hidden state, then a
-greedy generate for the JSON output. Returns both — the backend parses the
-JSON with its own lenient parser so we don't couple the handler to the
-schema.
+Per request: one greedy ``generate`` with ``output_hidden_states=True`` — the
+prefill step's last-token hidden state feeds the downstream price/sell heads,
+the generated tokens are the JSON output. Returns both; the backend parses the
+JSON with its own lenient parser so the handler isn't coupled to the schema.
 
 Self-contained: only depends on prompts.py from shared/. The chat-template
 input construction is inlined here (originally in
@@ -23,11 +23,7 @@ import runpod
 import torch
 from peft import PeftModel
 from PIL import Image
-from transformers import (
-    AutoModelForImageTextToText,
-    AutoProcessor,
-    BitsAndBytesConfig,
-)
+from transformers import AutoModelForImageTextToText, AutoProcessor
 
 # /workspace/shared is COPY'd by the Dockerfile.
 sys.path.insert(0, "/workspace/shared")
@@ -51,18 +47,16 @@ _processor = AutoProcessor.from_pretrained(
     BASE_MODEL, trust_remote_code=True, token=HF_TOKEN
 )
 
-print(f"[boot] Loading base model {BASE_MODEL} (4-bit nf4)...", flush=True)
-_quant = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_compute_dtype=torch.bfloat16,
-    bnb_4bit_use_double_quant=True,
-)
+print(f"[boot] Loading base model {BASE_MODEL} (bf16)...", flush=True)
+# bf16, not bnb-4bit: the 4B model is ~8 GB in bf16 — fits a 24 GB GPU with
+# room to spare, and runs faster than nf4 (which dequantizes to bf16 on every
+# matmul anyway) with no accuracy loss. If a smaller GPU ever forces 4-bit,
+# prefer an AWQ/GPTQ build over bitsandbytes.
 _base = AutoModelForImageTextToText.from_pretrained(
     BASE_MODEL,
     trust_remote_code=True,
     device_map="auto",
-    quantization_config=_quant,
+    torch_dtype=torch.bfloat16,
     token=HF_TOKEN,
 )
 
@@ -118,14 +112,27 @@ def handler(event):
 
     inputs = _build_inputs(img, platform, prompt, label_image=label_img)
 
-    out = _model(**inputs, output_hidden_states=True, return_dict=True)
-    hidden_tensor = out.hidden_states[-1][0, -1, :].float().cpu()
+    # One pass does both jobs: `generate` with `output_hidden_states` runs the
+    # prefill once — its last-token hidden state is what the price/sell heads
+    # consume — and then decodes the JSON. Avoids a separate forward pass over
+    # the same ~1–2K-token prompt (the dominant cost of the request).
+    gen = _model.generate(
+        **inputs,
+        max_new_tokens=MAX_NEW_TOKENS,
+        do_sample=False,
+        output_hidden_states=True,
+        return_dict_in_generate=True,
+    )
+
+    # gen.hidden_states: one entry per generated token; [0] is the prefill step,
+    # [0][-1] its final layer (shape: batch, prompt_len, hidden), [0, -1, :] the
+    # last prompt token — same pooled state the old standalone forward produced.
+    hidden_tensor = gen.hidden_states[0][-1][0, -1, :].float().cpu()
     if hidden_tensor.shape != (EXPECTED_HIDDEN_DIM,):
         return {"error": f"unexpected hidden state shape {tuple(hidden_tensor.shape)}, expected ({EXPECTED_HIDDEN_DIM},)"}
     hidden = hidden_tensor.numpy().tolist()
 
-    gen = _model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
-    new_tokens = gen[0, inputs["input_ids"].shape[1]:]
+    new_tokens = gen.sequences[0, inputs["input_ids"].shape[1]:]
     raw_text = _processor.decode(new_tokens, skip_special_tokens=True).strip()
 
     return {"hidden_state": hidden, "raw_text": raw_text}

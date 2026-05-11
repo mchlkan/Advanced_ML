@@ -3641,6 +3641,101 @@ approved; implemented (`88fc087`). All client-side over the already-fetched
 
 ---
 
+### Day 6 — 2026-05-11 (continued): editable-prefill Results screen + inventory list reconcile; VLM cost model + handler optimization (prefill fusion, bf16)
+
+Tool: Claude Code (Opus 4.7, 1M context).
+
+#### Prompt 1 — "after scanning, the user should be able to edit title, sizes, price etc. on the prefill — plan to integrate that in the new UI" (`/plan` + implement)
+
+Replaced `ResultsScreen`'s read-only identification chips + the
+toggleable "Edit details" → `/verify` form with an always-visible
+**"Details" card of inline-editable rows** (brand/color/size = text
+inputs; condition/type = `<select>`s over the canonical enums), added a
+**Price row** to the "Your draft listing" card (inline `€` input,
+defaults to the model's `price_eur` ?? recommended q50, "rec. €X"
+alongside), wired the dead "Regenerate" link → **"Re-analyze"**
+(`verifyListing` with the edited fields as hints, then clears the edit
+maps), and made each field/price persist on blur via
+`patchListingFields(listing_id, …)` → `PATCH /listings/{id}/fields`
+(append-only `predictions` row, `source='edit'`; pushes to posted
+platforms — a no-op on a fresh scan). `handlePublish` now sends
+`{...id, ...fieldEdits, title/description per-platform, price_eur:
+priceFor(platform)}`. New state: `fieldEdits` / `titleEdits` /
+`descEdits` / `priceEdits`. No backend / `types/api.ts` change. — I
+deviated from the approved plan (tap-to-edit chips) to the
+always-visible card and flagged it; user kept it.
+
+#### Prompt 2 — "[screenshot] why 4 items total, only 2 listed, 1 deleted???" → "remove it completely from the list if it is not listed on any platform anymore"
+
+The count was arithmetically right (4 = 2 posted + 1 sold/removed + 1
+unpublished) but the summary strip only showed the `posted` bucket.
+First fix: `SummaryStrip` now also shows `pending` / `not published` /
+`need attention` so the segments sum to the item count. Then per the
+follow-up: added `isGoneFromAllPlatforms(it)` (Vinted
+`is_sold_or_removed` **and** KA not `posted`) and filtered those out of
+the list entirely — `listedItems = listings.filter(!isGone…)` drives
+the cards, the header count, the available-brands/categories facets,
+the filter bar, and the empty states; dropped the `sold_or_removed`
+segment from the summary and the "sold · removed" card badge. The DB
+record still exists — it's hidden from the list view, not deleted
+(`is_sold_or_removed` lumps "sold" with "removed/expired"; auto-delete
+would be destructive and lose the record). Shipped + deployed
+(`5eb8266` → `e6a5ed6` → `3759102`, prod `…-j181y2whj…`); no visual
+smoke-test possible (password-gated), flagged for the user to check.
+
+#### Prompt 3 — "estimate how many tokens we use for 1-picture / 2-picture upload — for the business plan — and incorporate the RunPod GPU costs"
+
+Worked through the token accounting from the actual code (`runpod/
+handler.py`, `shared/prompts.py`, `backend/vlm_backend/util.py`'s 1024 px
+/ q85 resize, the 2-platform fan-out in `runpod/README.md`): ~1 K vision
+tokens per downscaled photo, ~250 prompt-text tokens, ~50–90 generated;
+per `/upload` ≈ ~2.5 K prompt tokens (1 photo) / ~4.5 K (2 photos)
+across the 2 platform calls, each call doing **2 prefills** + ~70
+decode. Mapped to GPU-$ on a RunPod 4090 flex worker (~$0.00031/s,
+~12 s warm measured): ≈ $0.004 / scan (1 photo), ≈ $0.006 (2 photos);
+flagged that cold starts (~10–30 s paid GPU) and `min_workers=1` (~$800/mo
+for an idle 4090) dominate the bill at low volume. Identified the
+double-prefill as a free ~30–45 % win.
+
+#### Prompt 4 — "is there a way to optimize this?" → "compare to GPT-4o, GPT-4o-mini, Claude Haiku" → "integrate the two free wins and write it up in cost_model.md"
+
+Integrated the two no-retrain wins in `runpod/handler.py`:
+1. **Fused the two prefills** — one `generate(...,
+   output_hidden_states=True, return_dict_in_generate=True)`; pull the
+   pooled state from `gen.hidden_states[0][-1][0,-1,:]` instead of a
+   separate `output_hidden_states` forward (≈ −30–45 % GPU-s / call).
+2. **bf16 instead of bnb-nf4** — `torch_dtype=torch.bfloat16`; dropped
+   `BitsAndBytesConfig` and the `bitsandbytes` dep (faster than nf4,
+   slightly more accurate, fits the 24 GB GPU easily).
+Touched up `runpod/README.md` (the 4-bit / OOM lines). Combined ≈ a
+~2–2.5× speedup, no model change — needs an image rebuild + push.
+Wrote **`docs/cost_model.md`**: token accounting, the GPU-cost mapping,
+the warm-vs-cold-vs-idle cost structure, a comparison table vs GPT-4o /
+GPT-4o-mini (image-token quirk noted) / Claude Haiku 4.5, the full
+optimization backlog (§5.1–5.2 done; §5.3–5.6 pending), and a phased
+self-host-vs-API recommendation, plus recompute formulas.
+
+#### What I learned
+1. **On a self-hosted model, "tokens" is a proxy for GPU-seconds, not a
+   billing unit** — the cost model has to bridge px → vision tokens →
+   prompt length → prefill latency → $; the token count alone is
+   meaningless without the $/s and the latency curve.
+2. **`gpt-4o-mini` is *not* the cheap option for image-heavy
+   workloads** — its image tokens are billed at ~30–33× a `gpt-4o`
+   image's count, so per-scan it lands at or above 4o despite the cheap
+   text rate. Claude Haiku 4.5 (sane image-token count + modest rate)
+   came out cheapest of the three APIs in this workload.
+3. **The dual-output design (text + pooled hidden state) is what keeps
+   us on raw HF `generate()`** — it's the thing blocking a vLLM/SGLang
+   move; the cost-optimization ceiling is gated on a model-quality
+   question (is DINOv2 alone enough for price?), not on infra.
+4. **bnb 4-bit is a *de*optimization when the model already fits** —
+   nf4 dequantizes to bf16 on every matmul, so it's slower than just
+   loading bf16, and slightly less accurate. Only reach for it (or
+   better, AWQ/GPTQ) when VRAM actually forces it.
+
+---
+
 ### Day 7 — YYYY-MM-DD: <topic>
 
 ## 8. One-paragraph submission summary
