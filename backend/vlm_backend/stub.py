@@ -12,9 +12,12 @@ import hashlib
 import numpy as np
 from PIL import Image
 
+# backend/__init__.py adds repo/shared to sys.path.
+from prompts import EXPECTED_HIDDEN_DIM
+
 from . import VLMOutput
 
-VLM_DIM = 2560
+VLM_DIM = EXPECTED_HIDDEN_DIM
 
 
 def _seeded_rng(

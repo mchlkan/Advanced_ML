@@ -1,6 +1,7 @@
 "use client";
 
 import type { Platform, UploadResponse } from "@/types/api";
+import { PLATFORM_ACCENT, PLATFORM_LABEL } from "@/lib/platforms";
 import SmallCaps from "./ui/SmallCaps";
 
 export interface PublishOutcome {
@@ -14,16 +15,6 @@ interface Props {
   results: UploadResponse;
   onReset: () => void;
 }
-
-const PLATFORM_LABEL: Record<Platform, string> = {
-  vinted: "Vinted",
-  kleinanzeigen: "Kleinanzeigen",
-};
-
-const PLATFORM_ACCENT: Record<Platform, string> = {
-  vinted: "oklch(0.55 0.08 195)",
-  kleinanzeigen: "oklch(0.62 0.13 55)",
-};
 
 const ACCENT = "oklch(0.62 0.15 145)";
 

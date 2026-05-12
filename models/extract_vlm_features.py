@@ -237,7 +237,7 @@ def write_index(df, args: argparse.Namespace, hidden_dim: int) -> None:
     index["base_model"] = args.model_id
     index["adapter_id"] = args.adapter_id
     index["pool"] = args.pool
-    index["prompt_source"] = "src.prompts.get_prompt"
+    index["prompt_source"] = "shared/prompts.py:get_prompt"
     index["manifest"] = str(args.manifest) if args.manifest is not None else ""
     index.to_parquet(args.index_output, index=False)
 

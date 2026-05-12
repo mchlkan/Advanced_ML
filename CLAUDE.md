@@ -9,9 +9,9 @@ Photo-first selling assistant for second-hand clothing. 7-day course project (No
 ## Stack
 
 - Python 3.11
-- Backend: FastAPI + SQLite
-- Frontend: TypeScript, framework TBD (locked Day 2)
-- Monorepo, frontend lives in `/frontend`
+- Backend: FastAPI + SQLite (on EC2); VLM served from RunPod Serverless; Groq for listing copy
+- Frontend: TypeScript / Next.js 14 (on Vercel), in `/frontend`
+- Monorepo
 
 ## Environment
 
@@ -27,8 +27,9 @@ The maintainer of this repo uses **conda** for the Python env (`conda activate r
 
 See §5.5 of the brief. If asked to add something on that list, push back and ask.
 
-## Open decisions
+## Settled decisions (kept here for context)
 
-- Base VLM model (locked Day 1 via spike, Qwen3-VL family)
-- Sold-status time window (7/14/30 days)
-- Frontend framework (Next.js vs Vite + React)
+- Base VLM: Qwen3-VL-4B-Instruct + LoRA (`mchlkan/qwen3vl4b-resell-adapter-multi-v3`)
+- Frontend: Next.js 14 + TypeScript (Vercel)
+- Categories: `tshirts / jackets / jeans / sneakers` (the trained vocabulary)
+- Sold-status detection: wardrobe-diff based (an item absent from the latest wardrobe sync after it was synced is treated as sold/removed) — no fixed time window

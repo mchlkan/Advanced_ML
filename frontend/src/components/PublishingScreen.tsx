@@ -1,6 +1,7 @@
 "use client";
 
 import type { Platform } from "@/types/api";
+import { PLATFORM_ACCENT, PLATFORM_LABEL } from "@/lib/platforms";
 
 type ProgressState = "pending" | "posted" | "failed";
 
@@ -8,16 +9,6 @@ interface Props {
   platforms: Platform[];
   progress: Record<Platform, ProgressState>;
 }
-
-const PLATFORM_LABEL: Record<Platform, string> = {
-  vinted: "Vinted",
-  kleinanzeigen: "Kleinanzeigen",
-};
-
-const PLATFORM_ACCENT: Record<Platform, string> = {
-  vinted: "oklch(0.55 0.08 195)",
-  kleinanzeigen: "oklch(0.62 0.13 55)",
-};
 
 const SUCCESS = "oklch(0.62 0.15 145)";
 const ERROR_RED = "#c0392b";

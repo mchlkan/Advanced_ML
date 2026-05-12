@@ -1,22 +1,13 @@
 "use client";
 
 import type { OnboardingStatus, Platform } from "@/types/api";
+import { PLATFORM_ACCENT, PLATFORM_LABEL } from "@/lib/platforms";
 import SmallCaps from "./ui/SmallCaps";
 
 interface Props {
   status: OnboardingStatus | null;
   onConnect: (platform: Platform) => void;
 }
-
-const LABEL: Record<Platform, string> = {
-  vinted: "Vinted",
-  kleinanzeigen: "Kleinanzeigen",
-};
-
-const PLATFORM_DOT: Record<Platform, string> = {
-  vinted: "oklch(0.55 0.08 195)",
-  kleinanzeigen: "oklch(0.62 0.13 55)",
-};
 
 function isDisconnected(state: string): boolean {
   return state === "needs_login" || state === "expired" || state === "not_configured";
@@ -71,10 +62,10 @@ export default function PlatformConnectionBanner({ status, onConnect }: Props) {
               width: 6,
               height: 6,
               borderRadius: 6,
-              background: PLATFORM_DOT[p],
+              background: PLATFORM_ACCENT[p],
             }}
           />
-          {LABEL[p]}
+          {PLATFORM_LABEL[p]}
         </button>
       ))}
     </div>

@@ -18,13 +18,11 @@ pydantic>=2.7.0
 # Database
 aiosqlite>=0.20.0
 
-# HTTP clients
+# HTTP client (Vinted/KA mobile APIs + the Groq listing-copy call)
 httpx>=0.27.0
-openai>=1.55.0
 
 # Utilities
 python-dotenv>=1.0.0
-tenacity>=8.0.0
 
 # ML — DINOv2 + the 3 head MLPs are loaded at startup. The VLM (Qwen3-VL)
 # itself runs on RunPod Serverless, but the heads run locally.

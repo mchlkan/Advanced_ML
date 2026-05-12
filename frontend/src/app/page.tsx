@@ -41,11 +41,8 @@ type AppState =
     }
   | {
       screen: "publishing";
-      imageUrl: string;
-      data: UploadResponse;
       platforms: Platform[];
       progress: PublishProgress;
-      labelImageUrl?: string;
     }
   | {
       screen: "published";
@@ -111,11 +108,8 @@ export default function Page() {
     ) as PublishProgress;
     setState({
       screen: "publishing",
-      imageUrl,
-      data,
       platforms: items.map((i) => i.platform),
       progress: initialProgress,
-      labelImageUrl,
     });
     // Each platform: publish + poll until terminal (posted | failed). Push
     // per-platform completion into the publishing screen's `progress` so the

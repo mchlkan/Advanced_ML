@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { InventoryItem, InventorySummary } from "@/types/api";
+import type { InventoryItem, InventorySummary, Platform } from "@/types/api";
 import {
   BASE,
   deleteListing,
@@ -11,6 +11,7 @@ import {
   patchListingFields,
   syncWardrobe,
 } from "@/api/inventory";
+import { PLATFORM_ACCENT, PLATFORM_LABEL, PLATFORM_SOFT } from "@/lib/platforms";
 import SmallCaps from "./ui/SmallCaps";
 
 interface Props {
@@ -18,21 +19,6 @@ interface Props {
   onOpenListing: (listingId: string) => void;
   onRelistListing: (listingId: string, platforms: ("vinted" | "kleinanzeigen")[]) => void;
 }
-
-const PLATFORM_ACCENT: Record<string, string> = {
-  vinted: "oklch(0.55 0.08 195)",
-  kleinanzeigen: "oklch(0.62 0.13 55)",
-};
-
-const PLATFORM_SOFT: Record<string, string> = {
-  vinted: "oklch(0.97 0.02 195)",
-  kleinanzeigen: "oklch(0.97 0.03 70)",
-};
-
-const PLATFORM_LABEL: Record<string, string> = {
-  vinted: "Vinted",
-  kleinanzeigen: "Kleinanzeigen",
-};
 
 const FONT = '"Inter", -apple-system, system-ui, sans-serif';
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
@@ -46,8 +32,8 @@ const SYNC_ERRORS: Record<string, string> = {
 };
 
 function PlatformBadge({ platform }: { platform: string }) {
-  const accent = PLATFORM_ACCENT[platform] ?? "#9b9c99";
-  const soft = PLATFORM_SOFT[platform] ?? "#f5f5f5";
+  const accent = PLATFORM_ACCENT[platform as Platform] ?? "#9b9c99";
+  const soft = PLATFORM_SOFT[platform as Platform] ?? "#f5f5f5";
   return (
     <span
       style={{
@@ -641,7 +627,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
         // The local record is gone, but the listing may still be live there.
         setSyncMsg(
           "Removed from your list, but couldn't delete on " +
-            failed.map(([p]) => PLATFORM_LABEL[p] ?? p).join(" & ") +
+            failed.map(([p]) => PLATFORM_LABEL[p as Platform] ?? p).join(" & ") +
             " — check those listings manually.",
         );
       }

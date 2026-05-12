@@ -588,7 +588,7 @@ def _build_item_payload(p: dict, photo_ids: list[int]) -> dict:
     """Map our hardened canon English fields to the Vinted item-payload shape.
     `p` keys: title, description, price_eur, catalog_id, condition_id,
     optional brand, size, color_ids, etc. Caller ensures catalog_id and
-    condition_id are present (see src/listing_mappings.py:to_vinted)."""
+    condition_id are present (see shared/listing_mappings.py:to_vinted)."""
     return {
         "title": p["title"],
         "description": p["description"],

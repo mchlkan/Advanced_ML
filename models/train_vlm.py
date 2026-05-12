@@ -9,7 +9,7 @@ Designed for a single RunPod 4090 (24 GB). At default flags the memory budget is
   ~5 GB Qwen3-VL-4B in 4-bit + ~1 GB LoRA adapters + ~12 GB activations
   + KV cache at bsz=1, max_len=2048. Headroom for grad_accumulation>=8.
 
-The training prompt MUST match ``src.prompts.get_prompt`` exactly (brief §3.1)
+The training prompt MUST match ``shared/prompts.py:get_prompt`` exactly (brief §3.1)
 — inference re-uses the same function so any drift here breaks the eval.
 
 Run:

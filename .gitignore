@@ -77,12 +77,14 @@ frontend/yarn-error.log*
 # OS
 .DS_Store
 Thumbs.db
+.Rhistory
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.tsbuildinfo
 
 # SQLite
 *.db

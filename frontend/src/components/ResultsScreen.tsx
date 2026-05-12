@@ -9,6 +9,7 @@ import type {
 } from "@/types/api";
 import { verifyListing } from "@/api/verify";
 import { patchListingFields } from "@/api/inventory";
+import { PLATFORM_ACCENT, PLATFORM_KICKER, PLATFORM_LABEL, PLATFORM_SOFT } from "@/lib/platforms";
 import SmallCaps from "./ui/SmallCaps";
 
 type DetailKey = "brand" | "category" | "condition" | "color" | "size";
@@ -112,26 +113,6 @@ function isPlatformReady(
   if (status === null) return true;
   return status[platform].state === "ready";
 }
-
-const PLATFORM_LABEL: Record<Platform, string> = {
-  vinted: "Vinted",
-  kleinanzeigen: "Kleinanzeigen",
-};
-
-const PLATFORM_ACCENT: Record<Platform, string> = {
-  vinted: "oklch(0.55 0.08 195)",
-  kleinanzeigen: "oklch(0.62 0.13 55)",
-};
-
-const PLATFORM_SOFT: Record<Platform, string> = {
-  vinted: "oklch(0.97 0.02 195)",
-  kleinanzeigen: "oklch(0.97 0.03 70)",
-};
-
-const PLATFORM_KICKER: Record<Platform, string> = {
-  vinted: "EU · fashion",
-  kleinanzeigen: "DE · local",
-};
 
 const OPTIMISTIC_CONDITIONS = new Set(["New with tags", "New"]);
 
@@ -501,7 +482,7 @@ export default function ResultsScreen({
   const conditionVal = detailVal("condition");
   const wearConflict =
     data.visual_wear_probability > 0.5 && !!conditionVal && OPTIMISTIC_CONDITIONS.has(conditionVal);
-  const reviewSet = new Set(data.vinted.field_review?.needs_review ?? []);
+  const reviewSet = new Set(data.vinted.field_review.needs_review);
   const itemHeadline = [
     detailVal("brand"),
     detailVal("color").toLowerCase(),

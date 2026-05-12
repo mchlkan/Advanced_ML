@@ -13,26 +13,29 @@ Photo-first selling assistant for second-hand clothing. Upload a photo → get b
 | Frontend | TypeScript / Next.js (Node 20) |
 | Backend | Python 3.11 / FastAPI |
 | Database | SQLite |
-| VLM | Qwen3-VL-4B-Instruct + QLoRA adapter (`Rengo33/qwen3vl4b-resell-adapter`) |
+| VLM | Qwen3-VL-4B-Instruct + LoRA adapter (`mchlkan/qwen3vl4b-resell-adapter-multi-v3`) |
 | Vision features | DINOv2-base (frozen) |
-| Production VLM serving | RunPod Serverless (4-bit nf4 on RTX A5000 / 4090 class GPUs) |
+| Listing copy | Groq `llama-3.1-8b-instant` (with deterministic template fallbacks) |
+| Production VLM serving | RunPod Serverless (bf16 on RTX A5000 / 4090 class GPUs) |
 
 ---
 
 ## Repo layout
 
 ```
-resell-copilot/
+Advanced_ML/
 ├── data/               # parquet data files + locked splits (gitignored except splits)
-├── models/             # training scripts for all 5 model components
+├── data_prep/          # offline data pipeline (translate → splits → targets → merge)
+├── models/             # training scripts for the model components
 │   └── checkpoints/    # gitignored
-├── eval/               # baseline runner, our pipeline runner, metrics
-│   └── results/        # gitignored
+├── eval/               # baseline runner + Qwen field eval (+ results JSONs)
 ├── backend/            # FastAPI app
-│   ├── routes/         # /upload  /verify  /publish
+│   ├── routes/         # /upload  /verify  /publish  /onboarding  /inventory
+│   ├── integrations/   # Vinted + Kleinanzeigen mobile-API clients
 │   └── vlm_backend/    # pluggable VLM backends (stub / local_mps / runpod_http)
 ├── runpod/             # Docker image + handler for the RunPod Serverless worker
 ├── frontend/           # Next.js TypeScript app
+├── docs/               # technical report, AI-usage log, model-stack evolution, …
 └── requirements.txt
 ```
 
@@ -55,6 +58,10 @@ RUNPOD_ENDPOINT_ID=...
 
 # Required for local_mps mode and the worker container (gated HF repos):
 HF_TOKEN=hf_...
+
+# Listing-copy generation (Model #6) — without it, /upload falls back to
+# deterministic template copy:
+GROQ_API_KEY=gsk_...
 
 # Optional, for the LLM-as-judge eval baselines:
 OPENAI_API_KEY=sk-...
@@ -111,10 +118,14 @@ docker buildx build --platform linux/amd64 \
 
 Then on RunPod dashboard: Serverless → Endpoints → Create New Endpoint, point at the GHCR image, and set the env vars. The container expects `HF_TOKEN` (gated-repo access) and the same `BASE_MODEL` / `ADAPTER_ID` / `MAX_NEW_TOKENS` overrides used during training.
 
-## Direct publishing — Vinted
+## Direct publishing — Vinted & Kleinanzeigen
 
-`/publish` posts listings directly to Vinted via the mobile draft-mode
-flow (which bypasses DataDome on the protected submission endpoint).
+`/publish` posts listings directly to the platform's mobile API — Vinted via
+the draft-mode flow (which bypasses DataDome on the protected submission
+endpoint), Kleinanzeigen via its Auth0-authenticated ad-create endpoint. A
+single tap can cross-post to both. Editing (`PATCH /listings/{id}/fields`) and
+deleting (`DELETE /listings/{id}`) propagate to whichever platforms the listing
+is live on.
 
 ### One-off bootstrap
 
@@ -155,10 +166,10 @@ once for the OAuth password grant and never logged or persisted.
 
 ```bash
 curl http://localhost:8000/onboarding/status
-# {"vinted": {"state": "ready", ...}, "kleinanzeigen": {"state": "not_implemented"}}
+# {"vinted": {"state": "ready", ...}, "kleinanzeigen": {"state": "ready", ...}}
 ```
 
-### Publish behaviour (async, Phase 6b)
+### Publish behaviour (async)
 
 `POST /publish` enqueues a job and returns 202 immediately:
 
@@ -185,10 +196,6 @@ exponential backoff (`5s → 30s → 120s`, configurable via
 `PUBLISH_RETRY_BACKOFF`). Permanent failures (auth expired, validation
 errors, missing config) skip retries and go straight to `status: failed`
 with a populated `error` field.
-
-**Out of scope (deferred to Phase 6c):** Kleinanzeigen direct publishing.
-KA jobs go straight to `status: failed` with `error: "Phase 6c"` until
-the mobile listing-create flow is captured and implemented.
 
 ### Known publish-side gaps
 
@@ -223,25 +230,28 @@ the mobile listing-create flow is captured and implemented.
 
 ## Models
 
+See [`docs/model_stack_evolution.md`](docs/model_stack_evolution.md) for the full development narrative.
+
 | # | Name | Architecture | Status |
 |---|---|---|---|
-| 1 | VLM | Qwen3-VL-4B-Instruct + LoRA | trained, deployed via RunPod |
-| 2 | Flaw head | DINOv2 + MLP | trained |
-| 3 | Tag detector | Baked into #1 prompt schema | n/a |
-| 4 | Price head | MLP quantile regression (q10/q50/q90) | trained |
-| 5 | Sell-likelihood | MLP binary classifier | trained |
+| 1 | VLM identifier | Qwen3-VL-4B-Instruct + LoRA | trained, deployed via RunPod |
+| 2 | Flaw head | DINOv2 (frozen) + MLP | trained |
+| 3 | Tag detector | folded into #1's prompt schema | n/a |
+| 4 | Price head | MLP quantile regression (q10/q50/q90), per platform | trained |
+| 5 | Sell-likelihood head | MLP binary classifier | trained |
+| 6 | Listing-copy generator | Groq `llama-3.1-8b-instant` + deterministic template fallbacks | live |
 
 ---
 
 ## Evaluation
 
 ```bash
-python eval/run_baseline.py   # GPT-4o-mini + Claude Haiku on test set
-python eval/run_ours.py       # our pipeline on test set
-python eval/compute_metrics.py --predictions eval/results/<file>.json
+python eval/run_baseline.py          # GPT-4o-mini / Claude Haiku baselines on the test set
+python eval/run_qwen_field_eval.py   # field-level eval of the fine-tuned Qwen identifier
+python scripts/eval_lora.py          # single- vs multi-image LoRA yardstick
 ```
 
-Headline metric: **Price MAPE per platform**, our pipeline vs GPT-4o-mini.
+Results land in `eval/results/*.json`. Headline metric: **price MAPE per platform**, our pipeline vs GPT-4o-mini.
 
 ---
 
@@ -251,4 +261,4 @@ Headline metric: **Price MAPE per platform**, our pipeline vs GPT-4o-mini.
 .venv/bin/pytest backend/tests -q
 ```
 
-42 tests cover the FastAPI routes (`/upload`, `/verify`, `/publish`), the SQLite logging, and the three VLM backends (including respx-mocked RunPod scenarios for cold start, FAILED status, timeout, malformed output, wrong hidden-state dim, and worker error payloads).
+The suite covers the FastAPI routes (`/upload`, `/verify`, `/publish`, `/inventory`), the SQLite logging, and the VLM backends (including respx-mocked RunPod scenarios for cold start, FAILED status, timeout, malformed output, wrong hidden-state dim, and worker error payloads).

@@ -2,7 +2,7 @@
 
 The shape mirrors the brief §5.4 result page layout: identification block plus
 a per-platform recommendation block. Field names match the VLM's English-canonical
-output (see `src.prompts.get_prompt`) so frontend and pipeline don't drift.
+output (see `shared/prompts.py:get_prompt`) so frontend and pipeline don't drift.
 """
 
 from __future__ import annotations
@@ -101,18 +101,6 @@ class PublishRequest(BaseModel):
     listing_id: str
     platform: Platform
     final_fields: Identification
-
-
-class PublishResponse(BaseModel):
-    """Legacy synchronous response — retained for tests but no longer
-    returned by /publish (which is now async)."""
-    listing_id: str
-    platform: Platform
-    prefill_url: str
-    posted: bool = False
-    platform_listing_id: str | None = None
-    platform_listing_url: str | None = None
-    error: str | None = None
 
 
 JobStatus = Literal["pending", "running", "posted", "failed"]

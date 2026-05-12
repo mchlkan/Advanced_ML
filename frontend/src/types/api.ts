@@ -156,13 +156,6 @@ export interface PublishStatusResponse {
   updated_at: number;
 }
 
-export interface HealthzResponse {
-  ok: boolean;
-  vlm_backend: string;
-  models_loaded: string[];
-  device: string;
-}
-
 export type PricingStatus = "underpriced" | "ok" | "overpriced" | "unknown";
 
 export interface PredictionSummary {
@@ -215,13 +208,6 @@ export interface SyncResponse {
   item_count: number;
   fetched_at: number;
 }
-
-export type InventoryBucket =
-  | "posted"
-  | "sold_or_removed"
-  | "pending"
-  | "failed"
-  | "unpublished";
 
 export interface InventoryStatusCounts {
   total: number;

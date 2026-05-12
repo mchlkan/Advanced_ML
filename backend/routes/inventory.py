@@ -168,23 +168,30 @@ def _unlink_quietly(paths) -> None:
                 pass
 
 
-async def _unlist_from_platforms(listing_id: str) -> dict[str, dict]:
-    """Best-effort: delete the listing on every platform it was posted on.
-
-    Returns ``{platform: {"ok": bool, "error": str | None}}`` — one entry per
-    platform that has a posted publish row (most recent only). Removing the
-    local record is the caller's job; this only touches the live platforms."""
-    publishes = await db.get_publishes_for_listing(listing_id)
-    results: dict[str, dict] = {}
+async def _posted_targets(listing_id: str) -> list[tuple[str, str]]:
+    """`(platform, platform_listing_id)` for each platform the listing is
+    currently posted on — most recent successful publish row per platform."""
+    publishes = await db.get_publishes_for_listing(listing_id)  # newest first
+    targets: list[tuple[str, str]] = []
     seen: set[str] = set()
     for p in publishes:
         if p.get("status") != "posted" or not p.get("platform_listing_id"):
             continue
-        platform = p["platform"]
-        if platform in seen:
-            continue  # only the most recent successful row per platform
-        seen.add(platform)
-        platform_id = p["platform_listing_id"]
+        if p["platform"] in seen:
+            continue
+        seen.add(p["platform"])
+        targets.append((p["platform"], p["platform_listing_id"]))
+    return targets
+
+
+async def _unlist_from_platforms(listing_id: str) -> dict[str, dict]:
+    """Best-effort: delete the listing on every platform it was posted on.
+
+    Returns ``{platform: {"ok": bool, "error": str | None}}`` — one entry per
+    platform that has a posted publish row. Removing the local record is the
+    caller's job; this only touches the live platforms."""
+    results: dict[str, dict] = {}
+    for platform, platform_id in await _posted_targets(listing_id):
         try:
             if platform == "vinted":
                 await vinted_integration.delete_listing(platform_id)
@@ -294,16 +301,7 @@ async def patch_listing_fields(listing_id: str, body: PatchFieldsRequest) -> dic
         vlm_call_count=0,
     )
 
-    publishes = await db.get_publishes_for_listing(listing_id)
-    targets: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for p in publishes:
-        if p.get("status") != "posted" or not p.get("platform_listing_id"):
-            continue
-        if p["platform"] in seen:
-            continue
-        seen.add(p["platform"])
-        targets.append((p["platform"], p["platform_listing_id"]))
+    targets = await _posted_targets(listing_id)
 
     async def _push_one(platform: str, platform_id: str) -> tuple[str, dict]:
         try:
