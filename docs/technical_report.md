@@ -4,7 +4,7 @@
 **Course:** Nova SBE Advanced ML, 7-day project
 **Production URL:** https://resell-copilot-three.vercel.app (password-gated)
 **API:** https://resell-copilot.duckdns.org
-**Repository:** github.com/mchlkan/Advanced_ML (`feature/deploy-prep` branch)
+**Repository:** github.com/mchlkan/Advanced_ML (`main`)
 
 ---
 
@@ -13,11 +13,12 @@
 Resell Copilot turns one photo of a second-hand clothing item into a
 ready-to-publish listing on **two competing marketplaces** (Vinted +
 Kleinanzeigen) in roughly **6–10 seconds end-to-end**. The user picks
-the platform; the app submits the listing live via the platform's
-mobile API and returns a clickable link to the live ad. The user can
-then manage the listing — change the price, edit fields, relist, or
-delete — directly from the inventory tab, with edits propagating to
-the live platform listings in parallel.
+one platform or cross-posts to both in a single tap; the app submits
+the listing live via the platform's mobile API and returns a clickable
+link to each live ad. The user can then manage the listing — change the
+price, edit fields, relist, or delete — directly from the inventory
+tab, with edits and deletes propagating to the live platform listings
+in parallel.
 
 The system runs **six trained models** in a layered stack
 (VLM identification → DINOv2 visual features → 3 specialised MLP heads
@@ -77,7 +78,7 @@ passes). Backend tests at submission time: **123 passing**.
 │   │ Qwen3- │   │   generation     │   │   API    │  │  mobile   │       │
 │   │ VL-4B  │   │                  │   │          │  │   API     │       │
 │   │+ multi-│   │   ~150 ms        │   │  draft → │  │  Auth0 +  │       │
-│   │  v2    │   │  per platform    │   │  publish │  │   JAXB-   │       │
+│   │  v3    │   │  per platform    │   │  publish │  │   JAXB-   │       │
 │   │ adapter│   │                  │   │  → link  │  │   XML     │       │
 │   └────────┘   └──────────────────┘   └──────────┘  └───────────┘       │
 │   ~3-8 s                                                                │
@@ -107,11 +108,14 @@ passes). Backend tests at submission time: **123 passing**.
    visual wear probability.
 6. **Frontend** renders the `ResultsScreen` — user can edit fields
    (re-running the pipeline via `/verify`) or hit Publish.
-7. **POST /publish** enqueues a job; backend's runner posts to the
-   selected platform asynchronously; frontend polls
-   `/publish/status/{job_id}` until terminal (`posted` / `failed`).
-8. On `posted`, the live platform URL is opened in a new tab and
-   stored to the `publishes` table.
+7. **POST /publish** enqueues one job per chosen platform (Vinted, KA,
+   or both); the backend's runner posts to each asynchronously; the
+   frontend polls `/publish/status/{job_id}` for each until terminal
+   (`posted` / `failed`), ticking each platform's row over as it lands.
+8. On `posted`, the live platform URL is stored to the `publishes`
+   table and shown as a clickable link on the published screen (one
+   per platform — no auto-opened tab; opening another site's tab
+   without the user asking was removed as confusing).
 
 End-to-end latency from "tap photo" to "platform tab opens":
 **6–10 seconds** warm path; up to ~30s on cold-start (RunPod worker
@@ -127,7 +131,7 @@ heads doing tight numeric refinement.
 
 | # | Model | Inputs | Output | Architecture | Training data |
 |---|---|---|---|---|---|
-| 1 | **VLM (identification)** | Cover photo + (optional) brand/size tag photo | 6 fields: brand, category, condition, color, size, title | Qwen3-VL-4B-Instruct + LoRA adapter `mchlkan/qwen3vl4b-resell-adapter-multi-v2` (rank 16, all-linear) | Scraped Vinted + KA listings, English-canonical schema |
+| 1 | **VLM (identification)** | Cover photo + (optional) brand/size tag photo | 6 fields: brand, category, condition, color, size, title | Qwen3-VL-4B-Instruct + LoRA adapter `mchlkan/qwen3vl4b-resell-adapter-multi-v3` (rank 16, all-linear) | Scraped Vinted + KA listings, English-canonical schema |
 | 2 | **FlawHead** | DINOv2 CLS embedding (768-d) | Visual wear probability (0-1) | 3-layer MLP, BCE loss, threshold 0.5 | Manually-labelled wear photos |
 | 3 | **PriceHead** | Per-platform VLM hidden state (2560-d) + wear probability + categorical fields | Quantile prices q10/q50/q90 (EUR) | MLP with quantile-loss output heads | Sold listings with final prices |
 | 4 | **SellHead** | Categorical fields + wear (no VLM features) | Sell-through probability (0-1, 30 day window) | MLP, BCE loss | Vinted listings with sold/unsold labels |
@@ -168,6 +172,13 @@ the JSON-completion budget. The fix:
 
 This was a clean separation-of-concerns win driven by a real
 production failure mode.
+
+A follow-up retrain — **`multi-v3`** (shipped 2026-05-11), the adapter
+currently in production — added Kleinanzeigen listings to the
+multi-image training manifest (which until then was Vinted-only).
+Accuracy improved on every test-set platform on the metrics that
+matter; full per-field deltas are in `docs/model_stack_evolution.md`
+§4.4.
 
 ---
 
@@ -222,8 +233,8 @@ werden, wenn du den Artikel löschst und erneut hochlädst."
 **Probe script:** `scripts/probe_vinted_edit.py` — committed for
 reproducibility.
 
-**Files:** `backend/integrations/vinted.py` (738 lines),
-`backend/onboarding.py` (~165 lines for the password+MFA flow).
+**Files:** `backend/integrations/vinted.py`,
+`backend/routes/onboarding.py` (the password + MFA login flow).
 
 ### 4.2 Kleinanzeigen mobile API — Auth0 + SMS MFA + JAXB-XML
 
@@ -489,8 +500,8 @@ the cheapest way to re-discover the new shape.
   at root. Mobile users can "Add to Home Screen" and the app launches
   fullscreen.
 - **No auto-deploy on push** — Vercel for this project is configured
-  for **manual CLI deploys only**, since `feature/deploy-prep` is the
-  active branch (not `main`).
+  for **manual CLI deploys only** (deliberate: deploys are gated on a
+  passing local `npm run build`, not on every push).
 
 ### 6.2 Backend — AWS EC2
 
@@ -509,8 +520,8 @@ the cheapest way to re-discover the new shape.
 ### 6.3 VLM serving — RunPod Serverless
 
 - **Container image** built from `runpod/handler.py` — loads
-  Qwen3-VL-4B + the multi-v2 LoRA adapter at worker startup
-  (~5–15 min cold-start, then warm).
+  Qwen3-VL-4B + the `multi-v3` LoRA adapter at worker startup
+  (~5–15 min cold-start, then warm; loaded in bf16).
 - **Async protocol:** `POST /run` → `job_id` → poll
   `/status/{job_id}` until COMPLETED. Backend's `RunpodHTTPVLM`
   client encapsulates this in one async `predict()` call.
@@ -567,8 +578,10 @@ needing a separate audit table.
 
 ### 8.2 Model performance (per Mike's eval logs)
 
-- **VLM (multi-v2):** KA clean parse rate **100%** (was 40.9% on
-  multi-v1).
+- **VLM (`multi-v2` → `multi-v3`):** KA clean parse rate **100%**
+  (was 40.9% on `multi-v1`); `multi-v3` adds KA listings to the
+  training manifest and improves per-field accuracy on every test-set
+  platform vs. `multi-v2` (deltas in `model_stack_evolution.md` §4.4).
 - **PriceHead:** test coverage 85.8% (target 80%); median MAPE
   Vinted -7.8 pp + KA -4.5 pp vs. previous head.
 - **Brand accuracy with label photo:** +20pp vs. cover-only.
@@ -599,12 +612,15 @@ needing a separate audit table.
 | **No retry UX on publish failure** | Errors surface in the ResultsScreen banner; user manually re-publishes |
 | **Inventory list isn't paginated** | 8 listings in prod so far; would need cursor pagination for >100 |
 
-### 9.1 Planned next-step (from `docs/model_stack_evolution.md` §4.4)
+### 9.1 Model adapter — current state & next step
 
-**v3 retrain (KA-inclusive manifest)** — currently the multi-image
-manifest only contains Vinted listings; v3 will add KA listings to
-close the field-accuracy gap surfaced in the v2 field-eval. Mike's
-queued the retrain.
+The **`multi-v3`** retrain (KA-inclusive manifest) shipped 2026-05-11
+and is the adapter in production — it closed the field-accuracy gap
+the v2 field-eval surfaced for Kleinanzeigen (per-field deltas in
+`docs/model_stack_evolution.md` §4.4). The next obvious step is
+extending the canonical category vocabulary beyond the current four
+(`tshirts / jackets / jeans / sneakers`) — each new category needs
+training data plus Vinted catalog-ID and KA leaf-ID mappings.
 
 ---
 
@@ -628,7 +644,7 @@ queued the retrain.
 | **Reverse proxy + TLS** | Nginx + Let's Encrypt (certbot auto-renewal) |
 | **Frontend hosting** | Vercel (manual CLI deploys, password gate via middleware) |
 | **DNS** | DuckDNS (free dynamic DNS for EC2 elastic IP) |
-| **VCS** | GitHub (`feature/deploy-prep` branch is the deployable one) |
+| **VCS** | GitHub — `main` is the submission/deployable branch |
 | **Sessions** | Pickled Vinted/KA session JSON, materialised from env vars at container startup |
 
 ---
@@ -679,6 +695,7 @@ Advanced_ML/
 │       │   └── login/page.tsx     # Password entry
 │       ├── components/            # UploadScreen, ResultsScreen, InventoryScreen, ...
 │       ├── api/                   # Typed client functions per route
+│       ├── lib/                   # Shared constants/helpers (e.g. platforms.ts)
 │       └── types/api.ts           # Shared TS interfaces
 ├── scripts/
 │   ├── ec2_rebuild.sh             # Slow-path deploy (full image rebuild)

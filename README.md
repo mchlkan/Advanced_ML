@@ -261,4 +261,4 @@ Results land in `eval/results/*.json`. Headline metric: **price MAPE per platfor
 .venv/bin/pytest backend/tests -q
 ```
 
-The suite covers the FastAPI routes (`/upload`, `/verify`, `/publish`, `/inventory`), the SQLite logging, and the VLM backends (including respx-mocked RunPod scenarios for cold start, FAILED status, timeout, malformed output, wrong hidden-state dim, and worker error payloads).
+123 tests cover the FastAPI routes (`/upload`, `/verify`, `/publish`, `/inventory`), the SQLite logging, and the VLM backends (including respx-mocked RunPod scenarios for cold start, FAILED status, timeout, malformed output, wrong hidden-state dim, and worker error payloads).
