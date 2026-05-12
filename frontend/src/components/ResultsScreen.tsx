@@ -540,16 +540,36 @@ export default function ResultsScreen({
     }
   }
 
+  // KA's category encodes both gender and clothing-vs-shoes ("Men's clothing",
+  // "Women's shoes", …); the "Type" picker is Vinted vocabulary (a garment
+  // type, no gender). So for a KA publish: take gender from the KA block's own
+  // label, take clothing-vs-shoes from the Type edit if the user touched it.
+  // (Sending the Vinted leaf as KA's `category` is what made a recent KA
+  // cross-post fail with "no Kleinanzeigen category mapping".)
+  function kaCategory(): string {
+    const kaLabel = ((data.kleinanzeigen.identification.category as string | null) ?? "").trim();
+    const men = /^men/i.test(kaLabel);
+    const leaf = fieldEdits.category as string | undefined;
+    if (!leaf) return kaLabel || (men ? "Men's clothing" : "Women's clothing");
+    const shoes =
+      leaf === "sneakers" ? true
+      : (["tshirts", "jackets", "jeans"] as string[]).includes(leaf) ? false
+      : /shoe/i.test(kaLabel); // unknown leaf — keep whatever the KA block implied
+    return `${men ? "Men's" : "Women's"} ${shoes ? "shoes" : "clothing"}`;
+  }
+
   function buildFinalFields(platform: Platform): Identification {
     const id =
       platform === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
-    return {
+    const merged: Identification = {
       ...id,
       ...fieldEdits,
       title: titleEdits[platform] ?? id.title,
       description: descEdits[platform] ?? id.description,
       price_eur: priceFor(platform),
     };
+    if (platform === "kleinanzeigen") merged.category = kaCategory();
+    return merged;
   }
 
   function handlePublish(platform: Platform) {
