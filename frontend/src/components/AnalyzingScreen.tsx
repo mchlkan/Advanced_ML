@@ -12,10 +12,13 @@ interface Props {
 }
 
 const ACCENT = "oklch(0.62 0.15 145)";
+const ACCENT_GLOW = "oklch(0.62 0.15 145 / 0.3)";
 // Warm ochre — "the GPU is heating up", deliberately not the green "good" tone
 // and not an alarming red. Reads as "be patient", not "broken".
 const WARMING = "oklch(0.72 0.14 70)";
+const WARMING_GLOW = "oklch(0.72 0.14 70 / 0.3)";
 const WARMING_SOFT = "oklch(0.975 0.022 75)";
+const WARMING_INK = "oklch(0.5 0.1 70)";
 
 type GpuState = "ok" | "warming" | "busy" | "unknown";
 
@@ -29,20 +32,22 @@ function deriveGpuState(s: VlmStatus | null): GpuState {
   return "warming";
 }
 
-const GPU_COPY: Record<"warming" | "busy", { kicker: string; line: string }> = {
+const GPU_COPY: Record<"warming" | "busy", { badge: string; kicker: string; line: string }> = {
   warming: {
+    badge: "Warming up",
     kicker: "GPU · spinning up",
     line: "First run after a quiet spell — the model server is booting. This usually takes one to three minutes; the photo is safe, just hold on.",
   },
   busy: {
+    badge: "Queued",
     kicker: "GPU · queued",
     line: "The model server is behind other work right now. Your photo is in line and will go through — give it a few minutes.",
   },
 };
 
-function mmss(totalSec: number): string {
-  const m = Math.floor(totalSec / 60);
-  const s = Math.floor(totalSec % 60);
+function mmss(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
@@ -51,10 +56,15 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
   const [gpu, setGpu] = useState<GpuState>("unknown");
   const startRef = useRef(Date.now());
 
-  // Elapsed clock — runs the whole time the screen is up (a cold start can
-  // legitimately last minutes, so we don't stop it at 5 s any more).
+  // Elapsed clock, in whole seconds — runs the whole time the screen is up (a
+  // cold start can legitimately last minutes). Integer seconds at 1 Hz: that's
+  // the granularity of both consumers (the m:ss display and the 2 s/5 s step
+  // thresholds), and React skips the re-render when the value is unchanged.
   useEffect(() => {
-    const id = setInterval(() => setElapsed(Date.now() - startRef.current), 250);
+    const id = setInterval(
+      () => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)),
+      1000,
+    );
     return () => clearInterval(id);
   }, []);
 
@@ -75,16 +85,18 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
     };
   }, []);
 
-  const elapsedSec = elapsed / 1000;
   const slow = gpu === "warming" || gpu === "busy";
+  const gpuCopy = slow ? GPU_COPY[gpu === "busy" ? "busy" : "warming"] : null;
+  const tone = slow ? WARMING : ACCENT;
+  const toneGlow = slow ? WARMING_GLOW : ACCENT_GLOW;
 
   function stepState(idx: number): "done" | "active" | "pending" {
     // While the GPU is cold/queued the pipeline genuinely hasn't started —
     // hold the first step "active" rather than marching all three to done.
     if (slow) return idx === 0 ? "active" : "pending";
-    if (idx === 0) return elapsedSec > 2 ? "done" : "active";
-    if (idx === 1) return elapsedSec > 5 ? "done" : elapsedSec > 2 ? "active" : "pending";
-    return elapsedSec > 5 ? "active" : "pending";
+    if (idx === 0) return elapsed > 2 ? "done" : "active";
+    if (idx === 1) return elapsed > 5 ? "done" : elapsed > 2 ? "active" : "pending";
+    return elapsed > 5 ? "active" : "pending";
   }
 
   const steps = [
@@ -161,12 +173,12 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
                 width: 7,
                 height: 7,
                 borderRadius: 7,
-                background: slow ? WARMING : ACCENT,
-                boxShadow: `0 0 0 4px ${slow ? "oklch(0.72 0.14 70 / 0.3)" : "oklch(0.62 0.15 145 / 0.3)"}`,
+                background: tone,
+                boxShadow: `0 0 0 4px ${toneGlow}`,
                 animation: "rcPulse 1.2s ease-in-out infinite",
               }}
             />
-            {slow ? (gpu === "busy" ? "Queued" : "Warming up") : "Analyzing"}
+            {gpuCopy ? gpuCopy.badge : "Analyzing"}
           </div>
           {/* Optional brand/size tag thumbnail */}
           {labelImageUrl && (
@@ -204,12 +216,12 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
           {slow ? "Hang tight — waking the model up" : "Reading your piece…"}
         </h2>
         <p style={{ margin: "8px 0 0", fontSize: 14, color: "#6b6c6a", lineHeight: 1.45 }}>
-          {slow ? GPU_COPY[gpu === "busy" ? "busy" : "warming"].line : "Usually 10–20 seconds. Don’t switch apps."}
+          {gpuCopy ? gpuCopy.line : "Usually 10–20 seconds. Don’t switch apps."}
         </p>
       </div>
 
       {/* GPU status card — only when the serving GPU isn't hot */}
-      {slow && (
+      {gpuCopy && (
         <div style={{ padding: "18px 24px 0" }}>
           <div
             style={{
@@ -246,8 +258,8 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
               <span style={{ width: 8, height: 8, borderRadius: 8, background: WARMING }} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <SmallCaps color="oklch(0.5 0.1 70)" style={{ display: "block" }}>
-                {GPU_COPY[gpu === "busy" ? "busy" : "warming"].kicker}
+              <SmallCaps color={WARMING_INK} style={{ display: "block" }}>
+                {gpuCopy.kicker}
               </SmallCaps>
               <div style={{ fontSize: 13, color: "#6b6c6a", marginTop: 3 }}>
                 Workers are scaled to zero when idle. They&apos;ll come up — no need to retry.
@@ -257,12 +269,12 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
               style={{
                 fontSize: 13,
                 fontWeight: 600,
-                color: "oklch(0.5 0.1 70)",
+                color: WARMING_INK,
                 fontVariantNumeric: "tabular-nums",
                 flexShrink: 0,
               }}
             >
-              {mmss(elapsedSec)}
+              {mmss(elapsed)}
             </div>
           </div>
         </div>
@@ -292,7 +304,7 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
                     state === "pending"
                       ? "1.5px dashed #e7e5e0"
                       : state === "active"
-                      ? `1.5px solid ${slow ? WARMING : ACCENT}`
+                      ? `1.5px solid ${tone}`
                       : "none",
                   display: "flex",
                   alignItems: "center",
@@ -316,7 +328,7 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
                       width: 8,
                       height: 8,
                       borderRadius: 8,
-                      background: slow ? WARMING : ACCENT,
+                      background: tone,
                       animation: "rcPulse 1.2s ease-in-out infinite",
                     }}
                   />

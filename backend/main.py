@@ -143,10 +143,9 @@ async def healthz() -> HealthzResponse:
 @app.get("/vlm/status")
 async def vlm_status() -> dict:
     """Status of the VLM serving backend. For the RunPod backend this proxies
-    RunPod's endpoint /health — worker counts (idle / initializing / ready /
-    running / **throttled** / unhealthy) and the job queue — so you can see
-    whether a slow `/upload` is a normal cold start or RunPod throttling us.
-    For the stub / local_mps backends it just reports the backend name."""
+    the worker/job counts from ``RunpodHTTPVLM.health()`` so a slow ``/upload``
+    can be told apart as a cold start vs. RunPod throttling us. The stub /
+    local_mps backends just report the backend name."""
     vlm = app.state.vlm
     if vlm is None:
         return {"backend": "skip_ml"}
@@ -157,10 +156,12 @@ async def vlm_status() -> dict:
         data = await health_fn()
     except Exception as exc:
         return {"backend": vlm.name, "error": f"{type(exc).__name__}: {exc}"}
-    workers = data.get("workers", {}) if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        data = {}
+    workers = data.get("workers", {})
     return {
         "backend": vlm.name,
         "throttled": int(workers.get("throttled", 0)) > 0,
         "workers": workers,
-        "jobs": data.get("jobs", {}) if isinstance(data, dict) else {},
+        "jobs": data.get("jobs", {}),
     }
