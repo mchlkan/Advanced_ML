@@ -27,6 +27,22 @@ KA_CATEGORY_TO_ID: dict[str, int] = {
     "Men's shoes":      158,   # Herrenschuhe
 }
 
+# Fallback for the Vinted-side leaf vocab (tshirts / jackets / jeans / sneakers)
+# — emitted by the unified "Type" picker on the results screen, and the only
+# category persisted to `predictions` (which stores the Vinted block). Without
+# this, a KA publish carrying a leaf would hard-fail in `to_kleinanzeigen` /
+# the publish runner with "no Kleinanzeigen category mapping". We can't tell
+# women's from men's from the leaf alone, so default to the women's-side
+# category; the user flips it on KA's category page if needed (same as how
+# `default_art` is handled). `_ka_attributes` then resolves the matching
+# `.art` slug from KA_ATTRS' leaf table.
+KA_VINTED_LEAF_TO_CATEGORY_ID: dict[str, int] = {
+    "tshirts":  154,   # Damenbekleidung
+    "jackets":  154,
+    "jeans":    154,
+    "sneakers": 159,   # Damenschuhe
+}
+
 # KA's per-category attribute schema, keyed by numeric category id. The
 # publish endpoint enforces presence of the per-cat `art` slot beyond
 # what /api/ads/metadata/{cat}.json declares — omitting it returns
@@ -313,8 +329,8 @@ def to_kleinanzeigen(canon: dict[str, Any]) -> dict[str, Any]:
     if canon.get("price_eur") is not None:
         out["price_eur"] = canon["price_eur"]
     cat = canon.get("category")
-    if cat and cat in KA_CATEGORY_TO_ID:
-        cat_id = KA_CATEGORY_TO_ID[cat]
+    cat_id = KA_CATEGORY_TO_ID.get(cat or "") or KA_VINTED_LEAF_TO_CATEGORY_ID.get(cat or "")
+    if cat_id is not None:
         out["category_id"] = cat_id
         attrs = _ka_attributes(canon, cat_id)
         if attrs:
