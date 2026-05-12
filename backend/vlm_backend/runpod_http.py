@@ -29,7 +29,7 @@ from . import VLMOutput
 from .util import parse_vlm_fields, resize_and_b64
 
 
-DEFAULT_TIMEOUT_S = 600  # first-boot cold start can take minutes; warm path ~12 s
+DEFAULT_TIMEOUT_S = 900  # a throttled cold start can take 10+ min; warm path ~12 s
 POLL_INTERVAL_S = 0.5
 COMPLETED_STATUSES = {"COMPLETED"}
 FAILED_STATUSES = {"FAILED", "CANCELLED", "TIMED_OUT"}
@@ -62,6 +62,17 @@ class RunpodHTTPVLM:
         cold-start cost at FastAPI startup. Set min_workers=1 in the dashboard
         if you want a worker pre-warmed for the demo window."""
         return
+
+    async def health(self) -> dict:
+        """RunPod endpoint health — proxies GET /v2/{endpoint_id}/health.
+        Returns ``{"jobs": {...}, "workers": {"idle", "initializing", "ready",
+        "running", "throttled", "unhealthy"}}``. ``workers.throttled > 0`` means
+        RunPod is holding our workers back under capacity pressure — the usual
+        cause of a slow cold start."""
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+            r = await client.get(f"{self._base}/health", headers=self._headers)
+            r.raise_for_status()
+            return r.json()
 
     async def predict(
         self,

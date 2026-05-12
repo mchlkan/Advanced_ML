@@ -50,8 +50,9 @@ def get_backend() -> VLMBackend:
         )
     if name == "runpod_http":
         from .runpod_http import RunpodHTTPVLM
-        # 600 s, not 120 — the very first worker boot (image pull + model load)
-        # can take several minutes; the warm path is ~12 s.
-        timeout_s = int(os.environ.get("RUNPOD_TIMEOUT_S", "600"))
+        # 900 s default — the first worker boot (image pull + model load) takes
+        # several minutes, and longer when RunPod is throttling our endpoint;
+        # the warm path is ~12 s. Override via RUNPOD_TIMEOUT_S.
+        timeout_s = int(os.environ.get("RUNPOD_TIMEOUT_S", "900"))
         return RunpodHTTPVLM(timeout_s=timeout_s)
     raise ValueError(f"Unknown VLM_BACKEND: {name!r}")
