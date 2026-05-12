@@ -655,6 +655,15 @@ class KAClient:
         self.session = session
         self.http = httpx.Client(timeout=30)
 
+    def close(self) -> None:
+        self.http.close()
+
+    def __enter__(self) -> "KAClient":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     def _ensure_fresh(self, margin_s: int = 300) -> None:
         if time.time() < self.session.expires_at - margin_s:
             return
@@ -819,12 +828,12 @@ async def publish(image_path: str | Path, payload: dict) -> tuple[int, str]:
 def _publish_sync(image_path: str | Path, payload: dict) -> tuple[int, str]:
     session = _load_session_or_raise()
     full_payload = _layer_session_defaults(payload, session)
-    client = KAClient(session)
-    picture_links = client.upload_photo(image_path)
-    if not picture_links:
-        raise KAError("photo upload returned no link blocks")
-    ad_xml = build_ad_xml(full_payload, picture_links)
-    return client.submit_listing(ad_xml)
+    with KAClient(session) as client:
+        picture_links = client.upload_photo(image_path)
+        if not picture_links:
+            raise KAError("photo upload returned no link blocks")
+        ad_xml = build_ad_xml(full_payload, picture_links)
+        return client.submit_listing(ad_xml)
 
 
 async def update_listing(ad_id: int | str, payload: dict) -> None:
@@ -837,12 +846,12 @@ async def update_listing(ad_id: int | str, payload: dict) -> None:
 def _update_sync(ad_id: int | str, payload: dict) -> None:
     session = _load_session_or_raise()
     full_payload = _layer_session_defaults(payload, session)
-    client = KAClient(session)
-    picture_links = client.get_listing_picture_links(ad_id)
-    if not picture_links:
-        raise KAError(f"update: ad {ad_id} has no picture links to preserve")
-    ad_xml = build_ad_xml(full_payload, picture_links)
-    client.update_listing(ad_id, ad_xml)
+    with KAClient(session) as client:
+        picture_links = client.get_listing_picture_links(ad_id)
+        if not picture_links:
+            raise KAError(f"update: ad {ad_id} has no picture links to preserve")
+        ad_xml = build_ad_xml(full_payload, picture_links)
+        client.update_listing(ad_id, ad_xml)
 
 
 async def delete_listing(ad_id: int | str) -> None:
@@ -852,7 +861,8 @@ async def delete_listing(ad_id: int | str) -> None:
 
 def _delete_sync(ad_id: int | str) -> None:
     session = _load_session_or_raise()
-    KAClient(session).delete_listing(ad_id)
+    with KAClient(session) as client:
+        client.delete_listing(ad_id)
 
 
 def _load_session_or_raise() -> KASession:

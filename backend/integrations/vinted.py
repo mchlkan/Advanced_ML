@@ -323,6 +323,15 @@ class VintedClient:
         self.base_url = f"https://{session.domain}"
         self.http = httpx.Client()
 
+    def close(self) -> None:
+        self.http.close()
+
+    def __enter__(self) -> "VintedClient":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     def _ensure_fresh(self, margin_s: int = 300) -> None:
         if time.time() < self.session.expires_at - margin_s:
             return
@@ -407,6 +416,15 @@ class VintedClient:
         self._ensure_fresh()
         resp = self._post(f"/api/v2/items/{item_id}/delete")
         if resp.status_code in (200, 204):
+            # A 200 can still carry an error body — success is {"code":0,...}.
+            try:
+                body = resp.json()
+            except ValueError:
+                body = None
+            if isinstance(body, dict) and body.get("code", 0):
+                raise VintedError(
+                    f"delete (live): item {item_id} — {body.get('message') or body!r}"
+                )
             return
         if resp.status_code == 404:
             raise VintedError(f"delete: item {item_id} not found")
@@ -671,16 +689,16 @@ async def delete_listing(item_id: int | str) -> None:
         session = load_session(path)
         if session is None:
             raise VintedNotConfigured(f"no session file at {path}")
-        client = VintedClient(session)
-        try:
-            client.delete_live_item(item_id)
-        except VintedError as exc:
-            # Drafts 404 on the live-item URL — fall through to draft delete.
-            if "not found" in str(exc).lower():
-                client.delete_draft(item_id)
-            else:
-                raise
-        save_session(client.session, path)
+        with VintedClient(session) as client:
+            try:
+                client.delete_live_item(item_id)
+            except VintedError as exc:
+                # Drafts 404 on the live-item URL — fall through to draft delete.
+                if "not found" in str(exc).lower():
+                    client.delete_draft(item_id)
+                else:
+                    raise
+            save_session(client.session, path)
 
     await asyncio.to_thread(_do)
 
@@ -697,16 +715,16 @@ async def update_listing(item_id: int | str, payload: dict) -> None:
         session = load_session(path)
         if session is None:
             raise VintedNotConfigured(f"no session file at {path}")
-        client = VintedClient(session)
-        photo_ids = _extract_photo_ids(client.fetch_item_details(item_id))
-        if not photo_ids:
-            raise VintedError(f"update: item {item_id} has no photos to preserve")
-        if payload.get("brand") and not payload.get("brand_id"):
-            bid = client.resolve_brand_id(payload["brand"])
-            if bid is not None:
-                payload = {**payload, "brand_id": bid}
-        client.update_listing(item_id, payload, photo_ids)
-        save_session(client.session, path)
+        with VintedClient(session) as client:
+            photo_ids = _extract_photo_ids(client.fetch_item_details(item_id))
+            if not photo_ids:
+                raise VintedError(f"update: item {item_id} has no photos to preserve")
+            if payload.get("brand") and not payload.get("brand_id"):
+                bid = client.resolve_brand_id(payload["brand"])
+                if bid is not None:
+                    payload = {**payload, "brand_id": bid}
+            client.update_listing(item_id, payload, photo_ids)
+            save_session(client.session, path)
 
     await asyncio.to_thread(_do)
 
@@ -777,10 +795,10 @@ async def fetch_wardrobe() -> list[dict]:
         session = load_session(path)
         if session is None:
             raise VintedNotConfigured(f"no session file at {path}")
-        client = VintedClient(session)
-        items = client.get_wardrobe()
-        save_session(client.session, path)
-        return items
+        with VintedClient(session) as client:
+            items = client.get_wardrobe()
+            save_session(client.session, path)
+            return items
 
     return await asyncio.to_thread(_do)
 
@@ -790,14 +808,14 @@ def _publish_sync(image_path: str | Path, payload: dict) -> tuple[int, str]:
     session = load_session(path)
     if session is None:
         raise VintedNotConfigured(f"no session file at {path}")
-    client = VintedClient(session)
-    # Resolve free-text brand → brand_id so the listing links to the brand
-    # page. If the lookup misses, free-text brand still goes through.
-    if payload.get("brand") and not payload.get("brand_id"):
-        bid = client.resolve_brand_id(payload["brand"])
-        if bid is not None:
-            payload = {**payload, "brand_id": bid}
-    photo_id = client.upload_photo(image_path)
-    item_id, url = client.submit_listing_via_draft(payload, [photo_id])
-    save_session(client.session, path)
-    return item_id, url
+    with VintedClient(session) as client:
+        # Resolve free-text brand → brand_id so the listing links to the brand
+        # page. If the lookup misses, free-text brand still goes through.
+        if payload.get("brand") and not payload.get("brand_id"):
+            bid = client.resolve_brand_id(payload["brand"])
+            if bid is not None:
+                payload = {**payload, "brand_id": bid}
+        photo_id = client.upload_photo(image_path)
+        item_id, url = client.submit_listing_via_draft(payload, [photo_id])
+        save_session(client.session, path)
+        return item_id, url

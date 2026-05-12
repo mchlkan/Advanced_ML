@@ -29,6 +29,11 @@ const PLATFORM_SOFT: Record<string, string> = {
   kleinanzeigen: "oklch(0.97 0.03 70)",
 };
 
+const PLATFORM_LABEL: Record<string, string> = {
+  vinted: "Vinted",
+  kleinanzeigen: "Kleinanzeigen",
+};
+
 const FONT = '"Inter", -apple-system, system-ui, sans-serif';
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -627,9 +632,19 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
   async function handleConfirmDelete(item: InventoryItem) {
     setDeleteConfirm(null);
     setBusyState(item.listing_id, true);
+    setSyncMsg(null);
     try {
-      await deleteListing(item.listing_id);
+      const res = await deleteListing(item.listing_id);
       setListings((prev) => prev.filter((it) => it.listing_id !== item.listing_id));
+      const failed = Object.entries(res.platforms).filter(([, r]) => r && !r.ok);
+      if (failed.length > 0) {
+        // The local record is gone, but the listing may still be live there.
+        setSyncMsg(
+          "Removed from your list, but couldn't delete on " +
+            failed.map(([p]) => PLATFORM_LABEL[p] ?? p).join(" & ") +
+            " — check those listings manually.",
+        );
+      }
       refetchSummary();
     } catch {
       // Stay; user can retry.
@@ -962,7 +977,7 @@ export default function InventoryScreen({ onBack, onOpenListing, onRelistListing
           title="Delete this listing?"
           body={
             getPostedPlatforms(deleteConfirm).length > 0
-              ? "It will be removed from the platforms it was posted on."
+              ? "We'll also try to delete it on the platforms it was posted on."
               : "This cannot be undone."
           }
           confirmLabel="Delete"

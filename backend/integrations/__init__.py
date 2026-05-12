@@ -1,7 +1,8 @@
 """Platform-publish integrations.
 
-Phase 6a: Vinted only. Kleinanzeigen is a stub that always reports
-"not configured" until Phase 6c lands the mobile listing flow.
+Vinted and Kleinanzeigen are both fully implemented (auth, publish, update,
+delete) against their reverse-engineered mobile APIs. ``is_configured(platform)``
+reports whether a usable session is on disk for that platform.
 """
 
 from __future__ import annotations

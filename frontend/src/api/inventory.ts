@@ -61,9 +61,17 @@ export async function patchListingFields(
   return res.json() as Promise<PatchFieldsResponse>;
 }
 
-export async function deleteListing(id: string): Promise<void> {
+export interface DeleteListingResponse {
+  local_deleted: boolean;
+  /** Per-platform cleanup result — keys present only for platforms the listing
+   *  was posted on. The local record is removed regardless. */
+  platforms: Partial<Record<"vinted" | "kleinanzeigen", { ok: boolean; error: string | null }>>;
+}
+
+export async function deleteListing(id: string): Promise<DeleteListingResponse> {
   const res = await fetch(`${BASE}/listings/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to delete listing: ${res.status}`);
+  return res.json() as Promise<DeleteListingResponse>;
 }
 
 export { BASE };

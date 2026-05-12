@@ -212,5 +212,7 @@ async def run_pipeline(
             "field_review": ka_review,
         },
         "latency_ms": int((time.perf_counter() - started) * 1000),
+        # One VLM invocation per platform prompt (Vinted + KA). Collapsing this
+        # to a single call is the open perf item — see docs/cost_model.md §5.3.
         "vlm_call_count": 2,
     }

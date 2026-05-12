@@ -17,7 +17,7 @@ from PIL import Image
 @dataclass
 class VLMOutput:
     hidden_state: np.ndarray  # shape (vlm_dim,), dtype float32
-    fields: dict               # parsed JSON: brand, category, condition, color, size, title, description, price_eur
+    fields: dict               # parsed JSON: brand, category, condition, color, size, title (price/description are produced downstream, not by the VLM)
     raw_text: str              # raw VLM output text for debugging
     parse_ok: bool = True      # True when raw_text parsed as valid JSON after light cleanup
     recovered: bool = False    # True when fields were salvaged from malformed/truncated JSON
@@ -50,6 +50,8 @@ def get_backend() -> VLMBackend:
         )
     if name == "runpod_http":
         from .runpod_http import RunpodHTTPVLM
-        timeout_s = int(os.environ.get("RUNPOD_TIMEOUT_S", "120"))
+        # 600 s, not 120 — the very first worker boot (image pull + model load)
+        # can take several minutes; the warm path is ~12 s.
+        timeout_s = int(os.environ.get("RUNPOD_TIMEOUT_S", "600"))
         return RunpodHTTPVLM(timeout_s=timeout_s)
     raise ValueError(f"Unknown VLM_BACKEND: {name!r}")

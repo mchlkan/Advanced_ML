@@ -193,7 +193,9 @@ def _clean_title(t: str, fields: dict) -> str:
             t = re.sub(rf"\b{re.escape(expansion)}\b", size_short, t, flags=re.I)
     low = t.lower().rstrip(" .-—,")
     for cw in _CONDITION_WORDS:
-        if low.endswith(cw):
+        # word-boundary match only — a bare `endswith(cw)` would clip
+        # "Hollywood" → "Hollywoo" (ends with "good") or "Mayfair" → "May".
+        if low == cw or low.endswith(" " + cw):
             t = t.rstrip(" .-—,")[: -len(cw)]
             break
     t = re.sub(r"\s+", " ", t).strip(" .-—,\"'")
@@ -293,8 +295,9 @@ async def generate_listing_copy(
     """
     field_review = field_review or {}
 
-    if os.environ.get("VLM_BACKEND") == "stub" or not os.environ.get("GROQ_API_KEY"):
-        if not os.environ.get("GROQ_API_KEY") and os.environ.get("VLM_BACKEND") != "stub":
+    vlm_is_stub = (os.environ.get("VLM_BACKEND") or "").lower() == "stub"
+    if vlm_is_stub or not os.environ.get("GROQ_API_KEY"):
+        if not os.environ.get("GROQ_API_KEY") and not vlm_is_stub:
             logger.warning("GROQ_API_KEY not set — using template fallback for listing copy")
         return _fallback_copy(fields, platform, visual_wear)
 

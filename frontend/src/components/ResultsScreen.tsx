@@ -133,7 +133,7 @@ const PLATFORM_KICKER: Record<Platform, string> = {
   kleinanzeigen: "DE · local",
 };
 
-const OPTIMISTIC_CONDITIONS = new Set(["New with tags", "Like new"]);
+const OPTIMISTIC_CONDITIONS = new Set(["New with tags", "New"]);
 
 function fmt(n: number) {
   return `€${Math.round(n)}`;
@@ -196,6 +196,9 @@ interface PlatformCardProps {
   verifying: boolean;
   disconnected?: boolean;
   currentPrice: number;
+  /** The model's own price for this platform — used to fix the slider bounds.
+   *  Stable for the session; must NOT depend on the live `currentPrice`. */
+  originalPrice: number;
   onPrice: (n: number) => void;
   onPriceCommit: (n: number) => void;
   onClick: () => void;
@@ -211,6 +214,7 @@ function PlatformCard({
   verifying,
   disconnected,
   currentPrice,
+  originalPrice,
   onPrice,
   onPriceCommit,
   onClick,
@@ -227,8 +231,10 @@ function PlatformCard({
   const q10 = Math.round(price.q10);
   const q50 = Math.round(price.q50);
   const q90 = Math.round(price.q90);
-  const sliderLo = Math.max(1, Math.min(Math.round(q10 * 0.6), Math.floor(currentPrice * 0.9)));
-  const sliderHi = Math.max(Math.round(q90 * 1.5), Math.ceil(currentPrice * 1.1));
+  // Bounds are fixed (band + the model's price) — NOT derived from
+  // `currentPrice`, or the endpoints would recede as you drag toward them.
+  const sliderLo = Math.max(1, Math.min(Math.round(q10 * 0.6), originalPrice));
+  const sliderHi = Math.max(Math.round(q90 * 1.5), originalPrice);
   const STEPS = 1000;
   const lerp = (x: number, a: number, b: number) =>
     b > a ? Math.min(1, Math.max(0, (x - a) / (b - a))) : 0;
@@ -476,7 +482,7 @@ export default function ResultsScreen({
   // Per-platform overrides for the listing copy + price.
   const [titleEdits, setTitleEdits] = useState<Partial<Record<Platform, string>>>({});
   const [descEdits, setDescEdits] = useState<Partial<Record<Platform, string>>>({});
-  const [priceEdits, setPriceEdits] = useState<Partial<Record<Platform, string>>>({});
+  const [priceEdits, setPriceEdits] = useState<Partial<Record<Platform, number>>>({});
 
   const vintedQ50 = data.vinted.price.q50;
   const kaQ50 = data.kleinanzeigen.price.q50;
@@ -515,13 +521,19 @@ export default function ResultsScreen({
     setFieldEdits((e) => ({ ...e, [f]: value || null }));
   }
 
-  function priceFor(platform: Platform): number {
-    const raw = priceEdits[platform];
-    const p = raw ? parseInt(raw, 10) : NaN;
-    if (Number.isFinite(p) && p > 0) return p;
+  // The model's own price for a platform — `identification.price_eur` if it set
+  // one (or the persisted edit when reopened from inventory), else the price
+  // head's median q50. Stable for the session.
+  function modelPrice(platform: Platform): number {
     const id = platform === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
     const band = platform === "vinted" ? data.vinted.price : data.kleinanzeigen.price;
     return Math.round((id.price_eur as number | null) ?? band.q50);
+  }
+
+  function priceFor(platform: Platform): number {
+    const edited = priceEdits[platform];
+    if (typeof edited === "number" && edited > 0) return edited;
+    return modelPrice(platform);
   }
 
   async function handleReanalyze() {
@@ -871,7 +883,8 @@ export default function ResultsScreen({
               verifying={verifying}
               disconnected={!vintedReady}
               currentPrice={priceFor("vinted")}
-              onPrice={(n) => setPriceEdits((e) => ({ ...e, vinted: String(n) }))}
+              originalPrice={modelPrice("vinted")}
+              onPrice={(n) => setPriceEdits((e) => ({ ...e, vinted: n }))}
               onPriceCommit={(n) => persistFields({ price_eur: n })}
               onClick={() => setSelectedPlatform("vinted")}
             />
@@ -884,7 +897,8 @@ export default function ResultsScreen({
               verifying={verifying}
               disconnected={!kaReady}
               currentPrice={priceFor("kleinanzeigen")}
-              onPrice={(n) => setPriceEdits((e) => ({ ...e, kleinanzeigen: String(n) }))}
+              originalPrice={modelPrice("kleinanzeigen")}
+              onPrice={(n) => setPriceEdits((e) => ({ ...e, kleinanzeigen: n }))}
               onPriceCommit={(n) => persistFields({ price_eur: n })}
               onClick={() => setSelectedPlatform("kleinanzeigen")}
             />

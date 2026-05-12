@@ -1,20 +1,20 @@
 """Inventory routes — joined view of listings, predictions, publish state,
 and live Vinted wardrobe snapshots.
 
-POST /inventory/sync
-  Pull the user's Vinted wardrobe and write a snapshot row per item. Used
-  both explicitly (frontend pull-to-refresh) and inline by GET /inventory
-  when its cached data is stale.
-
-GET /inventory
-  Per-listing summary: latest prediction, per-platform publish state, plus
-  the live wardrobe snapshot joined in for posted Vinted items. Lazily
-  triggers a sync when the last successful one is older than INVENTORY_STALE_MS
-  (failures fall through to cached data so the read never blocks).
-
-GET /listings/{listing_id}/image
-  Serve the uploaded JPEG so the frontend can render thumbnails referenced
-  by InventoryItem.thumbnail_url.
+  POST   /inventory/sync          pull the Vinted wardrobe, write a snapshot row per item
+  GET    /inventory               per-listing summary (latest prediction + per-platform
+                                  publish state + joined wardrobe snapshot); lazily syncs
+                                  when the last successful sync is older than INVENTORY_STALE_MS
+  GET    /inventory/summary       the same data reduced to status counts
+  POST   /listings/{id}/sold      mark sold: unlist from the platforms it was posted on,
+                                  then drop the local record + photos
+  DELETE /listings/{id}           combined delete: unlist from the platforms (best-effort,
+                                  reported per-platform in the response) then drop the local record
+  GET    /listings/{id}/prediction  reshape the latest prediction into an UploadResponse
+                                    so the "Open" action reuses ResultsScreen
+  PATCH  /listings/{id}/fields    edit fields; also pushes to live posted listings
+  GET    /listings/{id}/image     serve the uploaded garment JPEG (InventoryItem.thumbnail_url)
+  GET    /listings/{id}/label     serve the care-label JPEG, if one was uploaded
 """
 
 from __future__ import annotations
@@ -159,19 +159,60 @@ async def get_inventory_summary() -> InventorySummary:
     return _summarize(items, last_synced_at)
 
 
+def _unlink_quietly(paths) -> None:
+    for path_str in paths or ():
+        if path_str:
+            try:
+                Path(path_str).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+async def _unlist_from_platforms(listing_id: str) -> dict[str, dict]:
+    """Best-effort: delete the listing on every platform it was posted on.
+
+    Returns ``{platform: {"ok": bool, "error": str | None}}`` — one entry per
+    platform that has a posted publish row (most recent only). Removing the
+    local record is the caller's job; this only touches the live platforms."""
+    publishes = await db.get_publishes_for_listing(listing_id)
+    results: dict[str, dict] = {}
+    seen: set[str] = set()
+    for p in publishes:
+        if p.get("status") != "posted" or not p.get("platform_listing_id"):
+            continue
+        platform = p["platform"]
+        if platform in seen:
+            continue  # only the most recent successful row per platform
+        seen.add(platform)
+        platform_id = p["platform_listing_id"]
+        try:
+            if platform == "vinted":
+                await vinted_integration.delete_listing(platform_id)
+            elif platform == "kleinanzeigen":
+                await ka_integration.delete_listing(platform_id)
+            else:
+                logger.info("no platform-delete for %s on %s — skipping", platform_id, platform)
+                continue
+            results[platform] = {"ok": True, "error": None}
+        except Exception as exc:
+            logger.warning(
+                "%s delete failed for %s (listing %s): %s",
+                platform, platform_id, listing_id, exc,
+            )
+            results[platform] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return results
+
+
 @router.post("/listings/{listing_id}/sold", status_code=204, response_class=Response)
 async def mark_sold(listing_id: str) -> Response:
-    deleted = await db.delete_listing(listing_id)
-    if deleted is None:
+    """Mark an item sold: unlist it from the platforms it was posted on, then
+    drop the local record and its photos. Platform-delete failures are logged
+    but not surfaced — a sold item that briefly lingers on a platform is benign."""
+    rec = await db.get_listing(listing_id)
+    if rec is None:
         raise HTTPException(status_code=404, detail=f"listing {listing_id} not found")
-    image_path, label_image_path = deleted
-    for path_str in (image_path, label_image_path):
-        if path_str is None:
-            continue
-        try:
-            Path(path_str).unlink(missing_ok=True)
-        except Exception:
-            pass
+    await _unlist_from_platforms(listing_id)
+    _unlink_quietly(await db.delete_listing(listing_id))
     return Response(status_code=204)
 
 
@@ -228,7 +269,15 @@ async def patch_listing_fields(listing_id: str, body: PatchFieldsRequest) -> dic
     overrides = body.model_dump(exclude_unset=True, exclude_none=True)
     if not overrides:
         return {"stored": True, "pushed": {}}
-    merged = {**pred["english_fields"], **overrides}
+    old_fields = pred["english_fields"]
+    merged = {**old_fields, **overrides}
+    await db.log_edits(
+        listing_id,
+        [
+            (k, None if old_fields.get(k) is None else str(old_fields.get(k)), str(v))
+            for k, v in overrides.items()
+        ],
+    )
     await db.log_prediction(
         listing_id=listing_id,
         source="edit",
@@ -289,48 +338,22 @@ async def _push_edit(platform: str, platform_id: str, fields: dict) -> None:
         raise ValueError(f"update on {platform!r} not implemented")
 
 
-@router.delete("/listings/{listing_id}", status_code=204, response_class=Response)
-async def delete_listing_combined(listing_id: str) -> Response:
-    """Combined delete: best-effort platform cleanup (Vinted only — KA's
-    integration doesn't expose delete) followed by guaranteed local cleanup.
-    Returns 204 even if the platform delete fails; the local row is gone
-    either way."""
+@router.delete("/listings/{listing_id}")
+async def delete_listing_combined(listing_id: str) -> dict:
+    """Combined delete: best-effort cleanup on every platform the listing was
+    posted on, then guaranteed local cleanup. The local record is always
+    removed; the response reports per-platform success so the caller can warn
+    when a platform delete failed.
+
+    Response shape:
+        {"local_deleted": True, "platforms": {"vinted": {"ok": bool, "error": str | None}, ...}}
+    Platform keys are present only for platforms the listing was posted on."""
     rec = await db.get_listing(listing_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="listing not found")
-    publishes = await db.get_publishes_for_listing(listing_id)
-    seen_platforms: set[str] = set()
-    for p in publishes:
-        if p.get("status") != "posted" or not p.get("platform_listing_id"):
-            continue
-        platform = p["platform"]
-        if platform in seen_platforms:
-            continue  # only delete the most recent successful row per platform
-        seen_platforms.add(platform)
-        try:
-            if platform == "vinted":
-                await vinted_integration.delete_listing(p["platform_listing_id"])
-            elif platform == "kleinanzeigen":
-                await ka_integration.delete_listing(p["platform_listing_id"])
-            else:
-                logger.info(
-                    "skipping platform delete for %s on %s (not implemented)",
-                    p["platform_listing_id"], platform,
-                )
-        except Exception as exc:
-            logger.warning(
-                "%s delete failed for %s during combined delete of listing %s: %s",
-                platform, p["platform_listing_id"], listing_id, exc,
-            )
-    deleted = await db.delete_listing(listing_id)
-    if deleted is not None:
-        for path_str in deleted:
-            if path_str:
-                try:
-                    Path(path_str).unlink(missing_ok=True)
-                except Exception:
-                    pass
-    return Response(status_code=204)
+    platforms = await _unlist_from_platforms(listing_id)
+    _unlink_quietly(await db.delete_listing(listing_id))
+    return {"local_deleted": True, "platforms": platforms}
 
 
 @router.get("/listings/{listing_id}/image")

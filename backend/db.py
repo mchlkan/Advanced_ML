@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
@@ -133,10 +134,24 @@ def _resolve(db_path: Path | None) -> Path:
     return db_path if db_path is not None else DEFAULT_DB_PATH
 
 
+@asynccontextmanager
+async def _connect(db_path: Path | None = None):
+    """Open a connection with `busy_timeout` so concurrent writers (request
+    handlers + the PublishRunner background task) wait on each other instead of
+    raising `OperationalError: database is locked` immediately. WAL mode is set
+    once in `init_db` and persists in the database file."""
+    async with aiosqlite.connect(_resolve(db_path)) as conn:
+        await conn.execute("PRAGMA busy_timeout=5000")
+        yield conn
+
+
 async def init_db(db_path: Path | None = None) -> None:
     db_path = _resolve(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(db_path) as conn:
+        # WAL: readers don't block the writer (the PublishRunner) and vice versa.
+        # Persisted in the db file — set once here is enough.
+        await conn.execute("PRAGMA journal_mode=WAL")
         await conn.executescript(SCHEMA)
         # PRAGMA table_info tells us which columns already exist, so we only
         # run ALTER TABLE for missing ones — no exception-driven control flow,
@@ -173,7 +188,7 @@ async def log_listing(
     db_path: Path | None = None,
     label_image_path: Path | None = None,
 ) -> None:
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         await conn.execute(
             "INSERT INTO listings(id, created_at, image_path, label_image_path, vlm_backend) "
             "VALUES (?, ?, ?, ?, ?)",
@@ -204,7 +219,7 @@ async def log_prediction(
     vlm_call_count: int,
     db_path: Path | None = None,
 ) -> None:
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         await conn.execute(
             """INSERT INTO predictions(
                 listing_id, source, created_at, english_fields,
@@ -229,7 +244,7 @@ async def log_edits(
 ) -> None:
     if not changes:
         return
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         await conn.executemany(
             "INSERT INTO edits(listing_id, created_at, field_name, old_value, new_value) VALUES (?, ?, ?, ?, ?)",
             [(listing_id, now_ms(), field, old, new) for field, old, new in changes],
@@ -241,10 +256,11 @@ async def get_listing(
     listing_id: str,
     db_path: Path | None = None,
 ) -> dict | None:
-    """Return the listing's image path and most-recent english_fields, or None
-    if the id is unknown. The fields come from the latest row in `predictions`
-    so a 3rd /verify diffs against the 2nd, not the original /upload."""
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    """Return ``{image_path, label_image_path, vlm_backend, last_english_fields}``
+    for the listing, or None if the id is unknown. ``last_english_fields`` comes
+    from the latest row in `predictions` (so a 3rd /verify diffs against the 2nd,
+    not the original /upload); ``{}`` if no prediction has been stored yet."""
+    async with _connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         listing_row = await (await conn.execute(
             "SELECT image_path, label_image_path, vlm_backend FROM listings WHERE id = ?",
@@ -273,7 +289,7 @@ async def get_latest_prediction(
     english_fields, or None if no prediction has been stored. Used by the
     inventory edit/relist flow to reshape a stored prediction back into
     the UploadResponse the frontend already knows how to render."""
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         row = await (await conn.execute(
             """SELECT english_fields,
@@ -300,7 +316,7 @@ async def get_publishes_for_listing(
 ) -> list[dict]:
     """All publish rows for a listing, newest first. Used by the combined
     delete endpoint to know which platforms to attempt cleanup on."""
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         rows = await (await conn.execute(
             "SELECT id, platform, status, platform_listing_id, platform_listing_url "
@@ -323,7 +339,7 @@ async def create_publish_job(
     """Insert a row in 'pending' state, eligible for the runner to claim
     immediately. Returns the auto-incremented job id."""
     now = now_ms()
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         cur = await conn.execute(
             """INSERT INTO publishes(
                 listing_id, created_at, platform, final_fields, prefill_url,
@@ -340,7 +356,7 @@ async def claim_next_pending_job(db_path: Path | None = None) -> dict | None:
     flip it to 'running' atomically. Returns the row dict (with parsed
     final_fields), or None if nothing is ready."""
     now = now_ms()
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         await conn.execute("BEGIN IMMEDIATE")
         try:
@@ -388,7 +404,7 @@ async def update_publish_job(
         raise ValueError(f"update_publish_job: disallowed columns {sorted(bad)}")
     fields["updated_at"] = now_ms()
     cols = ", ".join(f"{k} = ?" for k in fields)
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         await conn.execute(
             f"UPDATE publishes SET {cols} WHERE id = ?",
             (*fields.values(), job_id),
@@ -397,7 +413,7 @@ async def update_publish_job(
 
 
 async def get_publish_job(job_id: int, db_path: Path | None = None) -> dict | None:
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         row = await (await conn.execute(
             "SELECT * FROM publishes WHERE id = ?", (job_id,)
@@ -433,7 +449,7 @@ async def insert_wardrobe_snapshots(
         )
         for item in items
     ]
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         await conn.executemany(
             """INSERT INTO wardrobe_snapshots(
                 fetched_at, platform, platform_listing_id,
@@ -456,7 +472,7 @@ async def record_wardrobe_sync(
 ) -> int:
     """Insert a wardrobe_syncs row stamped with `finished_at = now`. Returns
     the row id."""
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         cur = await conn.execute(
             """INSERT INTO wardrobe_syncs(
                 platform, started_at, finished_at, status, item_count, error
@@ -472,7 +488,7 @@ async def get_last_wardrobe_sync(
     db_path: Path | None = None,
 ) -> dict | None:
     """Most recent wardrobe_syncs row for the platform, or None if never run."""
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         row = await (await conn.execute(
             "SELECT * FROM wardrobe_syncs WHERE platform = ? "
@@ -533,7 +549,7 @@ async def get_inventory_rows(db_path: Path | None = None) -> list[dict]:
     """Return one row per (listing, publish-platform) — listings without any
     publish appear once with null publish_* fields. Caller folds platforms
     into per-listing dicts."""
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         rows = await (await conn.execute(_INVENTORY_QUERY)).fetchall()
         return [dict(r) for r in rows]
@@ -542,7 +558,7 @@ async def get_inventory_rows(db_path: Path | None = None) -> list[dict]:
 async def delete_listing(listing_id: str, db_path: Path | None = None) -> tuple[str, str | None] | None:
     """Delete a listing and all related rows. Returns ``(image_path, label_image_path)``
     if found, else None. ``label_image_path`` is None when no label was uploaded."""
-    async with aiosqlite.connect(_resolve(db_path)) as conn:
+    async with _connect(db_path) as conn:
         row = await (await conn.execute(
             "SELECT image_path, label_image_path FROM listings WHERE id = ?", (listing_id,)
         )).fetchone()

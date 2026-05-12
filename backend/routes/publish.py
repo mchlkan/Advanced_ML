@@ -24,7 +24,10 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from listing_mappings import NEW_LISTING_URLS
 
 from backend import db, integrations
-from backend.integrations import vinted as vinted_integration
+from backend.integrations import (
+    kleinanzeigen as ka_integration,
+    vinted as vinted_integration,
+)
 from backend.schemas import (
     Platform,
     PublishCreatedResponse,
@@ -105,14 +108,20 @@ async def publish_status(job_id: int) -> PublishStatusResponse:
 )
 async def delete_listing(platform: Platform, platform_listing_id: str) -> Response:
     """Delete a published listing or unpublished draft on the platform.
-    Same endpoint serves both — Vinted's API doesn't distinguish."""
-    if platform != "vinted":
+    On Vinted the same endpoint serves both (the API doesn't distinguish);
+    on Kleinanzeigen it deletes a live ad (idempotent — already-gone ads
+    return silently)."""
+    if not integrations.is_configured(platform):
+        raise HTTPException(status_code=503, detail=f"{platform} integration not configured")
+    if platform == "vinted":
+        deleter, err_cls = vinted_integration.delete_listing, vinted_integration.VintedError
+    elif platform == "kleinanzeigen":
+        deleter, err_cls = ka_integration.delete_listing, ka_integration.KAError
+    else:
         raise HTTPException(status_code=501, detail=f"delete on {platform} not implemented")
-    if not integrations.is_configured("vinted"):
-        raise HTTPException(status_code=503, detail="Vinted integration not configured")
     try:
-        await vinted_integration.delete_listing(platform_listing_id)
-    except vinted_integration.VintedError as exc:
+        await deleter(platform_listing_id)
+    except err_cls as exc:
         msg = str(exc)
         if "not found" in msg.lower():
             raise HTTPException(status_code=404, detail=msg) from exc

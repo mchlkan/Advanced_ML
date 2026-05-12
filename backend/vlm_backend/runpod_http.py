@@ -29,7 +29,7 @@ from . import VLMOutput
 from .util import parse_vlm_fields, resize_and_b64
 
 
-DEFAULT_TIMEOUT_S = 120
+DEFAULT_TIMEOUT_S = 600  # first-boot cold start can take minutes; warm path ~12 s
 POLL_INTERVAL_S = 0.5
 COMPLETED_STATUSES = {"COMPLETED"}
 FAILED_STATUSES = {"FAILED", "CANCELLED", "TIMED_OUT"}
