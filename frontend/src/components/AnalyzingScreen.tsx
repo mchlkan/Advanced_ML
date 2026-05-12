@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { fetchVlmStatus } from "@/api/vlm";
+import type { VlmStatus } from "@/types/api";
 import SmallCaps from "./ui/SmallCaps";
 
 interface Props {
@@ -10,23 +12,76 @@ interface Props {
 }
 
 const ACCENT = "oklch(0.62 0.15 145)";
+// Warm ochre — "the GPU is heating up", deliberately not the green "good" tone
+// and not an alarming red. Reads as "be patient", not "broken".
+const WARMING = "oklch(0.72 0.14 70)";
+const WARMING_SOFT = "oklch(0.975 0.022 75)";
+
+type GpuState = "ok" | "warming" | "busy" | "unknown";
+
+function deriveGpuState(s: VlmStatus | null): GpuState {
+  if (!s || s.backend !== "runpod_http" || s.error) return "unknown";
+  const w = s.workers ?? {};
+  const live = (w.ready ?? 0) + (w.running ?? 0);
+  if (live > 0) return "ok";
+  if (s.throttled || (w.throttled ?? 0) > 0) return "busy";
+  // no live worker, not throttled — one is booting (or will be summoned by /run)
+  return "warming";
+}
+
+const GPU_COPY: Record<"warming" | "busy", { kicker: string; line: string }> = {
+  warming: {
+    kicker: "GPU · spinning up",
+    line: "First run after a quiet spell — the model server is booting. This usually takes one to three minutes; the photo is safe, just hold on.",
+  },
+  busy: {
+    kicker: "GPU · queued",
+    line: "The model server is behind other work right now. Your photo is in line and will go through — give it a few minutes.",
+  },
+};
+
+function mmss(totalSec: number): string {
+  const m = Math.floor(totalSec / 60);
+  const s = Math.floor(totalSec % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
 export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: Props) {
   const [elapsed, setElapsed] = useState(0);
+  const [gpu, setGpu] = useState<GpuState>("unknown");
   const startRef = useRef(Date.now());
 
+  // Elapsed clock — runs the whole time the screen is up (a cold start can
+  // legitimately last minutes, so we don't stop it at 5 s any more).
   useEffect(() => {
-    const id = setInterval(() => {
-      const next = Date.now() - startRef.current;
-      setElapsed(next);
-      if (next > 5000) clearInterval(id);
-    }, 100);
+    const id = setInterval(() => setElapsed(Date.now() - startRef.current), 250);
     return () => clearInterval(id);
   }, []);
 
+  // Poll the VLM serving status so we can tell the user *why* a slow run is
+  // slow (cold boot vs. RunPod throttling us) instead of leaving them staring
+  // at a stale "10–20 seconds".
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const s = await fetchVlmStatus();
+      if (!cancelled) setGpu(deriveGpuState(s));
+    };
+    tick();
+    const id = setInterval(tick, 6000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
   const elapsedSec = elapsed / 1000;
+  const slow = gpu === "warming" || gpu === "busy";
 
   function stepState(idx: number): "done" | "active" | "pending" {
+    // While the GPU is cold/queued the pipeline genuinely hasn't started —
+    // hold the first step "active" rather than marching all three to done.
+    if (slow) return idx === 0 ? "active" : "pending";
     if (idx === 0) return elapsedSec > 2 ? "done" : "active";
     if (idx === 1) return elapsedSec > 5 ? "done" : elapsedSec > 2 ? "active" : "pending";
     return elapsedSec > 5 ? "active" : "pending";
@@ -106,12 +161,12 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
                 width: 7,
                 height: 7,
                 borderRadius: 7,
-                background: ACCENT,
-                boxShadow: `0 0 0 4px oklch(0.62 0.15 145 / 0.3)`,
+                background: slow ? WARMING : ACCENT,
+                boxShadow: `0 0 0 4px ${slow ? "oklch(0.72 0.14 70 / 0.3)" : "oklch(0.62 0.15 145 / 0.3)"}`,
                 animation: "rcPulse 1.2s ease-in-out infinite",
               }}
             />
-            Analyzing
+            {slow ? (gpu === "busy" ? "Queued" : "Warming up") : "Analyzing"}
           </div>
           {/* Optional brand/size tag thumbnail */}
           {labelImageUrl && (
@@ -146,12 +201,72 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
             lineHeight: 1.15,
           }}
         >
-          Reading your piece…
+          {slow ? "Hang tight — waking the model up" : "Reading your piece…"}
         </h2>
         <p style={{ margin: "8px 0 0", fontSize: 14, color: "#6b6c6a", lineHeight: 1.45 }}>
-          Usually 10–20 seconds. Don&apos;t switch apps.
+          {slow ? GPU_COPY[gpu === "busy" ? "busy" : "warming"].line : "Usually 10–20 seconds. Don’t switch apps."}
         </p>
       </div>
+
+      {/* GPU status card — only when the serving GPU isn't hot */}
+      {slow && (
+        <div style={{ padding: "18px 24px 0" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 14,
+              padding: "13px 16px",
+              borderRadius: 14,
+              background: WARMING_SOFT,
+              border: `1px solid ${WARMING}`,
+            }}
+          >
+            <div
+              style={{
+                position: "relative",
+                width: 22,
+                height: 22,
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {/* expanding ring */}
+              <span
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  borderRadius: 11,
+                  border: `1.5px solid ${WARMING}`,
+                  animation: "rcRing 1.8s ease-out infinite",
+                }}
+              />
+              <span style={{ width: 8, height: 8, borderRadius: 8, background: WARMING }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <SmallCaps color="oklch(0.5 0.1 70)" style={{ display: "block" }}>
+                {GPU_COPY[gpu === "busy" ? "busy" : "warming"].kicker}
+              </SmallCaps>
+              <div style={{ fontSize: 13, color: "#6b6c6a", marginTop: 3 }}>
+                Workers are scaled to zero when idle. They&apos;ll come up — no need to retry.
+              </div>
+            </div>
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: "oklch(0.5 0.1 70)",
+                fontVariantNumeric: "tabular-nums",
+                flexShrink: 0,
+              }}
+            >
+              {mmss(elapsedSec)}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Steps */}
       <div
@@ -177,7 +292,7 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
                     state === "pending"
                       ? "1.5px dashed #e7e5e0"
                       : state === "active"
-                      ? `1.5px solid ${ACCENT}`
+                      ? `1.5px solid ${slow ? WARMING : ACCENT}`
                       : "none",
                   display: "flex",
                   alignItems: "center",
@@ -201,7 +316,7 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
                       width: 8,
                       height: 8,
                       borderRadius: 8,
-                      background: ACCENT,
+                      background: slow ? WARMING : ACCENT,
                       animation: "rcPulse 1.2s ease-in-out infinite",
                     }}
                   />
@@ -218,7 +333,7 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
                   {s.label}
                 </div>
                 <SmallCaps style={{ display: "block", marginTop: 2 }}>
-                  {s.detail}
+                  {i === 0 && slow ? "Waiting on the GPU" : s.detail}
                 </SmallCaps>
               </div>
             </div>
@@ -253,6 +368,11 @@ export default function AnalyzingScreen({ imageUrl, labelImageUrl, onCancel }: P
         @keyframes rcPulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.3; }
+        }
+        @keyframes rcRing {
+          0%   { transform: scale(0.6); opacity: 0.9; }
+          70%  { transform: scale(1.25); opacity: 0; }
+          100% { transform: scale(1.25); opacity: 0; }
         }
       `}</style>
     </div>

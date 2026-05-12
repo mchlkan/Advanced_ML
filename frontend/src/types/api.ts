@@ -158,6 +158,29 @@ export interface PublishStatusResponse {
 
 export type PricingStatus = "underpriced" | "ok" | "overpriced" | "unknown";
 
+/** GET /vlm/status — VLM serving backend health. For the RunPod backend the
+ *  `workers` / `jobs` / `throttled` fields mirror RunPod's endpoint /health. */
+export interface VlmStatus {
+  backend: string; // "runpod_http" | "local_mps" | "stub" | "skip_ml"
+  throttled?: boolean;
+  workers?: {
+    idle?: number;
+    initializing?: number;
+    ready?: number;
+    running?: number;
+    throttled?: number;
+    unhealthy?: number;
+  };
+  jobs?: {
+    completed?: number;
+    failed?: number;
+    inProgress?: number;
+    inQueue?: number;
+    retried?: number;
+  };
+  error?: string;
+}
+
 export interface PredictionSummary {
   english_fields: Record<string, unknown>;
   vinted: PriceBand | null;
