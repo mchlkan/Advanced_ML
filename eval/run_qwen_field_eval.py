@@ -56,7 +56,7 @@ FIELD_MAP = {
     "color": "color_en",
     "size": "size",
 }
-REQUIRED_OUTPUT_FIELDS = ["brand", "category", "condition", "color", "size", "title", "description", "price_eur"]
+REQUIRED_OUTPUT_FIELDS = ["brand", "category", "condition", "color", "size", "title", "price_eur"]
 WORD_RE = re.compile(r"\w+")
 
 
@@ -132,6 +132,18 @@ def norm(value: Any) -> str:
     if isinstance(value, float) and pd.isna(value):
         return ""
     return " ".join(WORD_RE.findall(str(value).casefold()))
+
+
+def as_float(value: Any) -> float | None:
+    """Coerce a VLM-emitted price to a float, returning None on garbage."""
+    if value is None:
+        return None
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def brand_fuzzy_match(pred: Any, truth: Any) -> bool:
@@ -267,10 +279,6 @@ def compute_slice_metrics(df: pd.DataFrame, bert_score: bool = False) -> dict:
         df["pred_title"].fillna("").astype(str).tolist(),
         df["title_en"].fillna("").astype(str).tolist(),
     )
-    out["description_bleu4"] = tokenized_bleu(
-        df["pred_description"].fillna("").astype(str).tolist(),
-        df["description_en"].fillna("").astype(str).tolist(),
-    )
     if bert_score:
         out["bertscore"] = compute_bert_score(df)
     return out
@@ -283,7 +291,7 @@ def compute_bert_score(df: pd.DataFrame) -> dict | None:
         return None
     scorer = evaluate.load("bertscore")
     out = {}
-    for field in ("title", "description"):
+    for field in ("title",):
         preds = df[f"pred_{field}"].fillna("").astype(str).tolist()
         refs = df[f"{field}_en"].fillna("").astype(str).tolist()
         scores = scorer.compute(predictions=preds, references=refs, lang="en")

@@ -165,11 +165,29 @@ Advanced_ML/
 │   └── src/app/           # App Router entrypoints + global layout (PWA metadata)
 ├── scripts/               # one-off utilities: ec2 deploy, eval_lora, KA/Vinted endpoint probes
 ├── docs/                  # technical report, AI-usage log, model-stack evolution, demo strategy
-├── notebooks/             # 01_…_data, 03_…_train, 06_…_eval, 99_scratch
+├── notebooks/             # 01_…_data, 03_…_train, 06_…_eval, 99_scratch + colab_qwen_v3_field_eval
 ├── requirements.txt       # backend + training dependencies
 ├── requirements-prod.txt  # backend-only dependencies (slimmer container build)
 └── CLAUDE.md              # project instructions for AI pair-programming sessions
 ```
+
+---
+
+## Data & model artefacts
+
+The big binary artefacts (raw scrape, training parquets, model checkpoints) are not committed to git — they're too large for a repo and the marketplace scrapes are licence-restricted. Here's where each piece actually lives:
+
+| Artefact | Location | Notes |
+|---|---|---|
+| Raw + cleaned datasets (`vinted_clothing_combined.parquet`, `kleinanzeigen_clothing_combined.parquet`, ~860 MB combined) | **Google Drive** — team folder `resell_copilot/` | Shared with course staff via the submission cover sheet; available to other contributors on request |
+| Locked train/val/test splits (`data/splits/test_ids.json`, `data/splits/test.parquet`, …) | **In the repo**, under `data/splits/` | Versioned so the 500-row test eval is reproducible |
+| Fine-tuned LoRA adapters (`multi-v1`, `multi-v2`, `multi-v3`) | **HuggingFace Hub** — [`mchlkan/qwen3vl4b-resell-adapter-multi-v3`](https://huggingface.co/mchlkan/qwen3vl4b-resell-adapter-multi-v3) | Public, no `HF_TOKEN` required to pull |
+| Trained head checkpoints (price head, sell head, flaw head; `models/checkpoints/`) | **Google Drive** — same `resell_copilot/` folder | Required only if you want to run the FastAPI backend locally end-to-end; production runs them on EC2 |
+| Live SQLite (`predictions`, `edits`, `publishes`, `sessions`) | **EC2 host** at `/opt/resell/data/resell.db` | Not shared — contains user session tokens |
+
+### For course staff
+
+The repo bundles a Colab notebook ([`notebooks/colab_qwen_v3_field_eval.ipynb`](notebooks/colab_qwen_v3_field_eval.ipynb)) that re-runs the field-level evaluation of the v3 LoRA adapter against the locked 500-row test split — no local GPU or environment setup needed. The notebook expects the two parquet datasets to live in `MyDrive/resell_copilot/` on the same Google account that opens the Colab session; the Drive folder shared in the submission cover sheet is laid out exactly that way. Total runtime: ~30 minutes on a free T4 GPU.
 
 ---
 
@@ -422,6 +440,8 @@ python eval/run_baseline.py          # GPT-4o-mini / Claude Haiku baselines on t
 python eval/run_qwen_field_eval.py   # field-level eval of the fine-tuned Qwen identifier
 python scripts/eval_lora.py          # single- vs multi-image LoRA yardstick
 ```
+
+The Qwen field eval needs a CUDA GPU — the easiest path is the bundled Colab notebook ([`notebooks/colab_qwen_v3_field_eval.ipynb`](notebooks/colab_qwen_v3_field_eval.ipynb)), which clones this repo, pulls the parquets from the shared Google Drive folder (see [Data & model artefacts](#data--model-artefacts)), and runs the full benchmark in ~30 minutes on a free T4. The two API-baseline scripts run anywhere with a Python env and the relevant `*_API_KEY` set.
 
 Results land in `eval/results/*.json`. Headline metric: **price MAPE per platform**, our pipeline vs GPT-4o-mini. The price head currently sits at ~53% MAPE on the locked 500-row test set, against ~102% for GPT-4o-mini at the same task, and the field-level identification accuracy on brand / category / colour / condition tracks closely with the v3 adapter card on HuggingFace.
 
