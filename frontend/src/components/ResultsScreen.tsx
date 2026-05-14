@@ -101,6 +101,10 @@ interface Props {
   onReset: () => void;
   onConnectPlatform: (platform: Platform) => void;
   error?: string | null;
+  /** True for fresh VLM scans (upload, verify/re-analyze). False when re-opened
+   *  from inventory, where `identification.price_eur` may be a persisted user
+   *  edit that must be respected — see `modelPrice()` for how this is used. */
+  isFreshUpload: boolean;
 }
 
 function isPlatformReady(
@@ -451,6 +455,7 @@ export default function ResultsScreen({
   onReset,
   onConnectPlatform,
   error,
+  isFreshUpload,
 }: Props) {
   const vintedReady = isPlatformReady(connectionStatus, "vinted");
   const kaReady = isPlatformReady(connectionStatus, "kleinanzeigen");
@@ -502,13 +507,23 @@ export default function ResultsScreen({
     setFieldEdits((e) => ({ ...e, [f]: value || null }));
   }
 
-  // The model's own price for a platform — `identification.price_eur` if it set
-  // one (or the persisted edit when reopened from inventory), else the price
-  // head's median q50. Stable for the session.
+  // Default ask price for a platform. Stable for the session.
+  //
+  // Re-opened from inventory (`!isFreshUpload`): respect any persisted edit on
+  // `identification.price_eur` — the patch endpoint stamps source='edit' on
+  // the predictions row, and overwriting it would silently lose the user's
+  // saved price.
+  //
+  // Fresh scan / verify (`isFreshUpload`): the VLM's emitted `price_eur` is
+  // a hint, not a recommendation — it tends to under-call against the
+  // price-head's quantiles. Default to ~38th percentile of the band
+  // (`0.7·q50 + 0.3·q10`) so the slider lands a bit under market without
+  // dropping below q10.
   function modelPrice(platform: Platform): number {
     const id = platform === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
     const band = platform === "vinted" ? data.vinted.price : data.kleinanzeigen.price;
-    return Math.round((id.price_eur as number | null) ?? band.q50);
+    if (!isFreshUpload && id.price_eur != null) return Math.round(id.price_eur as number);
+    return Math.round(0.7 * band.q50 + 0.3 * band.q10);
   }
 
   function priceFor(platform: Platform): number {

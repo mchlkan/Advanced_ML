@@ -38,6 +38,11 @@ type AppState =
       imageUrl: string;
       data: UploadResponse;
       labelImageUrl?: string;
+      // True when the data is a fresh VLM scan (upload, verify/re-analyze).
+      // False when re-opened from inventory or bouncing back after a failed
+      // relist — `identification.price_eur` may then be a persisted user
+      // edit that ResultsScreen must respect rather than overwrite.
+      isFreshUpload: boolean;
     }
   | {
       screen: "publishing";
@@ -84,7 +89,7 @@ export default function Page() {
     try {
       const data = await uploadImage(file, labelFile);
       if (gen !== uploadGenRef.current) return;
-      setState({ screen: "results", imageUrl, data, labelImageUrl });
+      setState({ screen: "results", imageUrl, data, labelImageUrl, isFreshUpload: true });
     } catch (err) {
       if (gen !== uploadGenRef.current) return;
       setUploadError(
@@ -100,6 +105,10 @@ export default function Page() {
     data: UploadResponse,
     imageUrl: string,
     labelImageUrl?: string,
+    // Forwarded to the "all-failed bounce back to results" branch below so
+    // the results screen knows whether it's looking at a fresh scan or at
+    // re-opened inventory data.
+    isFreshUpload: boolean = false,
   ): Promise<void> {
     if (items.length === 0) return;
     setUploadError(null);
@@ -165,7 +174,7 @@ export default function Page() {
         "Publishing failed: " +
           outcomes.map((o) => `${o.platform} — ${o.error ?? "unknown"}`).join(" · "),
       );
-      setState({ screen: "results", imageUrl, data, labelImageUrl });
+      setState({ screen: "results", imageUrl, data, labelImageUrl, isFreshUpload });
       return;
     }
     setState({ screen: "published", outcomes, results: data });
@@ -173,8 +182,8 @@ export default function Page() {
 
   async function handlePublishMany(items: PublishItem[]) {
     if (state.screen !== "results" || items.length === 0) return;
-    const { data, imageUrl, labelImageUrl } = state;
-    await _runPublishes(data.listing_id, items, data, imageUrl, labelImageUrl);
+    const { data, imageUrl, labelImageUrl, isFreshUpload } = state;
+    await _runPublishes(data.listing_id, items, data, imageUrl, labelImageUrl, isFreshUpload);
   }
 
   function handleReset() {
@@ -194,6 +203,10 @@ export default function Page() {
         data,
         // The tag photo, if one was uploaded — the <img> 404s + self-hides otherwise.
         labelImageUrl: `${BASE}/listings/${listingId}/label`,
+        // Re-opened — `identification.price_eur` may carry the user's saved
+        // edit, so ResultsScreen must respect it (not overwrite with the
+        // fresh-scan default).
+        isFreshUpload: false,
       });
     } catch (err) {
       setUploadError(
@@ -224,7 +237,7 @@ export default function Page() {
     const finalFields =
       target === "vinted" ? data.vinted.identification : data.kleinanzeigen.identification;
     const imageUrl = `${BASE}/listings/${listingId}/image`;
-    await _runPublishes(listingId, [{ platform: target, finalFields }], data, imageUrl);
+    await _runPublishes(listingId, [{ platform: target, finalFields }], data, imageUrl, undefined, false);
   }
 
   function renderScreen() {
@@ -266,6 +279,7 @@ export default function Page() {
           onReset={handleReset}
           onConnectPlatform={setLoginModalPlatform}
           error={uploadError}
+          isFreshUpload={state.isFreshUpload}
         />
       );
     }
